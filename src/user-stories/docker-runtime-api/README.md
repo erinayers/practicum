@@ -17,3 +17,4 @@ Add backend API capabilities for starting, stopping, resetting, and reporting th
 - [Browser Desktop Example Spec](runtime-browser-desktop-example.md)
 - [Host Port Availability Checks](runtime-host-port-availability.md)
 - [Host Port Recommendations](runtime-host-port-recommendations.md)
+- [Image Pull and Start Progress](runtime-image-pull-progress.md)

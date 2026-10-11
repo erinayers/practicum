@@ -94,7 +94,7 @@ This order builds the product from the inside out: first the lab file contract, 
 
 ### Phase 7: Close the Desktop UI Gap (mockup-driven)
 
-Phases 1-6 built a working API and a functional, form-based desktop shell. Clickable mockups then revealed where the desktop UI hasn't caught up to already-"done" backend capability, plus a few net-new UX requirements surfaced during that review. This phase closes that gap before any further API work.
+Phases 1-6 built a working API and a functional, form-based desktop shell. Clickable mockups then revealed where the desktop UI hasn't caught up to already-"done" backend capability, plus a few net-new UX requirements surfaced during that review. This phase closes that gap. Nearly all of it is desktop UI only — the one exception is story 29, a real backend gap the mockup review surfaced (today's start sequence has no incremental progress to show, so the mockups fake it with a timer).
 
 22. [In-App Dialogs Only](user-stories/windows-desktop-application/windows-desktop-in-app-dialogs.md)
 23. [Labs Dashboard](user-stories/windows-desktop-application/windows-desktop-labs-dashboard.md)
@@ -103,6 +103,7 @@ Phases 1-6 built a working API and a functional, form-based desktop shell. Click
 26. [Lab Lifecycle Controls](user-stories/windows-desktop-application/windows-desktop-lab-lifecycle-controls.md)
 27. [Embedded Lab View](user-stories/windows-desktop-application/windows-desktop-embedded-lab-view.md)
 28. [Visual Topology Builder (Basic)](user-stories/designer-mode/designer-visual-topology-builder.md)
+29. [Image Pull and Start Progress](user-stories/docker-runtime-api/runtime-image-pull-progress.md) (backend)
 
 ## First Product Slice
 

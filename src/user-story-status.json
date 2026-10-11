@@ -90,7 +90,8 @@
         "windows-desktop-import-lab-file",
         "windows-desktop-lab-lifecycle-controls",
         "windows-desktop-embedded-lab-view",
-        "designer-visual-topology-builder"
+        "designer-visual-topology-builder",
+        "runtime-image-pull-progress"
       ]
     }
   ],
@@ -1070,6 +1071,31 @@
         },
         {
           "text": "Existing Validate and Save behavior, including error messages, is unchanged.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "runtime-image-pull-progress",
+      "epic": "Docker Runtime API",
+      "title": "Image Pull and Start Progress",
+      "status": "not_started",
+      "notes": "New story, the one backend exception in the otherwise desktop-UI-only phase-7 backlog. DockerRuntime.start() (src/practicum/runtime.py) shells out to `docker run` per container via subprocess and blocks on the final exit code only; it surfaces no incremental pull/start progress today. The mockup's start/import loading sequences currently fake this with a fixed-duration timer. Likely needs an explicit `docker pull` step per node plus parsing Docker's streamed JSON progress, surfaced through a richer GET /labs/{lab_id}/status rather than a new transport.",
+      "acceptance_criteria": [
+        {
+          "text": "Lab status exposes a distinguishable in-progress state per node while starting, separate from running/stopped/error.",
+          "complete": false
+        },
+        {
+          "text": "When a node's image must be pulled, its status includes enough information for the desktop app to show real percentage-style progress.",
+          "complete": false
+        },
+        {
+          "text": "When a node's image is already local, its status does not show pull progress and moves directly to container startup.",
+          "complete": false
+        },
+        {
+          "text": "A failed pull or container start is reported against the specific node, with a message distinct from a generic failure.",
           "complete": false
         }
       ]
