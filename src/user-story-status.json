@@ -1,0 +1,1078 @@
+{
+  "project": "Practicum",
+  "source": "src/user-stories.md",
+  "epic_folder": "src/user-stories",
+  "last_updated": "2026-10-11",
+  "latest_checkpoint": "Phases 1 through 6 are complete. Interactive clickable mockups (see session artifact practicum-mockups.html) reviewed against the real desktop app surfaced a meaningful gap: several backend capabilities marked done (import, preview, port-conflict UI, reset) are not yet exposed in the desktop app the way the mockups show, and a few net-new UX requirements emerged (labs dashboard, a unified pre-start gate, an embedded in-app browser view, and a strict no-native-dialogs rule after a native confirm() was caught during mockup review). Phase 7 captures these as new desktop-UI-only stories (no new API work expected) in src/user-stories/windows-desktop-application/ and one in src/user-stories/designer-mode/. The pre-existing gap noted previously (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
+  "next_recommended_story": "windows-desktop-in-app-dialogs",
+  "current_phase": "phase-7",
+  "phases": [
+    {
+      "id": "phase-1",
+      "title": "Strengthen the Lab Spec",
+      "status": "done",
+      "stories": [
+        "lab-spec-metadata",
+        "lab-spec-docker-resources",
+        "designer-author-manual"
+      ]
+    },
+    {
+      "id": "phase-2",
+      "title": "Validate and Move Lab Files Around",
+      "status": "done",
+      "stories": [
+        "designer-validate-lab",
+        "designer-export-spec",
+        "student-import-spec",
+        "student-preview-imported-lab"
+      ]
+    },
+    {
+      "id": "phase-3",
+      "title": "Add Runtime API and Docker Control",
+      "status": "done",
+      "stories": [
+        "runtime-api-start-lab",
+        "runtime-api-stop-lab",
+        "runtime-api-status",
+        "runtime-browser-accessible-nodes",
+        "runtime-node-command-options",
+        "runtime-node-environment",
+        "runtime-port-mappings",
+        "runtime-shared-memory",
+        "runtime-browser-desktop-example",
+        "runtime-host-port-availability",
+        "runtime-host-port-recommendations",
+        "student-start-lab",
+        "student-stop-lab",
+        "student-reset-lab"
+      ]
+    },
+    {
+      "id": "phase-4",
+      "title": "Build the Windows Application Shell",
+      "status": "done",
+      "stories": [
+        "windows-desktop-launch",
+        "windows-desktop-local-api",
+        "windows-desktop-port-conflict-ui"
+      ]
+    },
+    {
+      "id": "phase-5",
+      "title": "Build Basic Designer Workflows",
+      "status": "done",
+      "stories": [
+        "designer-create-new-lab",
+        "designer-add-nodes",
+        "designer-add-networks",
+        "designer-connect-nodes-networks"
+      ]
+    },
+    {
+      "id": "phase-6",
+      "title": "Improve the Student Learning Experience",
+      "status": "done",
+      "stories": [
+        "manual-view-flyout",
+        "manual-track-progress"
+      ]
+    },
+    {
+      "id": "phase-7",
+      "title": "Close the Desktop UI Gap (mockup-driven)",
+      "status": "not_started",
+      "stories": [
+        "windows-desktop-in-app-dialogs",
+        "windows-desktop-labs-dashboard",
+        "windows-desktop-prestart-lab-gate",
+        "windows-desktop-import-lab-file",
+        "windows-desktop-lab-lifecycle-controls",
+        "windows-desktop-embedded-lab-view",
+        "designer-visual-topology-builder"
+      ]
+    }
+  ],
+  "status_values": [
+    "not_started",
+    "in_progress",
+    "blocked",
+    "done"
+  ],
+  "stories": [
+    {
+      "id": "windows-desktop-launch",
+      "epic": "Windows Desktop Application",
+      "title": "Launch Desktop Application",
+      "status": "done",
+      "notes": "desktop/ PySide6 app (practicum_desktop) launches a MainWindow that runs API and Docker checks off the UI thread via StartupWorker (QThread) and shows a Ready/Degraded/Blocked banner with an actionable next step. Manually verified running on Windows.",
+      "acceptance_criteria": [
+        {
+          "text": "The app launches on Windows.",
+          "complete": true
+        },
+        {
+          "text": "The app shows whether the local Practicum API is reachable.",
+          "complete": true
+        },
+        {
+          "text": "The app shows whether Docker is available.",
+          "complete": true
+        },
+        {
+          "text": "If either dependency is unavailable, the app displays a useful error state.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-local-api",
+      "epic": "Windows Desktop Application",
+      "title": "Connect to Local API",
+      "status": "done",
+      "notes": "desktop/src/practicum_desktop/api_client.py wraps GET /health and GET /labs with timeout/connection/non-200 handling. Base URL defaults to http://127.0.0.1:8000 and is configurable via a UI field persisted with QSettings. Manually verified running on Windows.",
+      "acceptance_criteria": [
+        {
+          "text": "The app calls GET /health on startup.",
+          "complete": true
+        },
+        {
+          "text": "The app handles unavailable API responses gracefully.",
+          "complete": true
+        },
+        {
+          "text": "The API base URL can be configured or defaults to http://127.0.0.1:8000.",
+          "complete": true
+        },
+        {
+          "text": "The app can list locally defined labs using GET /labs.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-port-conflict-ui",
+      "epic": "Windows Desktop Application",
+      "title": "Port Conflict UI",
+      "status": "done",
+      "notes": "Backend now exposes GET /labs/{lab_id}/ports (conflicts + recommendations for duplicate-in-spec, Practicum-API-reserved, and in-use-on-host ports) and POST /labs/{lab_id}/ports/apply-recommendation. The desktop app checks ports whenever a lab is selected, renders conflicts in a table with per-row 'Use <port>' buttons, disables Start while conflicts remain, and rechecks (using the server's fresh response) after a recommendation is applied. Needs manual verification with a real port conflict on Windows.",
+      "acceptance_criteria": [
+        {
+          "text": "Host port conflicts are visible before runtime start.",
+          "complete": true
+        },
+        {
+          "text": "The UI prevents users from starting a lab with known port conflicts.",
+          "complete": true
+        },
+        {
+          "text": "Users can apply a recommended port from the UI.",
+          "complete": true
+        },
+        {
+          "text": "The app rechecks the port after a recommendation is applied.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "lab-spec-metadata",
+      "epic": "Lab Spec Format",
+      "title": "Define Lab Metadata",
+      "status": "done",
+      "notes": "LabDefinition now includes name, optional description, optional author, optional version, and default schema_version while accepting older specs without optional metadata.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab spec includes a name.",
+          "complete": true
+        },
+        {
+          "text": "A lab spec can include a description.",
+          "complete": true
+        },
+        {
+          "text": "A lab spec can include author or instructor information.",
+          "complete": true
+        },
+        {
+          "text": "A lab spec can include version information.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "lab-spec-docker-resources",
+      "epic": "Lab Spec Format",
+      "title": "Define Docker Resource Requirements",
+      "status": "done",
+      "notes": "Node resources now support optional positive CPU limits, optional positive memory limits in MB, and unique exposed ports from 1 through 65535. Nodes can still omit resources for simple or older specs.",
+      "acceptance_criteria": [
+        {
+          "text": "Each node can specify a Docker image.",
+          "complete": true
+        },
+        {
+          "text": "Each node can optionally specify CPU limits.",
+          "complete": true
+        },
+        {
+          "text": "Each node can optionally specify memory limits.",
+          "complete": true
+        },
+        {
+          "text": "Each node can optionally specify exposed ports.",
+          "complete": true
+        },
+        {
+          "text": "The app validates invalid or missing resource values.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-create-new-lab",
+      "epic": "Designer Mode",
+      "title": "Create a New Lab",
+      "status": "done",
+      "notes": "DesignerDialog (desktop/src/practicum_desktop/designer.py), opened via 'New Lab…' in main_window.py, lets an instructor name a blank draft, add nodes and networks, and save it via POST /labs. Unsaved-changes tracking on dialog close is not implemented (not an explicit acceptance criterion).",
+      "acceptance_criteria": [
+        {
+          "text": "The instructor can create a blank lab.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can name the lab.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can add at least one node.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can add at least one network.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can save the lab locally.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-add-nodes",
+      "epic": "Designer Mode",
+      "title": "Add Nodes to a Lab",
+      "status": "done",
+      "notes": "DesignerDialog's Nodes group adds/removes nodes with an ID and an editable Docker-image combo box (a few common images suggested). Client-side checks mirror the API's ID pattern and duplicate-ID rejection, with inline error messages; server-side Validate/Save also surface any remaining issues.",
+      "acceptance_criteria": [
+        {
+          "text": "The instructor can add a node with an ID.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can choose or type a Docker image.",
+          "complete": true
+        },
+        {
+          "text": "Node IDs must match the API validation rules.",
+          "complete": true
+        },
+        {
+          "text": "Duplicate node IDs are rejected.",
+          "complete": true
+        },
+        {
+          "text": "Invalid nodes show clear validation messages.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-add-networks",
+      "epic": "Designer Mode",
+      "title": "Add Networks to a Lab",
+      "status": "done",
+      "notes": "DesignerDialog's Networks group adds/removes networks with an ID and IPv4 CIDR subnet, rejecting duplicate IDs and invalid CIDR values inline. An 'Attached Nodes' column, derived from the Connections table, shows which nodes are attached to each network and updates live as connections are added or removed.",
+      "acceptance_criteria": [
+        {
+          "text": "The instructor can add a network with an ID.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can define an IPv4 subnet.",
+          "complete": true
+        },
+        {
+          "text": "Duplicate network IDs are rejected.",
+          "complete": true
+        },
+        {
+          "text": "Invalid CIDR ranges are rejected.",
+          "complete": true
+        },
+        {
+          "text": "The UI shows which nodes are attached to each network.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-connect-nodes-networks",
+      "epic": "Designer Mode",
+      "title": "Connect Nodes to Networks",
+      "status": "done",
+      "notes": "DesignerDialog's Connections group lets the instructor pick a node and network from combo boxes and assign an interface address. Client-side checks mirror the API: address must parse as an IPv4 interface, must belong to the selected network's subnet, a node cannot have two interfaces on the same network, and an IP cannot be assigned twice.",
+      "acceptance_criteria": [
+        {
+          "text": "The instructor can select a node and network.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can assign an IP interface address.",
+          "complete": true
+        },
+        {
+          "text": "The address must belong to the selected network.",
+          "complete": true
+        },
+        {
+          "text": "A node cannot have duplicate interfaces on the same network.",
+          "complete": true
+        },
+        {
+          "text": "Duplicate IP assignments are rejected.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-validate-lab",
+      "epic": "Designer Mode",
+      "title": "Validate Lab Design",
+      "status": "done",
+      "notes": "POST /labs/validate now returns structured validation results with valid true/false, a normalized lab on success, and field-level errors on failure. The future designer UI can use the valid flag to show success, highlight errors, and block export.",
+      "acceptance_criteria": [
+        {
+          "text": "The app sends the lab definition to POST /labs/validate.",
+          "complete": true
+        },
+        {
+          "text": "Validation success is clearly shown.",
+          "complete": true
+        },
+        {
+          "text": "Validation errors identify the affected node, network, or interface.",
+          "complete": true
+        },
+        {
+          "text": "Export is disabled or discouraged when validation fails.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-author-manual",
+      "epic": "Designer Mode",
+      "title": "Author Lab Manual",
+      "status": "done",
+      "notes": "The lab spec now supports an optional manual with ordered sections, markdown content, and optional checklist tasks. The actual desktop manual editor and rendered preview UI will be implemented in later Designer Mode and Lab Manual Flyout stories.",
+      "acceptance_criteria": [
+        {
+          "text": "The instructor can create manual sections.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can write formatted instructional content.",
+          "complete": true
+        },
+        {
+          "text": "The manual is stored inside or alongside the lab spec.",
+          "complete": true
+        },
+        {
+          "text": "The instructor can preview the manual as a student would see it.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-export-spec",
+      "epic": "Designer Mode",
+      "title": "Export Lab Spec",
+      "status": "done",
+      "notes": "The API now exposes GET /labs/{lab_id}/export, which returns a validated, normalized, portable LabDefinition JSON without runtime-only id or status fields.",
+      "acceptance_criteria": [
+        {
+          "text": "The app exports a portable JSON spec file.",
+          "complete": true
+        },
+        {
+          "text": "The exported file includes topology and manual content.",
+          "complete": true
+        },
+        {
+          "text": "The exported file can be imported on another machine.",
+          "complete": true
+        },
+        {
+          "text": "The export process validates the spec before completion.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "student-import-spec",
+      "epic": "Student Import Mode",
+      "title": "Import Instructor Spec",
+      "status": "done",
+      "notes": "The API now exposes POST /labs/import. Valid instructor specs are validated, normalized, assigned a lab id, and added to the local in-memory lab list. Invalid specs return structured errors and are not stored. The future desktop app will handle the actual file picker and malformed file handling before sending JSON to the API. Product decision confirmed 2026-10-11: a conflict-free import auto-starts the lab rather than stopping at an unstarted list entry; see windows-desktop-import-lab-file for the desktop flow.",
+      "acceptance_criteria": [
+        {
+          "text": "The student can select a spec file from disk.",
+          "complete": true
+        },
+        {
+          "text": "The app validates the imported file.",
+          "complete": true
+        },
+        {
+          "text": "Invalid files show clear errors.",
+          "complete": true
+        },
+        {
+          "text": "Valid files are added to the local lab list.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "student-preview-imported-lab",
+      "epic": "Student Import Mode",
+      "title": "Preview Imported Lab",
+      "status": "done",
+      "notes": "The API now exposes GET /labs/{lab_id}/preview with lab metadata, required Docker images, estimated CPU/memory/ports, read-only topology data, and manual content for an imported or created lab.",
+      "acceptance_criteria": [
+        {
+          "text": "The app shows the lab name and description.",
+          "complete": true
+        },
+        {
+          "text": "The app shows required Docker images.",
+          "complete": true
+        },
+        {
+          "text": "The app shows estimated resource requirements.",
+          "complete": true
+        },
+        {
+          "text": "The app shows the topology in read-only mode.",
+          "complete": true
+        },
+        {
+          "text": "The app shows the lab manual flyout.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "student-start-lab",
+      "epic": "Student Import Mode",
+      "title": "Start Lab",
+      "status": "done",
+      "notes": "Student start is backed by POST /labs/{lab_id}/start. The endpoint delegates to the Docker runtime, updates lab status, and returns structured runtime errors for the future desktop UI.",
+      "acceptance_criteria": [
+        {
+          "text": "The app starts the lab using the local API.",
+          "complete": true
+        },
+        {
+          "text": "Docker networks are created.",
+          "complete": true
+        },
+        {
+          "text": "Docker containers are created and attached to the correct networks.",
+          "complete": true
+        },
+        {
+          "text": "The lab status changes from defined to running.",
+          "complete": true
+        },
+        {
+          "text": "Startup errors are shown clearly.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "student-stop-lab",
+      "epic": "Student Import Mode",
+      "title": "Stop Lab",
+      "status": "done",
+      "notes": "Student stop is backed by POST /labs/{lab_id}/stop. It stops lab containers through the runtime, preserves the lab spec, handles repeated stop calls predictably, and returns structured runtime errors.",
+      "acceptance_criteria": [
+        {
+          "text": "The student can stop a running lab.",
+          "complete": true
+        },
+        {
+          "text": "Containers are stopped.",
+          "complete": true
+        },
+        {
+          "text": "The lab status changes to stopped.",
+          "complete": true
+        },
+        {
+          "text": "The app does not delete the imported lab spec.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "student-reset-lab",
+      "epic": "Student Import Mode",
+      "title": "Reset Lab",
+      "status": "done",
+      "notes": "Student reset is backed by POST /labs/{lab_id}/reset. It removes lab-created runtime resources through the runtime, returns the lab to defined status on success, and preserves the original spec/manual content.",
+      "acceptance_criteria": [
+        {
+          "text": "The app stops and removes existing lab containers.",
+          "complete": true
+        },
+        {
+          "text": "The original spec remains available.",
+          "complete": true
+        },
+        {
+          "text": "The student can start the lab again from a clean state.",
+          "complete": true
+        },
+        {
+          "text": "The app warns before destructive reset actions.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "manual-view-flyout",
+      "epic": "Lab Manual Flyout",
+      "title": "View Lab Manual While Working",
+      "status": "done",
+      "notes": "ManualFlyout (desktop/src/practicum_desktop/manual.py) is a QDockWidget toggled by a 'View Manual' button in main_window.py. It loads via ApiClient.get_preview (GET /labs/{lab_id}/preview), refreshes whenever the selected lab changes, and renders each manual section's markdown with QTextBrowser.setMarkdown (headings, lists, code blocks, and clickable links all supported).",
+      "acceptance_criteria": [
+        {
+          "text": "The manual can be opened and closed from the main lab view.",
+          "complete": true
+        },
+        {
+          "text": "The manual remains associated with the current lab.",
+          "complete": true
+        },
+        {
+          "text": "The manual supports headings, lists, code blocks, and links.",
+          "complete": true
+        },
+        {
+          "text": "The flyout does not block core lab controls.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "manual-track-progress",
+      "epic": "Lab Manual Flyout",
+      "title": "Track Manual Progress",
+      "status": "done",
+      "notes": "Each manual task renders as a QCheckBox inside ManualFlyout. Checked state is persisted in QSettings keyed by lab id/section id/task id, so it survives restarts without ever touching the instructor's spec on the server. A dedicated 'Reset Progress' button clears only the current lab's stored progress, independent of the lab's Docker runtime reset.",
+      "acceptance_criteria": [
+        {
+          "text": "Manual sections can have checkable tasks.",
+          "complete": true
+        },
+        {
+          "text": "Progress is stored locally.",
+          "complete": true
+        },
+        {
+          "text": "Progress does not modify the instructor's original spec.",
+          "complete": true
+        },
+        {
+          "text": "Resetting progress is available as a separate action.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-api-start-lab",
+      "epic": "Docker Runtime API",
+      "title": "Start Lab Through API",
+      "status": "done",
+      "notes": "The API now exposes POST /labs/{lab_id}/start. LabService delegates to a runtime abstraction, the default Docker runtime creates lab networks and containers with labels/resource flags, successful starts set status to running, and runtime failures return structured errors with status set to error.",
+      "acceptance_criteria": [
+        {
+          "text": "API exposes POST /labs/{lab_id}/start.",
+          "complete": true
+        },
+        {
+          "text": "Starting a lab creates required Docker networks.",
+          "complete": true
+        },
+        {
+          "text": "Starting a lab creates required Docker containers.",
+          "complete": true
+        },
+        {
+          "text": "API returns updated lab status.",
+          "complete": true
+        },
+        {
+          "text": "API reports Docker errors in a structured response.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-api-stop-lab",
+      "epic": "Docker Runtime API",
+      "title": "Stop Lab Through API",
+      "status": "done",
+      "notes": "The API now exposes POST /labs/{lab_id}/stop. LabService delegates to the runtime, status becomes stopped on success, repeated stops are idempotent, and runtime failures return structured errors.",
+      "acceptance_criteria": [
+        {
+          "text": "API exposes POST /labs/{lab_id}/stop.",
+          "complete": true
+        },
+        {
+          "text": "Running containers for that lab are stopped.",
+          "complete": true
+        },
+        {
+          "text": "Lab status updates to stopped.",
+          "complete": true
+        },
+        {
+          "text": "Stopping an already stopped lab is handled predictably.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-api-status",
+      "epic": "Docker Runtime API",
+      "title": "Report Lab Runtime Status",
+      "status": "done",
+      "notes": "The API now exposes GET /labs/{lab_id}/status. It returns stored lab status plus runtime resource status for networks and containers, including missing-resource errors when detected by the runtime.",
+      "acceptance_criteria": [
+        {
+          "text": "API exposes lab runtime status.",
+          "complete": true
+        },
+        {
+          "text": "Desktop UI refreshes status.",
+          "complete": true
+        },
+        {
+          "text": "Container-level errors are visible.",
+          "complete": true
+        },
+        {
+          "text": "Missing Docker resources are detected and reported.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-browser-accessible-nodes",
+      "epic": "Docker Runtime API",
+      "title": "Browser Accessible Lab Nodes",
+      "status": "done",
+      "notes": "The lab spec and runtime now support browser/service-oriented containers through command options, environment variables, shared memory, and host/container port mappings.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab spec can map host ports to container ports.",
+          "complete": true
+        },
+        {
+          "text": "A lab spec can set node environment variables.",
+          "complete": true
+        },
+        {
+          "text": "A lab spec can set command to null to use the image default startup behavior.",
+          "complete": true
+        },
+        {
+          "text": "A lab spec can request shm_size_mb.",
+          "complete": true
+        },
+        {
+          "text": "The Docker runtime applies these settings when starting containers.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-node-command-options",
+      "epic": "Docker Runtime API",
+      "title": "Node Command Options",
+      "status": "done",
+      "notes": "Nodes default to sleep infinity for CLI labs, can provide custom command lists, or can set command to null to use the image default command.",
+      "acceptance_criteria": [
+        {
+          "text": "CLI nodes continue to run with sleep infinity by default.",
+          "complete": true
+        },
+        {
+          "text": "Browser/service nodes can opt into the image default command.",
+          "complete": true
+        },
+        {
+          "text": "Custom command lists are accepted by the spec.",
+          "complete": true
+        },
+        {
+          "text": "The Docker runtime applies the selected command behavior.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-node-environment",
+      "epic": "Docker Runtime API",
+      "title": "Node Environment Variables",
+      "status": "done",
+      "notes": "Nodes can define validated environment variable names and values, and the Docker runtime passes them with -e.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab spec can include node-level environment variables.",
+          "complete": true
+        },
+        {
+          "text": "Invalid environment variable names are rejected.",
+          "complete": true
+        },
+        {
+          "text": "The runtime applies variables with -e.",
+          "complete": true
+        },
+        {
+          "text": "Preview/export/import preserve environment settings.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-port-mappings",
+      "epic": "Docker Runtime API",
+      "title": "Node Port Mappings",
+      "status": "done",
+      "notes": "Node resources now support host/container port mappings with protocol, validation, preview support, and Docker runtime application.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab spec can map host ports to container ports.",
+          "complete": true
+        },
+        {
+          "text": "Invalid ports are rejected.",
+          "complete": true
+        },
+        {
+          "text": "Duplicate host/protocol mappings are rejected.",
+          "complete": true
+        },
+        {
+          "text": "Preview shows mapped ports.",
+          "complete": true
+        },
+        {
+          "text": "The Docker runtime applies mapped ports.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-shared-memory",
+      "epic": "Docker Runtime API",
+      "title": "Node Shared Memory Settings",
+      "status": "done",
+      "notes": "Node resources now support shm_size_mb and DockerRuntime applies it with --shm-size.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab spec can request shared memory in MB.",
+          "complete": true
+        },
+        {
+          "text": "Invalid shared memory values are rejected.",
+          "complete": true
+        },
+        {
+          "text": "The Docker runtime applies --shm-size.",
+          "complete": true
+        },
+        {
+          "text": "Browser desktop examples can use the setting.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-browser-desktop-example",
+      "epic": "Docker Runtime API",
+      "title": "Browser Desktop Example Spec",
+      "status": "done",
+      "notes": "Added examples/ubuntu-webtop.json to demonstrate a browser-accessible Ubuntu desktop node using command null, environment variables, shared memory, and port mappings.",
+      "acceptance_criteria": [
+        {
+          "text": "examples/ubuntu-webtop.json exists.",
+          "complete": true
+        },
+        {
+          "text": "The example validates as an Practicum lab spec.",
+          "complete": true
+        },
+        {
+          "text": "The example defines browser-accessible ports.",
+          "complete": true
+        },
+        {
+          "text": "The example tells students what URL to open.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-host-port-availability",
+      "epic": "Docker Runtime API",
+      "title": "Host Port Availability Checks",
+      "status": "in_progress",
+      "notes": "src/practicum/ports.py checks host ports reserved by the Practicum API (PRACTICUM_API_PORT env var, default 8000), ports already bound on the host (socket probe), and duplicate host ports across nodes in the same lab spec. Exposed via GET /labs/{lab_id}/ports and consumed by the desktop UI, which blocks Start while conflicts exist. Export is not yet guarded by a port check, so the last acceptance criterion remains open.",
+      "acceptance_criteria": [
+        {
+          "text": "A host port already used by the Practicum API is rejected.",
+          "complete": true
+        },
+        {
+          "text": "A host port already used by another process is rejected.",
+          "complete": true
+        },
+        {
+          "text": "Duplicate host ports within one lab spec are rejected.",
+          "complete": true
+        },
+        {
+          "text": "Port conflict errors identify the affected node and port.",
+          "complete": true
+        },
+        {
+          "text": "The UI prevents start/export when unresolved port conflicts exist.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "runtime-host-port-recommendations",
+      "epic": "Docker Runtime API",
+      "title": "Host Port Recommendations",
+      "status": "done",
+      "notes": "find_available_port() in src/practicum/ports.py scans upward from the conflicting port for a currently-free port that avoids every other port already used in the lab and the Practicum API's own port. POST /labs/{lab_id}/ports/apply-recommendation applies it and the desktop UI exposes a per-conflict 'Use <port>' button that rechecks afterward.",
+      "acceptance_criteria": [
+        {
+          "text": "A conflicting host port includes at least one recommended replacement.",
+          "complete": true
+        },
+        {
+          "text": "Recommended ports are currently available.",
+          "complete": true
+        },
+        {
+          "text": "Recommended ports do not conflict with other mappings in the same lab.",
+          "complete": true
+        },
+        {
+          "text": "The UI can apply a recommended port to the affected mapping.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-in-app-dialogs",
+      "epic": "Windows Desktop Application",
+      "title": "In-App Dialogs Only",
+      "status": "not_started",
+      "notes": "New story. A native browser confirm() popup was caught during clickable-mockup review when wiring a Delete action, which visibly broke the 'self-contained app' illusion. Mockup now has a reusable showConfirm()/#confirmModal pattern in practicum-mockups.html; the real PySide6 app needs an equivalent shared QDialog-based component. Blocks windows-desktop-labs-dashboard and windows-desktop-lab-lifecycle-controls, which both need it for their destructive actions.",
+      "acceptance_criteria": [
+        {
+          "text": "Deleting a lab from the Labs Dashboard shows the in-app confirmation component, not a native dialog.",
+          "complete": false
+        },
+        {
+          "text": "Resetting a running lab shows the in-app confirmation component, not a native dialog.",
+          "complete": false
+        },
+        {
+          "text": "Any other destructive or irreversible action reuses this same component rather than introducing a new native dialog.",
+          "complete": false
+        },
+        {
+          "text": "The only native OS dialog anywhere in the app is the system file-open picker used during import.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-labs-dashboard",
+      "epic": "Windows Desktop Application",
+      "title": "Labs Dashboard",
+      "status": "not_started",
+      "notes": "New story. The desktop app has no home screen for returning users today; GET /labs is already implemented but not surfaced as a dashboard. Reference design: screen-dashboard in practicum-mockups.html. Depends on windows-desktop-in-app-dialogs for its Delete confirmation.",
+      "acceptance_criteria": [
+        {
+          "text": "A user with zero labs sees the existing welcome screen with Create/Import actions.",
+          "complete": false
+        },
+        {
+          "text": "A user with one or more labs sees a dashboard listing each lab with its correct status.",
+          "complete": false
+        },
+        {
+          "text": "Opening a Running lab returns to its running view without issuing a new Start call.",
+          "complete": false
+        },
+        {
+          "text": "Starting a Stopped lab routes through the pre-start readiness gate before any containers are created.",
+          "complete": false
+        },
+        {
+          "text": "Deleting a lab requires an in-app confirmation and removes it from the list on confirm.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-prestart-lab-gate",
+      "epic": "Windows Desktop Application",
+      "title": "Pre-Start Readiness Gate",
+      "status": "not_started",
+      "notes": "New story. Unifies the already-done student-preview-imported-lab preview data and windows-desktop-port-conflict-ui conflict/recommendation UI into one mandatory screen before any Start, reachable from the dashboard, Designer save, and (conditionally) import. Reference design: screen-preview in practicum-mockups.html, verified for both a has-conflict and a zero-conflict scenario.",
+      "acceptance_criteria": [
+        {
+          "text": "The screen shows lab name, description, required images, estimated resources, and read-only topology.",
+          "complete": false
+        },
+        {
+          "text": "Port conflicts block Start until resolved, and applying a recommendation re-checks and clears that conflict.",
+          "complete": false
+        },
+        {
+          "text": "A lab with zero conflicts shows a clear ready-to-start state and an immediately-enabled Start button.",
+          "complete": false
+        },
+        {
+          "text": "Canceling this screen does not start, modify, or delete the lab.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-import-lab-file",
+      "epic": "Windows Desktop Application",
+      "title": "Import Lab File and Launch",
+      "status": "not_started",
+      "notes": "New story. Defines the desktop-specific file-open experience for POST /labs/import (already done); a conflict-free import auto-starts the lab (confirmed 2026-10-11, student-import-spec updated to match), falling back to windows-desktop-prestart-lab-gate when conflicts exist.",
+      "acceptance_criteria": [
+        {
+          "text": "The user can select a lab file via a file-open affordance.",
+          "complete": false
+        },
+        {
+          "text": "Invalid or malformed files show a clear, specific error and the import does not proceed.",
+          "complete": false
+        },
+        {
+          "text": "A valid, conflict-free import proceeds straight to the running view without extra clicks.",
+          "complete": false
+        },
+        {
+          "text": "A valid import with port conflicts stops at the pre-start readiness gate instead of starting.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-lab-lifecycle-controls",
+      "epic": "Windows Desktop Application",
+      "title": "Lab Lifecycle Controls",
+      "status": "not_started",
+      "notes": "New story. The real desktop app currently has no Stop/Restart/Reset controls in its running-lab view at all, only Start. Wires POST /labs/{lab_id}/reset (already done per student-reset-lab) through the shared confirmation component from windows-desktop-in-app-dialogs, visually distinct from Stop/Restart. Must not touch the separate, already-implemented manual-progress 'Reset Progress' control.",
+      "acceptance_criteria": [
+        {
+          "text": "The running-lab view exposes Restart, Stop, and Reset as distinct actions.",
+          "complete": false
+        },
+        {
+          "text": "Selecting Reset always shows an in-app confirmation before any destructive call is made.",
+          "complete": false
+        },
+        {
+          "text": "Confirming Reset calls the lab reset endpoint and the UI reflects the lab's returned-to-clean state afterward.",
+          "complete": false
+        },
+        {
+          "text": "Manual progress survives a Reset; it is only cleared by the manual flyout's own Reset Progress action.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-embedded-lab-view",
+      "epic": "Windows Desktop Application",
+      "title": "Embedded Lab View",
+      "status": "not_started",
+      "notes": "New story. Replaces the current webbrowser.open(...)-based external launch with an in-app embedded view (likely QWebEngineView from the already-bundled PySide6 QtWebEngineWidgets), docked beside the existing Lab Manual flyout. Reference design: screen-running's browser-pane in practicum-mockups.html.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab with one browser-accessible node shows that node's interface embedded in the app, not in an external browser.",
+          "complete": false
+        },
+        {
+          "text": "A lab with multiple browser-accessible nodes lets the user pick which one to view.",
+          "complete": false
+        },
+        {
+          "text": "The instructions flyout can be opened and closed without losing the embedded view's state.",
+          "complete": false
+        },
+        {
+          "text": "An open-in-system-browser option is available from the embedded view.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "designer-visual-topology-builder",
+      "epic": "Designer Mode",
+      "title": "Visual Topology Builder (Basic)",
+      "status": "not_started",
+      "notes": "New story. Upgrades the existing table-based DesignerDialog (designer-add-nodes/designer-add-networks/designer-connect-nodes-networks, all done) to a card-based Machines/Network-Topology/Networks layout with no changes to validation or the underlying data model. Deliberately scoped below future-roadmap/advanced-designer-features/advanced-visual-topology-designer.md (drag-and-drop canvas, auto-layout), which remains a candidate paid feature per open-core-boundary.md. Reference design: screen-custom in practicum-mockups.html.",
+      "acceptance_criteria": [
+        {
+          "text": "Adding a machine shows it as a card with its id and image.",
+          "complete": false
+        },
+        {
+          "text": "Adding a network shows it in the networks panel with its id and subnet.",
+          "complete": false
+        },
+        {
+          "text": "Connecting a machine to a network updates the topology view to show that connection and its subnet label.",
+          "complete": false
+        },
+        {
+          "text": "Existing Validate and Save behavior, including error messages, is unchanged.",
+          "complete": false
+        }
+      ]
+    }
+  ]
+}

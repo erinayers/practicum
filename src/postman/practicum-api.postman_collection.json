@@ -1,0 +1,1440 @@
+{
+  "info": {
+    "_postman_id": "4df6d1f5-2df5-4a31-8f7d-practicum0001",
+    "name": "Practicum Local API",
+    "description": "Postman collection for the current Practicum local FastAPI endpoints. Start the API with `uvicorn practicum.main:app --reload`, then run these requests against `http://127.0.0.1:8000`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "labId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "webtopLabId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('API is healthy', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('ok');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate Lab Definition",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Static Routing Fundamentals\",\n  \"description\": \"Practice configuring static routes across two routed subnets.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"router\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"host-b\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    },\n    {\n      \"id\": \"right\",\n      \"subnet\": \"10.0.2.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.10/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.1/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.1/24\"\n    },\n    {\n      \"node\": \"host-b\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/validate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "validate"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Lab is valid', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.valid).to.eql(true);",
+              "  pm.expect(body.lab.name).to.eql('Static Routing Fundamentals');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Lab",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Static Routing Fundamentals\",\n  \"description\": \"Practice configuring static routes across two routed subnets.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"router\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"host-b\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    },\n    {\n      \"id\": \"right\",\n      \"subnet\": \"10.0.2.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.10/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.1/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.1/24\"\n    },\n    {\n      \"node\": \"host-b\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 201', function () {",
+              "  pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test('Created lab has id and defined status', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.id).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.status).to.eql('defined');",
+              "  pm.collectionVariables.set('labId', body.id);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Lab - Invalid Definition (422)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Invalid Address Example\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"192.168.1.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 422', function () {",
+              "  pm.response.to.have.status(422);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List Labs",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response is an array', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Import Lab Spec",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Imported Static Routing Lab\",\n  \"description\": \"Imported lab spec example.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"router\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.10/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.1/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/import",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "import"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Valid lab spec is imported', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.imported).to.eql(true);",
+              "  pm.expect(body.errors).to.eql([]);",
+              "  pm.expect(body.lab.id).to.be.a('string').and.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Import Invalid Lab Spec",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Invalid Imported Lab\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"192.168.1.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/import",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "import"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Invalid lab spec is not imported', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.imported).to.eql(false);",
+              "  pm.expect(body.lab).to.eql(null);",
+              "  pm.expect(body.errors[0].message).to.include('outside network');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Created Lab",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Fetched lab matches saved labId', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.id).to.eql(pm.collectionVariables.get('labId'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Missing Lab",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Export Created Lab Spec",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/export",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "export"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Export is portable lab spec without runtime fields', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.id).to.be.undefined;",
+              "  pm.expect(body.status).to.be.undefined;",
+              "  pm.expect(body.name).to.eql('Static Routing Fundamentals');",
+              "  pm.expect(body.nodes).to.be.an('array').and.not.empty;",
+              "  pm.expect(body.networks).to.be.an('array').and.not.empty;",
+              "  pm.expect(body.interfaces).to.be.an('array').and.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Export Missing Lab",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/export",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "export"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Preview Created Lab",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/preview",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "preview"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Preview includes metadata, images, resources, topology, and manual', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.name).to.eql('Static Routing Fundamentals');",
+              "  pm.expect(body.required_images).to.include('alpine:3.21');",
+              "  pm.expect(body.estimated_resources).to.have.property('total_cpu');",
+              "  pm.expect(body.topology.nodes).to.be.an('array').and.not.empty;",
+              "  pm.expect(body.manual).to.be.an('object');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Preview Missing Lab",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/preview",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "preview"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Start Created Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/start",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "start"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Start returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Start Missing Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/start",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "start"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Created Lab Runtime Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "status"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Runtime status response includes lab and resource arrays', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.resources).to.be.an('array');",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Missing Lab Runtime Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "status"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stop Created Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/stop",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "stop"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Stop returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stop Missing Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/stop",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "stop"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reset Created Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "reset"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Reset preserves the lab and returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reset Missing Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "reset"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Check Created Lab Ports",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/ports",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "ports"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Port check response has expected shape', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.lab_id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.has_conflicts).to.be.a('boolean');",
+              "  pm.expect(body.conflicts).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Check Missing Lab Ports",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/ports",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "ports"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Apply Port Recommendation - No Conflict (409)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"node_id\": \"router\",\n  \"host_port\": 2222,\n  \"protocol\": \"tcp\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/ports/apply-recommendation",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "ports",
+            "apply-recommendation"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 409 when port 2222 is not actually conflicting', function () {",
+              "  pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Apply Port Recommendation - Missing Lab",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"node_id\": \"router\",\n  \"host_port\": 2222,\n  \"protocol\": \"tcp\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/ports/apply-recommendation",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "ports",
+            "apply-recommendation"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate Invalid Lab - Address Outside Network",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Invalid Address Example\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"192.168.1.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/validate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "validate"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Response explains outside network validation failure', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.valid).to.eql(false);",
+              "  pm.expect(body.errors[0].message).to.include('outside network');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate Ubuntu Webtop Lab",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Ubuntu Browser Desktop\",\n  \"description\": \"Launch a browser-accessible Ubuntu desktop container for GUI-based lab work.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"manual\": {\n    \"sections\": [\n      {\n        \"id\": \"open-desktop\",\n        \"title\": \"Open the Desktop\",\n        \"content_markdown\": \"Start the lab, then open `https://localhost:3001` in your browser.\",\n        \"tasks\": [\n          {\n            \"id\": \"start-lab\",\n            \"text\": \"Start the lab from Practicum.\"\n          },\n          {\n            \"id\": \"open-browser\",\n            \"text\": \"Open the web desktop in a browser.\"\n          }\n        ]\n      }\n    ]\n  },\n  \"nodes\": [\n    {\n      \"id\": \"ubuntu-desktop\",\n      \"image\": \"lscr.io/linuxserver/webtop:ubuntu-xfce\",\n      \"command\": null,\n      \"environment\": {\n        \"TITLE\": \"Practicum Ubuntu\"\n      },\n      \"resources\": {\n        \"cpu\": 2,\n        \"memory_mb\": 2048,\n        \"shm_size_mb\": 1024,\n        \"port_mappings\": [\n          {\n            \"host\": 3000,\n            \"container\": 3000\n          },\n          {\n            \"host\": 3001,\n            \"container\": 3001\n          }\n        ]\n      }\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"desktop\",\n      \"subnet\": \"10.10.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"ubuntu-desktop\",\n      \"network\": \"desktop\",\n      \"address\": \"10.10.1.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/validate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "validate"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Ubuntu webtop lab is valid', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.valid).to.eql(true);",
+              "  pm.expect(body.lab.nodes[0].command).to.eql(null);",
+              "  pm.expect(body.lab.nodes[0].resources.port_mappings).to.have.length(2);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Import Ubuntu Webtop Lab",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Ubuntu Browser Desktop\",\n  \"description\": \"Launch a browser-accessible Ubuntu desktop container for GUI-based lab work.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"manual\": {\n    \"sections\": [\n      {\n        \"id\": \"open-desktop\",\n        \"title\": \"Open the Desktop\",\n        \"content_markdown\": \"Start the lab, then open `https://localhost:3001` in your browser.\",\n        \"tasks\": [\n          {\n            \"id\": \"start-lab\",\n            \"text\": \"Start the lab from Practicum.\"\n          },\n          {\n            \"id\": \"open-browser\",\n            \"text\": \"Open the web desktop in a browser.\"\n          }\n        ]\n      }\n    ]\n  },\n  \"nodes\": [\n    {\n      \"id\": \"ubuntu-desktop\",\n      \"image\": \"lscr.io/linuxserver/webtop:ubuntu-xfce\",\n      \"command\": null,\n      \"environment\": {\n        \"TITLE\": \"Practicum Ubuntu\"\n      },\n      \"resources\": {\n        \"cpu\": 2,\n        \"memory_mb\": 2048,\n        \"shm_size_mb\": 1024,\n        \"port_mappings\": [\n          {\n            \"host\": 3000,\n            \"container\": 3000\n          },\n          {\n            \"host\": 3001,\n            \"container\": 3001\n          }\n        ]\n      }\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"desktop\",\n      \"subnet\": \"10.10.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"ubuntu-desktop\",\n      \"network\": \"desktop\",\n      \"address\": \"10.10.1.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/import",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "import"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Ubuntu webtop lab is imported and saved', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.imported).to.eql(true);",
+              "  pm.expect(body.lab.id).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.lab.nodes[0].image).to.eql('lscr.io/linuxserver/webtop:ubuntu-xfce');",
+              "  pm.collectionVariables.set('webtopLabId', body.lab.id);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Preview Ubuntu Webtop Lab",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{webtopLabId}}/preview",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{webtopLabId}}",
+            "preview"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('webtopLabId')) {",
+              "  throw new Error('No webtopLabId found. Run the Import Ubuntu Webtop Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Preview shows browser ports and required image', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.id).to.eql(pm.collectionVariables.get('webtopLabId'));",
+              "  pm.expect(body.required_images).to.include('lscr.io/linuxserver/webtop:ubuntu-xfce');",
+              "  pm.expect(body.estimated_resources.port_mappings).to.deep.include({ host: 3001, container: 3001, protocol: 'tcp' });",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Start Ubuntu Webtop Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{webtopLabId}}/start",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{webtopLabId}}",
+            "start"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('webtopLabId')) {",
+              "  throw new Error('No webtopLabId found. Run the Import Ubuntu Webtop Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Start returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('webtopLabId'));",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});",
+              "",
+              "pm.test('If start succeeds, webtop should be running', function () {",
+              "  const body = pm.response.json();",
+              "  if (body.success) {",
+              "    pm.expect(body.lab.status).to.eql('running');",
+              "  }",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Ubuntu Webtop Runtime Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{webtopLabId}}/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{webtopLabId}}",
+            "status"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('webtopLabId')) {",
+              "  throw new Error('No webtopLabId found. Run the Import Ubuntu Webtop Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Runtime status response includes lab and resources', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('webtopLabId'));",
+              "  pm.expect(body.resources).to.be.an('array');",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stop Ubuntu Webtop Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{webtopLabId}}/stop",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{webtopLabId}}",
+            "stop"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('webtopLabId')) {",
+              "  throw new Error('No webtopLabId found. Run the Import Ubuntu Webtop Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Stop returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('webtopLabId'));",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reset Ubuntu Webtop Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{webtopLabId}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{webtopLabId}}",
+            "reset"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('webtopLabId')) {",
+              "  throw new Error('No webtopLabId found. Run the Import Ubuntu Webtop Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Reset returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('webtopLabId'));",
+              "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
