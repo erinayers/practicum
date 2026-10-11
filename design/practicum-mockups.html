@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Practicum — Clickable Mockups</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --ink-soft: #1e293b;
+    --muted: #6b7280;
+    --muted-2: #94a3b8;
+    --line: #e5e7eb;
+    --line-soft: #eef0f3;
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --accent: #0f172a;
+    --accent-soft: #eef2ff;
+    --green: #16a34a;
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+    font-family: -apple-system, "Segoe UI", Inter, Roboto, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #dde1e7;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  .window {
+    width: 1200px;
+    height: 760px;
+    background: var(--card);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .titlebar {
+    height: 46px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+  .brand { display: flex; align-items: center; gap: 8px; }
+  .badge {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: var(--ink); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 11px; letter-spacing: 0.3px;
+  }
+  .brand span { font-weight: 600; font-size: 14px; color: var(--ink); }
+  .win-controls { display: flex; gap: 6px; }
+  .win-controls span {
+    width: 26px; height: 26px; border-radius: 6px;
+    background: #f3f4f6; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: var(--muted);
+  }
+  .content { flex: 1; position: relative; overflow: hidden; background: var(--card); }
+  .screen {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column;
+    background: var(--card);
+  }
+  .screen.active { display: flex; }
+
+  .back-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--muted); font-size: 13px; text-decoration: none;
+    cursor: pointer; border: none; background: none; padding: 0; width: fit-content;
+  }
+  .back-link:hover { color: var(--ink); }
+
+  .btn {
+    border-radius: 10px; font-weight: 600; font-size: 13px;
+    padding: 10px 18px; border: 1px solid transparent; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .btn-primary { background: var(--ink); color: #fff; }
+  .btn-primary:hover { background: #1e293b; }
+  .btn-secondary { background: #fff; color: var(--ink); border-color: var(--line); }
+  .btn-secondary:hover { background: #f9fafb; }
+  .btn-ghost { background: transparent; color: var(--muted); border: none; }
+  .btn-danger { background: #dc2626; color: #fff; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .footer-powered {
+    text-align: center; color: var(--muted-2); font-size: 12px;
+    padding: 14px 0 20px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+
+  /* ---------- Screen 1: Welcome ---------- */
+  #screen-welcome .hero {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  }
+  #screen-welcome h1 { font-size: 42px; margin: 0; color: var(--ink); letter-spacing: -1px; }
+  #screen-welcome p.sub { color: var(--muted); font-size: 15px; margin: 0 0 10px; }
+  #screen-welcome .cta-row { display: flex; gap: 12px; }
+
+  /* ---------- Screen 2: Create New Lab ---------- */
+  .page { padding: 28px 44px 0; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .page-head { text-align: center; margin: 18px 0 26px; }
+  .page-head h1 { font-size: 28px; margin: 6px 0 8px; color: var(--ink); }
+  .page-head p { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .choice-row { display: flex; gap: 20px; flex: 1; min-height: 0; }
+  .choice-card {
+    flex: 1; border: 1px solid var(--line); border-radius: var(--radius-md);
+    padding: 22px; display: flex; flex-direction: column; cursor: pointer;
+    transition: border-color .15s;
+  }
+  .choice-card:hover { border-color: var(--ink); }
+  .choice-card .tag {
+    align-self: flex-end; background: #f3f4f6; color: var(--muted);
+    font-size: 11px; padding: 4px 10px; border-radius: 999px; margin-top: -34px;
+  }
+  .choice-icon {
+    width: 38px; height: 38px; border-radius: 10px; background: var(--line-soft);
+    display: flex; align-items: center; justify-content: center; font-size: 18px; margin-bottom: 14px;
+  }
+  .choice-card h2 { font-size: 18px; margin: 0 0 6px; color: var(--ink); }
+  .choice-card p.desc { color: var(--muted); font-size: 13px; margin: 0 0 16px; line-height: 1.5; }
+
+  .template-row { display: flex; gap: 10px; margin-bottom: 8px; }
+  .template-option {
+    flex: 1; border: 1.5px solid var(--line); border-radius: var(--radius-sm);
+    padding: 10px 12px; display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; cursor: pointer;
+  }
+  .template-option.selected { border-color: var(--ink); background: #fafafa; }
+  .template-option .dot {
+    width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); flex: 0 0 auto;
+  }
+  .template-option.selected .dot { border-color: var(--ink); background: radial-gradient(circle, var(--ink) 0 5px, transparent 6px); }
+  .hint { color: var(--muted-2); font-size: 11.5px; margin: 6px 0 16px; }
+
+  .mini-topology {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 0;
+    background: var(--line-soft); border-radius: var(--radius-sm); margin-bottom: 16px; padding: 10px;
+  }
+  .mini-node {
+    width: 54px; height: 54px; border-radius: 12px; background: #fff; border: 1px solid var(--line);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 16px; gap: 2px;
+  }
+  .mini-node small { font-size: 9px; color: var(--muted); }
+  .mini-connector { flex: 0 0 34px; height: 2px; background: #cbd5e1; }
+
+  .choice-card .spacer { flex: 1; }
+
+  /* ---------- Screen 3: Quick start config ---------- */
+  #screen-quickstart .qs-top {
+    display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px;
+  }
+  .toggle-pill {
+    display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--ink-soft); cursor: pointer;
+  }
+  .switch { width: 30px; height: 16px; border-radius: 999px; background: var(--line); position: relative; transition: .15s; }
+  .switch::after { content: ''; position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .toggle-pill.on .switch { background: var(--ink); }
+  .toggle-pill.on .switch::after { left: 16px; }
+
+  .field label { font-size: 12px; font-weight: 600; color: var(--ink-soft); display: block; margin-bottom: 6px; }
+  .field input[type=text], .field textarea {
+    width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px;
+    font-size: 13px; color: var(--ink); font-family: inherit;
+  }
+  .template-bar {
+    display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 10px 14px; margin: 14px 0 18px; background: #fafafa; font-size: 13px;
+  }
+  .template-bar .left { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); }
+  .template-bar a.change { color: var(--muted); font-size: 12px; text-decoration: none; cursor: pointer; }
+
+  .qs-columns { display: flex; gap: 20px; flex: 1; min-height: 0; }
+  .qs-panel { flex: 1; border: 1px solid var(--line); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; min-width: 0; }
+  .qs-panel h3 { margin: 0 0 4px; font-size: 14px; color: var(--ink); }
+  .qs-panel p.caption { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip { background: #eef2ff; color: #3730a3; font-size: 11.5px; padding: 5px 10px; border-radius: 999px; display: flex; align-items: center; gap: 6px; }
+  .chip.muted { background: #f3f4f6; color: var(--muted); }
+  .add-chip-row { display: flex; gap: 8px; margin-top: auto; }
+  .add-chip-row input { flex: 1; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 12.5px; }
+
+  .task-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--ink-soft); padding: 6px 0; border-bottom: 1px dashed var(--line-soft); }
+  .task-item:last-child { border-bottom: none; }
+  .task-item .n { width: 18px; height: 18px; border-radius: 50%; background: var(--line-soft); color: var(--muted); font-size: 10px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; margin-top: 1px; }
+
+  .bottom-bar {
+    display: flex; align-items: center; justify-content: space-between; padding: 14px 44px;
+    border-top: 1px solid var(--line); background: #fff;
+  }
+  .status-pill { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+
+  /* ---------- Screen 4: Custom lab designer ---------- */
+  #screen-custom .designer-body { display: flex; gap: 18px; flex: 1; min-height: 0; padding: 0 44px; }
+  .panel { border: 1px solid var(--line); border-radius: var(--radius-md); display: flex; flex-direction: column; min-width: 0; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
+  .panel-head h3 { margin: 0; font-size: 13.5px; color: var(--ink); }
+  .count-badge { background: var(--line-soft); color: var(--muted); font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
+
+  .machines-panel { width: 240px; flex: 0 0 auto; overflow-y: auto; }
+  .machine-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); }
+  .machine-icon { width: 30px; height: 30px; border-radius: 8px; background: var(--line-soft); display: flex; align-items: center; justify-content: center; font-size: 14px; flex: 0 0 auto; }
+  .machine-meta { min-width: 0; flex: 1; }
+  .machine-meta .id { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .machine-meta .image { font-size: 11px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .machine-actions { display: flex; gap: 4px; color: var(--muted-2); font-size: 11px; }
+  .add-row-btn {
+    margin: 10px 14px; border: 1.5px dashed var(--line); border-radius: var(--radius-sm);
+    text-align: center; padding: 10px; font-size: 12.5px; color: var(--muted); cursor: pointer;
+  }
+  .add-row-btn:hover { border-color: var(--ink); color: var(--ink); }
+
+  .topology-panel { flex: 1; min-width: 0; }
+  .topology-canvas {
+    flex: 1; margin: 14px; border-radius: var(--radius-sm); background:
+      repeating-linear-gradient(0deg, #f8fafc, #f8fafc 23px, #f1f5f9 24px),
+      repeating-linear-gradient(90deg, #f8fafc, #f8fafc 23px, #f1f5f9 24px);
+    display: flex; align-items: center; justify-content: center; padding: 0 20px;
+  }
+  .node-card {
+    width: 108px; background: #fff; border: 1.5px solid var(--line); border-radius: 12px;
+    padding: 10px 8px; text-align: center; box-shadow: 0 2px 6px rgba(15,23,42,.06);
+  }
+  .node-card .icon { font-size: 20px; margin-bottom: 4px; }
+  .node-card .id { font-size: 12px; font-weight: 700; color: var(--ink); }
+  .node-card .role { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .connector { flex: 1; max-width: 90px; position: relative; height: 40px; display: flex; align-items: center; }
+  .connector::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: #cbd5e1; }
+  .connector .pill {
+    position: relative; margin: 0 auto; background: #fff; padding: 3px 9px; border: 1px solid var(--line);
+    border-radius: 999px; font-size: 10px; color: #475569; font-family: ui-monospace, Consolas, monospace;
+  }
+
+  .interfaces-table { margin: 0 14px 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); overflow: hidden; }
+  .interfaces-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .interfaces-table th { text-align: left; background: #f8fafc; color: var(--muted); font-weight: 600; padding: 7px 10px; font-size: 11px; }
+  .interfaces-table td { padding: 7px 10px; border-top: 1px solid var(--line-soft); color: var(--ink-soft); }
+  .interfaces-table td.mono { font-family: ui-monospace, Consolas, monospace; color: var(--muted); }
+
+  .networks-panel { width: 230px; flex: 0 0 auto; }
+  .network-row { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); }
+  .network-row .id { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .network-row .subnet { font-size: 11px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+
+  /* ---------- Screen 5: Lab running ---------- */
+  #screen-running .run-top {
+    display: flex; align-items: center; justify-content: space-between; padding: 12px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .run-title-group { display: flex; align-items: center; gap: 12px; }
+  .run-title-group h2 { margin: 0; font-size: 15px; color: var(--ink); }
+  .run-title-group .meta { font-size: 11.5px; color: var(--muted); }
+  .status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--green); font-weight: 600; }
+  .run-actions { display: flex; gap: 8px; }
+  .btn-sm { padding: 7px 13px; font-size: 12.5px; }
+
+  .run-body { flex: 1; display: flex; min-height: 0; }
+  .browser-pane { flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--line); min-width: 0; }
+  .browser-chrome { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); }
+  .browser-chrome .url-bar { flex: 1; background: #f3f4f6; border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--muted); }
+  .browser-view { flex: 1; background: #0b1220; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 13px; flex-direction: column; gap: 10px; }
+  .browser-view .desktop-mock {
+    width: 70%; height: 70%; border: 1px solid #1e293b; border-radius: 10px; background: #111827;
+    display: flex; align-items: center; justify-content: center; color: #475569; font-size: 12.5px; flex-direction: column; gap: 8px;
+  }
+
+  .instructions-flyout { width: 300px; flex: 0 0 auto; display: flex; flex-direction: column; transition: width .15s, flex-basis .15s; }
+  .instructions-flyout.collapsed { width: 0; flex-basis: 0; overflow: hidden; border: none; }
+  .fly-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
+  .fly-head h3 { margin: 0; font-size: 13.5px; color: var(--ink); }
+  .fly-progress { font-size: 11px; color: var(--muted); }
+  .fly-body { flex: 1; overflow-y: auto; padding: 10px 16px; }
+  .fly-step { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+  .fly-step .marker { width: 20px; height: 20px; border-radius: 50%; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-top: 1px; }
+  .fly-step.done .marker { background: var(--green); color: #fff; }
+  .fly-step.active .marker { background: var(--ink); color: #fff; }
+  .fly-step.todo .marker { background: var(--line-soft); color: var(--muted); }
+  .fly-step h4 { margin: 0 0 3px; font-size: 12.5px; color: var(--ink); }
+  .fly-step p { margin: 0 0 6px; font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+  .fly-step code { display: block; background: #f3f4f6; border-radius: 6px; padding: 6px 8px; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+
+  .run-status-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 20px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+  .run-status-bar .left { display: flex; align-items: center; gap: 14px; }
+  .dot-ok { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 5px; }
+
+  /* ---------- Import Existing Lab (native-style file dialog) ---------- */
+  .modal-overlay {
+    position: absolute; inset: 0; background: rgba(15, 23, 42, 0.4);
+    display: none; align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-box {
+    width: 380px; background: #fff; border-radius: var(--radius-md);
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3); padding: 22px;
+  }
+  .modal-box h3 { margin: 0 0 4px; font-size: 16px; color: var(--ink); }
+  .modal-sub { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); }
+  .file-list { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow-y: auto; margin-bottom: 12px; max-height: 190px; }
+  .file-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--line-soft); }
+  .file-row:last-child { border-bottom: none; }
+  .file-row:hover { background: #f9fafb; }
+  .file-row.selected { background: var(--accent-soft); }
+  .file-row .file-icon { font-size: 16px; }
+  .file-row .name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .file-row .hint { font-size: 11px; color: var(--muted); }
+  .browse-row {
+    display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft);
+    border: 1px dashed var(--line); border-radius: var(--radius-sm); padding: 9px 12px;
+    cursor: pointer; position: relative; margin-bottom: 18px;
+  }
+  .browse-row:hover { border-color: var(--ink); }
+  .browse-row input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+  .spinner {
+    width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line-soft);
+    border-top-color: var(--ink); margin: 0 auto 14px; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-track { height: 6px; border-radius: 999px; background: var(--line-soft); overflow: hidden; margin-top: 14px; }
+  .progress-fill { height: 100%; width: 0%; background: var(--ink); border-radius: 999px; transition: width .5s ease; }
+
+  /* ---------- Screen: Your Labs (dashboard) ---------- */
+  .welcome-link { background: none; border: none; color: var(--muted); font-size: 12.5px; cursor: pointer; text-decoration: underline; margin-top: 2px; }
+  .welcome-link:hover { color: var(--ink); }
+
+  .dash-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
+  .dash-header h1 { font-size: 26px; margin: 0 0 6px; color: var(--ink); }
+  .dash-header p { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .dash-actions { display: flex; gap: 10px; flex: 0 0 auto; }
+
+  .lab-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; overflow-y: auto; padding-bottom: 8px; flex: 1; align-content: start; }
+  .lab-card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .lab-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .lab-card-id { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+  .lab-card-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--line-soft); display: flex; align-items: center; justify-content: center; font-size: 17px; flex: 0 0 auto; }
+  .lab-card-name { font-size: 14.5px; font-weight: 700; color: var(--ink); }
+  .lab-card-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .lab-status { font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .lab-status.running { background: #dcfce7; color: #15803d; }
+  .lab-status.stopped { background: #f1f5f9; color: #475569; }
+  .lab-status.draft { background: #fef3c7; color: #92400e; }
+  .lab-card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+  .lab-card-time { font-size: 11px; color: var(--muted-2); }
+  .lab-card-buttons { display: flex; gap: 6px; }
+
+  /* ---------- Screen: Lab Preview / Port Conflicts ---------- */
+  .preview-columns { display: flex; gap: 20px; flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 10px; }
+  .preview-main { flex: 1.4; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .preview-side { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .stat-row { display: flex; gap: 10px; }
+  .stat-tile { flex: 1; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .stat-tile .label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .stat-tile .value { font-size: 15px; font-weight: 700; color: var(--ink); margin-top: 2px; }
+
+  .conflict-banner { border-radius: var(--radius-sm); padding: 10px 14px; font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
+  .conflict-banner.warn { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+  .conflict-banner.ok { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+  .conflict-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .conflict-table-wrap th { text-align: left; background: #f8fafc; color: var(--muted); font-weight: 600; padding: 7px 10px; font-size: 11px; }
+  .conflict-table-wrap td { padding: 7px 10px; border-top: 1px solid var(--line-soft); color: var(--ink-soft); }
+  .conflict-table-wrap tr.resolved td { color: var(--muted-2); }
+  .conflict-table-wrap td.mono { font-family: ui-monospace, Consolas, monospace; }
+
+  .manual-preview-toggle { font-size: 12.5px; color: var(--ink-soft); cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; }
+  .manual-preview-body { display: none; margin-top: 8px; }
+  .manual-preview-body.open { display: block; }
+</style>
+</head>
+<body>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="brand"><div class="badge">PR</div><span>practicum</span></div>
+    <div class="win-controls"><span>&#8211;</span><span>&#9633;</span><span>&times;</span></div>
+  </div>
+
+  <div class="content">
+
+    <!-- SCREEN 1: Welcome -->
+    <section id="screen-welcome" class="screen active">
+      <div class="hero">
+        <h1>practicum</h1>
+        <p class="sub">Create and manage Docker-based lab environments with ease.</p>
+        <div class="cta-row">
+          <button class="btn btn-primary" onclick="showScreen('screen-create')">Create New Lab</button>
+          <button class="btn btn-secondary" onclick="openImportModal()">Import Existing Lab</button>
+        </div>
+        <button class="welcome-link" onclick="showScreen('screen-dashboard')">You have 4 labs &middot; View your labs dashboard &rarr;</button>
+      </div>
+      <div class="footer-powered">&#8855; Powered by Docker</div>
+    </section>
+
+    <!-- SCREEN 1b: Your Labs (dashboard for returning users) -->
+    <section id="screen-dashboard" class="screen">
+      <div class="page">
+        <div class="dash-header">
+          <div>
+            <h1>Your Labs</h1>
+            <p>Resume a lab, or start something new.</p>
+          </div>
+          <div class="dash-actions">
+            <button class="btn btn-secondary" onclick="openImportModal()">Import Existing Lab</button>
+            <button class="btn btn-primary" onclick="showScreen('screen-create')">+ Create New Lab</button>
+          </div>
+        </div>
+
+        <div class="lab-grid">
+          <div class="lab-card" id="labCard-python-api">
+            <div class="lab-card-top">
+              <div class="lab-card-id">
+                <div class="lab-card-icon">&#128196;</div>
+                <div>
+                  <div class="lab-card-name">Build a Python API</div>
+                  <div class="lab-card-meta">Imported from python-api-lab.zip</div>
+                </div>
+              </div>
+              <span class="lab-status running">&#9679; Running</span>
+            </div>
+            <div class="lab-card-foot">
+              <span class="lab-card-time">Opened 12 minutes ago</span>
+              <div class="lab-card-buttons">
+                <button class="btn btn-primary btn-sm" onclick="openRunningLab('Build a Python API', 'Imported from python-api-lab.zip')">Open</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="lab-card" id="labCard-static-routing">
+            <div class="lab-card-top">
+              <div class="lab-card-id">
+                <div class="lab-card-icon">&#9881;</div>
+                <div>
+                  <div class="lab-card-name">Static Routing Topology</div>
+                  <div class="lab-card-meta">Custom lab &middot; 3 machines &middot; 2 networks</div>
+                </div>
+              </div>
+              <span class="lab-status stopped">&#9679; Stopped</span>
+            </div>
+            <div class="lab-card-foot">
+              <span class="lab-card-time">Last run yesterday</span>
+              <div class="lab-card-buttons">
+                <button class="btn btn-secondary btn-sm" onclick="deleteLabCard('labCard-static-routing', 'Static Routing Topology')">Delete</button>
+                <button class="btn btn-primary btn-sm" onclick="showPreview('static-routing')">Start</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="lab-card" id="labCard-ubuntu-quickstart">
+            <div class="lab-card-top">
+              <div class="lab-card-id">
+                <div class="lab-card-icon">&#128421;</div>
+                <div>
+                  <div class="lab-card-name">Ubuntu Quick Start</div>
+                  <div class="lab-card-meta">Quick start &middot; Ubuntu &middot; single host</div>
+                </div>
+              </div>
+              <span class="lab-status stopped">&#9679; Stopped</span>
+            </div>
+            <div class="lab-card-foot">
+              <span class="lab-card-time">Last run 3 days ago</span>
+              <div class="lab-card-buttons">
+                <button class="btn btn-secondary btn-sm" onclick="deleteLabCard('labCard-ubuntu-quickstart', 'Ubuntu Quick Start')">Delete</button>
+                <button class="btn btn-primary btn-sm" onclick="showPreview('ubuntu-quickstart')">Start</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="lab-card" id="labCard-networking-101">
+            <div class="lab-card-top">
+              <div class="lab-card-id">
+                <div class="lab-card-icon">&#128230;</div>
+                <div>
+                  <div class="lab-card-name">Networking 101</div>
+                  <div class="lab-card-meta">Custom lab &middot; not yet validated</div>
+                </div>
+              </div>
+              <span class="lab-status draft">&#9679; Draft</span>
+            </div>
+            <div class="lab-card-foot">
+              <span class="lab-card-time">Edited 20 minutes ago</span>
+              <div class="lab-card-buttons">
+                <button class="btn btn-secondary btn-sm" onclick="deleteLabCard('labCard-networking-101', 'Networking 101')">Delete</button>
+                <button class="btn btn-secondary btn-sm" onclick="showScreen('screen-custom')">Edit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="footer-powered">&#8855; Powered by Docker</div>
+    </section>
+
+    <!-- SCREEN 2: Create New Lab -->
+    <section id="screen-create" class="screen">
+      <div class="page">
+        <button class="back-link" onclick="showScreen('screen-dashboard')">&larr; Back to my labs</button>
+        <div class="page-head">
+          <h1>Create New Lab</h1>
+          <p>Choose a simple single-host template or build a custom networking environment.</p>
+        </div>
+        <div class="choice-row">
+          <div class="choice-card">
+            <span class="tag">Single host</span>
+            <div class="choice-icon">&#128421;</div>
+            <h2>Quick start</h2>
+            <p class="desc">Start a basic lab with one host. Choose an operating system to generate your image template.</p>
+            <div class="template-row">
+              <div class="template-option selected"><span>Ubuntu<br><small style="color:var(--muted)">Linux template</small></span><span class="dot"></span></div>
+              <div class="template-option"><span>Windows<br><small style="color:var(--muted)">Windows template</small></span><span class="dot"></span></div>
+            </div>
+            <p class="hint">Ubuntu selected &middot; one host, no network setup required.</p>
+            <div class="spacer"></div>
+            <button class="btn btn-primary" style="justify-content:center" onclick="showScreen('screen-quickstart')">Quick start &rarr;</button>
+          </div>
+          <div class="choice-card">
+            <span class="tag">Multiple images</span>
+            <div class="choice-icon">&#9881;</div>
+            <h2>Custom Lab</h2>
+            <p class="desc">Build an advanced networking lab with multiple Docker images and connections between hosts.</p>
+            <div class="mini-topology">
+              <div class="mini-node">&#128421;<small>Host</small></div>
+              <div class="mini-connector"></div>
+              <div class="mini-node">&#9881;<small>Router</small></div>
+              <div class="mini-connector"></div>
+              <div class="mini-node">&#128421;<small>Host</small></div>
+            </div>
+            <p class="hint">Configure images and networking in a dedicated designer.</p>
+            <button class="btn btn-primary" style="justify-content:center" onclick="showScreen('screen-custom')">Custom Lab &rarr;</button>
+          </div>
+        </div>
+      </div>
+      <div class="footer-powered">&#8855; Powered by Docker</div>
+    </section>
+
+    <!-- SCREEN 3: Configure Quick Start -->
+    <section id="screen-quickstart" class="screen" style="justify-content:space-between;">
+      <div class="page" style="flex:1;">
+        <button class="back-link" onclick="showScreen('screen-create')">&larr; Back to lab selection</button>
+        <div class="qs-top">
+          <div>
+            <h1 style="font-size:24px;margin:10px 0 4px;color:var(--ink);">Configure your Quick start lab</h1>
+            <p style="color:var(--muted);font-size:13.5px;margin:0;">Choose what comes with the image and write the notes your students will follow.</p>
+          </div>
+          <div class="toggle-pill" id="instructorToggle" onclick="this.classList.toggle('on')">
+            <span class="switch"></span> Instructor setup
+          </div>
+        </div>
+
+        <div class="field" style="max-width:360px;margin-top:18px;">
+          <label>Lab name</label>
+          <input type="text" value="Explore network traffic" />
+        </div>
+
+        <div class="template-bar">
+          <div class="left">&#128421; <strong>Ubuntu</strong> <span style="color:var(--muted)">Linux template &middot; Single host</span></div>
+          <a class="change" onclick="showScreen('screen-create')">Change template</a>
+        </div>
+
+        <div class="qs-columns">
+          <div class="qs-panel">
+            <h3>What's included</h3>
+            <p class="caption">Pre-install packages onto the base Ubuntu 22.04 image.</p>
+            <div class="chip-row">
+              <span class="chip muted">Ubuntu 22.04 base</span>
+              <span class="chip">git &times;</span>
+              <span class="chip">python3 &times;</span>
+              <span class="chip">curl &times;</span>
+            </div>
+            <div class="add-chip-row">
+              <input type="text" placeholder="Add a package, e.g. nodejs" />
+              <button class="btn btn-secondary btn-sm">Add</button>
+            </div>
+          </div>
+          <div class="qs-panel">
+            <h3>Lab instructions</h3>
+            <p class="caption">Steps students complete, shown in the instructions flyout.</p>
+            <div class="task-item"><span class="n">1</span><div><h4 style="margin:0;font-size:12.5px;">Install dependencies</h4><p style="margin:2px 0 0;font-size:11.5px;color:var(--muted);">pip install -r requirements.txt</p></div></div>
+            <div class="task-item"><span class="n">2</span><div><h4 style="margin:0;font-size:12.5px;">Create your endpoints</h4><p style="margin:2px 0 0;font-size:11.5px;color:var(--muted);">Add GET /health and GET /api/hello.</p></div></div>
+            <div class="task-item"><span class="n">3</span><div><h4 style="margin:0;font-size:12.5px;">Start the API</h4><p style="margin:2px 0 0;font-size:11.5px;color:var(--muted);">Run Flask on port 5000.</p></div></div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:10px;align-self:flex-start;">+ Add step</button>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar">
+        <div class="status-pill"><span class="status-dot"></span> Draft valid &middot; 1 machine</div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-secondary" onclick="showScreen('screen-create')">Cancel</button>
+          <button class="btn btn-primary" onclick="showScreen('screen-running')">Create Lab</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREEN 4: Custom Lab designer -->
+    <section id="screen-custom" class="screen" style="justify-content:space-between;">
+      <div class="page" style="flex:1;min-height:0;">
+        <button class="back-link" onclick="showScreen('screen-create')">&larr; Back to lab selection</button>
+        <div class="page-head" style="text-align:left;margin:10px 0 16px;">
+          <h1 style="font-size:24px;margin:0 0 4px;">Build your Custom Lab</h1>
+          <p>Add machines, connect them into networks, and define each host's role.</p>
+        </div>
+
+        <div class="field" style="max-width:360px;margin-bottom:16px;">
+          <label>Lab name</label>
+          <input type="text" value="Static routing topology" />
+        </div>
+
+        <div class="designer-body">
+          <div class="panel machines-panel">
+            <div class="panel-head"><h3>Machines <span class="count-badge">3</span></h3></div>
+            <div class="machine-row">
+              <div class="machine-icon">&#128421;</div>
+              <div class="machine-meta"><div class="id">client</div><div class="image">ubuntu:22.04</div></div>
+              <div class="machine-actions">&#9998; &#128465;</div>
+            </div>
+            <div class="machine-row">
+              <div class="machine-icon">&#9881;</div>
+              <div class="machine-meta"><div class="id">router</div><div class="image">frrouting/frr:latest</div></div>
+              <div class="machine-actions">&#9998; &#128465;</div>
+            </div>
+            <div class="machine-row">
+              <div class="machine-icon">&#128421;</div>
+              <div class="machine-meta"><div class="id">server</div><div class="image">nginx:latest</div></div>
+              <div class="machine-actions">&#9998; &#128465;</div>
+            </div>
+            <div class="add-row-btn">+ Add machine</div>
+          </div>
+
+          <div class="panel topology-panel">
+            <div class="panel-head">
+              <h3>Network topology</h3>
+              <button class="btn btn-secondary btn-sm">+ Add network</button>
+            </div>
+            <div class="topology-canvas">
+              <div class="node-card"><div class="icon">&#128421;</div><div class="id">client</div><div class="role">host</div></div>
+              <div class="connector"><span class="pill">lan &middot; 10.0.1.0/24</span></div>
+              <div class="node-card"><div class="icon">&#9881;</div><div class="id">router</div><div class="role">gateway</div></div>
+              <div class="connector"><span class="pill">dmz &middot; 10.0.2.0/24</span></div>
+              <div class="node-card"><div class="icon">&#128421;</div><div class="id">server</div><div class="role">host</div></div>
+            </div>
+            <div class="interfaces-table">
+              <table>
+                <thead><tr><th>Node</th><th>Network</th><th>Address</th><th></th></tr></thead>
+                <tbody>
+                  <tr><td>client</td><td>lan</td><td class="mono">10.0.1.10/24</td><td style="color:var(--muted-2)">&#128465;</td></tr>
+                  <tr><td>router</td><td>lan</td><td class="mono">10.0.1.1/24</td><td style="color:var(--muted-2)">&#128465;</td></tr>
+                  <tr><td>router</td><td>dmz</td><td class="mono">10.0.2.1/24</td><td style="color:var(--muted-2)">&#128465;</td></tr>
+                  <tr><td>server</td><td>dmz</td><td class="mono">10.0.2.10/24</td><td style="color:var(--muted-2)">&#128465;</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel networks-panel">
+            <div class="panel-head"><h3>Networks <span class="count-badge">2</span></h3></div>
+            <div class="network-row"><div class="id">lan</div><div class="subnet">10.0.1.0/24</div></div>
+            <div class="network-row"><div class="id">dmz</div><div class="subnet">10.0.2.0/24</div></div>
+            <div class="add-row-btn">+ Add network</div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar">
+        <div class="status-pill"><span class="status-dot"></span> Draft valid &middot; 3 machines &middot; 2 networks</div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-secondary">Validate</button>
+          <button class="btn btn-secondary" onclick="showScreen('screen-create')">Cancel</button>
+          <button class="btn btn-primary" onclick="showPreview('static-routing')">Save Lab</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREEN 4b: Lab preview + port conflicts (shown before any start) -->
+    <section id="screen-preview" class="screen" style="justify-content:space-between;">
+      <div class="page" style="flex:1;min-height:0;">
+        <button class="back-link" onclick="showScreen('screen-dashboard')">&larr; Back to my labs</button>
+        <div class="page-head" style="text-align:left;margin:10px 0 16px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <h1 id="previewTitle" style="font-size:24px;margin:0;">Static Routing Topology</h1>
+            <span class="lab-status stopped">Defined</span>
+          </div>
+          <p id="previewDesc" style="margin-top:6px;">A 3-host topology with a router separating a LAN and DMZ segment.</p>
+          <p style="margin:2px 0 0;font-size:11.5px;color:var(--muted-2);" id="previewAuthor">You &middot; v0.1.0</p>
+        </div>
+
+        <div class="preview-columns">
+          <div class="preview-main">
+            <div class="panel">
+              <div class="panel-head"><h3>Required images</h3></div>
+              <div style="padding:12px 14px;">
+                <div class="chip-row" id="previewImages" style="margin-bottom:0;"></div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head"><h3>Topology (read-only)</h3></div>
+              <div class="topology-canvas" id="previewTopology" style="margin:14px;"></div>
+            </div>
+
+            <div class="panel" style="padding:14px;">
+              <div class="manual-preview-toggle" onclick="document.getElementById('manualPreviewBody').classList.toggle('open'); this.querySelector('.chevron').textContent = this.querySelector('.chevron').textContent === '\u25be' ? '\u25b8' : '\u25be';">
+                <span class="chevron">&#9662;</span>
+                <span id="previewManualNote">Includes instructor manual with 4 steps &mdash; shown automatically once started.</span>
+              </div>
+              <div class="manual-preview-body open" id="manualPreviewBody"></div>
+            </div>
+          </div>
+
+          <div class="preview-side">
+            <div class="panel" style="padding:14px;">
+              <h3 style="margin:0 0 10px;font-size:13.5px;color:var(--ink);">Estimated resources</h3>
+              <div class="stat-row">
+                <div class="stat-tile"><div class="label">CPU</div><div class="value" id="previewCpu">3 vCPU</div></div>
+                <div class="stat-tile"><div class="label">Memory</div><div class="value" id="previewMemory">1.5 GB</div></div>
+              </div>
+            </div>
+
+            <div class="panel" style="padding:14px;flex:1;min-height:0;display:flex;flex-direction:column;">
+              <h3 style="margin:0 0 4px;font-size:13.5px;color:var(--ink);">Port conflicts</h3>
+              <div class="conflict-banner warn" id="conflictBanner">&#9888; 1 port conflict must be resolved before starting.</div>
+              <div class="conflict-table-wrap" id="conflictTableWrap" style="overflow-y:auto;">
+                <table>
+                  <thead><tr><th>Node</th><th>Port</th><th>Issue</th><th>Recommended</th><th></th></tr></thead>
+                  <tbody id="conflictRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar">
+        <div class="status-pill" id="previewStatusPill"><span class="status-dot" style="background:#d97706"></span> Resolve conflicts to continue</div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-secondary" onclick="showScreen('screen-dashboard')">Cancel</button>
+          <button class="btn btn-primary" id="startLabButton" onclick="startLabFromPreview()" disabled>Start Lab</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREEN 5: Lab running -->
+    <section id="screen-running" class="screen">
+      <div class="run-top">
+        <div class="run-title-group">
+          <button class="back-link" onclick="showScreen('screen-dashboard')" style="font-size:16px;">&larr;</button>
+          <div>
+            <h2 id="runTitle">Build a Python API</h2>
+            <div class="meta" id="runMeta">Imported from python-api-lab.zip</div>
+          </div>
+          <span class="status-badge">&#9679; Running</span>
+        </div>
+        <div class="run-actions">
+          <button class="btn btn-secondary btn-sm">&#8635; Restart</button>
+          <button class="btn btn-secondary btn-sm">&#9632; Stop lab</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleFlyout()">&#128214; Instructions</button>
+        </div>
+      </div>
+
+      <div class="run-body">
+        <div class="browser-pane">
+          <div class="browser-chrome">
+            <span style="color:var(--muted)">&#8635;</span>
+            <div class="url-bar">http://localhost:3001</div>
+            <span style="color:var(--muted)">&#8599;</span>
+          </div>
+          <div class="browser-view">
+            <div class="desktop-mock">
+              <div style="font-size:22px;">&#128421;</div>
+              <div>Embedded web view of the lab's host container</div>
+              <div style="font-size:11px;">(e.g. a noVNC desktop, code-server, or app under test &mdash;<br>whatever the image exposes on its mapped port)</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel instructions-flyout" id="flyout">
+          <div class="fly-head">
+            <h3>Lab instructions</h3>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="fly-progress">1 of 4 complete</span>
+              <span style="cursor:pointer;color:var(--muted);" onclick="toggleFlyout()">&times;</span>
+            </div>
+          </div>
+          <div class="fly-body">
+            <div class="fly-step done"><span class="marker">&#10003;</span><div><h4>Install dependencies</h4><p>In the terminal, install the packages for this lab.</p><code>pip install -r requirements.txt</code></div></div>
+            <div class="fly-step active"><span class="marker">2</span><div><h4>Create your endpoints</h4><p>In app.py, add GET /health and GET /api/hello. Return a JSON response from each.</p></div></div>
+            <div class="fly-step todo"><span class="marker">3</span><div><h4>Start the API</h4><p>Run Flask so your API is available on port 5000.</p><code>flask run --host=0.0.0.0</code></div></div>
+            <div class="fly-step todo"><span class="marker">4</span><div><h4>Test your response</h4><p>Open a second terminal and check the endpoint.</p><code>curl localhost:5000/health</code></div></div>
+          </div>
+          <div style="padding:12px 16px;border-top:1px solid var(--line-soft);">
+            <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;">&#10003; Mark step complete</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="run-status-bar">
+        <div class="left"><span><span class="dot-ok"></span>Docker connected</span><span>python-api-lab &middot; 1 container running</span></div>
+        <div>Changes saved locally</div>
+      </div>
+    </section>
+
+    <!-- Import Existing Lab: native-style "open file" prompt, overlaid on whatever screen triggered it -->
+    <div class="modal-overlay" id="importModal">
+      <div class="modal-box">
+        <h3>Open Lab File</h3>
+        <p class="modal-sub">Choose a .json or .zip lab export to import and launch.</p>
+        <div class="file-list">
+          <div class="file-row" data-file="static-routing.json" onclick="selectFileRow(this)">
+            <span class="file-icon">&#128196;</span>
+            <div class="file-meta"><div class="name">static-routing.json</div><div class="hint">Practicum lab export &middot; 2 KB</div></div>
+          </div>
+          <div class="file-row" data-file="ubuntu-quickstart.json" onclick="selectFileRow(this)">
+            <span class="file-icon">&#128196;</span>
+            <div class="file-meta"><div class="name">ubuntu-quickstart.json</div><div class="hint">Practicum lab export &middot; 1 KB</div></div>
+          </div>
+          <div class="file-row" data-file="ubuntu-webtop.json" onclick="selectFileRow(this)">
+            <span class="file-icon">&#128196;</span>
+            <div class="file-meta"><div class="name">ubuntu-webtop.json</div><div class="hint">Practicum lab export &middot; 1 KB</div></div>
+          </div>
+          <div class="file-row" data-file="python-api-lab.zip" onclick="selectFileRow(this)">
+            <span class="file-icon">&#128230;</span>
+            <div class="file-meta"><div class="name">python-api-lab.zip</div><div class="hint">Practicum lab export &middot; 48 KB</div></div>
+          </div>
+        </div>
+        <label class="browse-row">
+          <input type="file" accept=".json,.zip" onchange="onBrowseFileChosen(this)" />
+          <span>&#128193; Browse computer&hellip;</span>
+        </label>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+          <button class="btn btn-primary" id="openFileButton" disabled onclick="confirmImport()">Open</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="importingOverlay">
+      <div class="modal-box" style="text-align:center;">
+        <div class="spinner"></div>
+        <h3 id="importingLabel">Importing lab definition&hellip;</h3>
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      </div>
+    </div>
+
+    <!-- In-app confirmation dialog, replaces native confirm()/alert() so everything stays inside the app window -->
+    <div class="modal-overlay" id="confirmModal">
+      <div class="modal-box">
+        <h3 id="confirmTitle">Delete this lab?</h3>
+        <p class="modal-sub" id="confirmMessage">This action cannot be undone.</p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+          <button class="btn btn-danger" id="confirmActionButton" onclick="runConfirmedAction()">Delete</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(function (el) { el.classList.remove('active'); });
+    document.getElementById(id).classList.add('active');
+  }
+  function toggleFlyout() {
+    document.getElementById('flyout').classList.toggle('collapsed');
+  }
+  function openRunningLab(title, meta) {
+    document.getElementById('runTitle').textContent = title;
+    document.getElementById('runMeta').textContent = meta;
+    showScreen('screen-running');
+  }
+
+  // ---------- In-app confirmation dialog (replaces native confirm()/alert()) ----------
+  let pendingConfirmAction = null;
+
+  function showConfirm(title, message, confirmLabel, destructive, onConfirm) {
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMessage').textContent = message;
+    const btn = document.getElementById('confirmActionButton');
+    btn.textContent = confirmLabel;
+    btn.className = 'btn ' + (destructive ? 'btn-danger' : 'btn-primary');
+    pendingConfirmAction = onConfirm;
+    document.getElementById('confirmModal').classList.add('active');
+  }
+  function closeConfirmModal() {
+    document.getElementById('confirmModal').classList.remove('active');
+    pendingConfirmAction = null;
+  }
+  function runConfirmedAction() {
+    const action = pendingConfirmAction;
+    closeConfirmModal();
+    if (action) action();
+  }
+
+  function deleteLabCard(cardId, name) {
+    showConfirm(
+      'Delete "' + name + '"?',
+      'This removes it from Practicum but does not undo any work already saved elsewhere. This cannot be undone.',
+      'Delete',
+      true,
+      function () {
+        const card = document.getElementById(cardId);
+        if (card) card.remove();
+      }
+    );
+  }
+
+  // ---------- Reusable multi-stage loading overlay (import, start, etc.) ----------
+  function runLoadingSequence(stages, onDone) {
+    const overlay = document.getElementById('importingOverlay');
+    const label = document.getElementById('importingLabel');
+    const fill = document.getElementById('progressFill');
+    overlay.classList.add('active');
+    fill.style.width = '0%';
+
+    let elapsed = 0;
+    stages.forEach(function (stage) {
+      setTimeout(function () {
+        label.textContent = stage.text;
+        fill.style.width = stage.pct + '%';
+      }, elapsed);
+      elapsed += stage.duration;
+    });
+
+    setTimeout(function () {
+      overlay.classList.remove('active');
+      onDone();
+    }, elapsed);
+  }
+
+  // ---------- Import Existing Lab ----------
+  let chosenImportFile = null;
+
+  function openImportModal() {
+    chosenImportFile = null;
+    document.querySelectorAll('.file-row').forEach(function (r) { r.classList.remove('selected'); });
+    document.getElementById('openFileButton').disabled = true;
+    document.getElementById('importModal').classList.add('active');
+  }
+  function closeImportModal() {
+    document.getElementById('importModal').classList.remove('active');
+  }
+  function selectFileRow(row) {
+    document.querySelectorAll('.file-row').forEach(function (r) { r.classList.remove('selected'); });
+    row.classList.add('selected');
+    chosenImportFile = row.dataset.file;
+    document.getElementById('openFileButton').disabled = false;
+  }
+  function onBrowseFileChosen(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    document.querySelectorAll('.file-row').forEach(function (r) { r.classList.remove('selected'); });
+    chosenImportFile = file.name;
+    document.getElementById('openFileButton').disabled = false;
+  }
+  function niceNameFromFile(filename) {
+    const base = filename.replace(/\.(json|zip)$/i, '');
+    return base.split(/[-_]/g).map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
+  }
+  function confirmImport() {
+    if (!chosenImportFile) return;
+    closeImportModal();
+    const fileName = chosenImportFile;
+
+    runLoadingSequence(
+      [
+        { text: 'Importing lab definition\u2026', pct: 55, duration: 700 },
+        { text: 'Starting containers\u2026', pct: 100, duration: 700 },
+      ],
+      function () {
+        document.getElementById('runTitle').textContent = niceNameFromFile(fileName);
+        document.getElementById('runMeta').textContent = 'Imported from ' + fileName;
+        showScreen('screen-running');
+      }
+    );
+  }
+
+  // ---------- Lab preview + port conflicts (gate before Start) ----------
+  const PREVIEW_SCENARIOS = {
+    'static-routing': {
+      name: 'Static Routing Topology',
+      meta: 'Custom lab \u00b7 3 machines \u00b7 2 networks',
+      description: 'A 3-host topology with a router separating a LAN and DMZ segment.',
+      author: 'You \u00b7 v0.1.0',
+      images: [
+        { tag: 'ubuntu:22.04', local: true },
+        { tag: 'frrouting/frr:latest', local: false, size: '~180 MB' },
+        { tag: 'nginx:latest', local: true },
+      ],
+      cpu: '3 vCPU',
+      memory: '1.5 GB',
+      topology: [
+        { icon: '\ud83d\udda5\ufe0f', id: 'client', role: 'host' },
+        { net: 'lan \u00b7 10.0.1.0/24' },
+        { icon: '\u2699\ufe0f', id: 'router', role: 'gateway' },
+        { net: 'dmz \u00b7 10.0.2.0/24' },
+        { icon: '\ud83d\udda5\ufe0f', id: 'server', role: 'host' },
+      ],
+      manualTasks: [
+        { title: 'Trace the default route', text: 'Inspect the routing table on the client.' },
+        { title: 'Configure the router', text: 'Enable forwarding between lan and dmz.' },
+        { title: 'Reach the server', text: 'Confirm the client can reach the server over dmz.' },
+        { title: 'Capture traffic', text: 'Use tcpdump on the router to observe forwarded packets.' },
+      ],
+      conflicts: [
+        { node: 'server', port: 80, protocol: 'tcp', reason: 'Already in use on this machine', recommended: 8080 },
+      ],
+    },
+    'ubuntu-quickstart': {
+      name: 'Ubuntu Quick Start',
+      meta: 'Quick start \u00b7 Ubuntu \u00b7 single host',
+      description: 'A single plain Ubuntu container for quickly exploring Practicum with no topology to configure.',
+      author: 'Practicum Team \u00b7 v0.1.0',
+      images: [{ tag: 'ubuntu:22.04', local: true }],
+      cpu: '1 vCPU',
+      memory: '512 MB',
+      topology: [{ icon: '\ud83d\udda5\ufe0f', id: 'ubuntu', role: 'host' }],
+      manualTasks: [
+        { title: 'Start the lab', text: 'Start the lab from Practicum.' },
+        { title: 'Open a shell', text: 'Open a shell in the Ubuntu container with docker exec.' },
+      ],
+      conflicts: [],
+    },
+  };
+
+  let activeConflicts = [];
+  let activePreview = null;
+
+  function showPreview(key) {
+    const data = PREVIEW_SCENARIOS[key];
+    activePreview = data;
+
+    document.getElementById('previewTitle').textContent = data.name;
+    document.getElementById('previewDesc').textContent = data.description;
+    document.getElementById('previewAuthor').textContent = data.author;
+    document.getElementById('previewCpu').textContent = data.cpu;
+    document.getElementById('previewMemory').textContent = data.memory;
+    document.getElementById('previewManualNote').textContent =
+      'Includes instructor manual with ' + data.manualTasks.length + ' step' + (data.manualTasks.length === 1 ? '' : 's') +
+      ' \u2014 shown automatically once started.';
+
+    document.getElementById('previewImages').innerHTML = data.images
+      .map(function (img) {
+        return '<span class="chip ' + (img.local ? 'muted' : '') + '">' + img.tag +
+          (img.local ? ' \u00b7 local' : ' \u00b7 will download ' + (img.size || '')) + '</span>';
+      })
+      .join('');
+
+    const topoEl = document.getElementById('previewTopology');
+    topoEl.innerHTML = '';
+    data.topology.forEach(function (item) {
+      if (item.net) {
+        const c = document.createElement('div');
+        c.className = 'connector';
+        c.innerHTML = '<span class="pill">' + item.net + '</span>';
+        topoEl.appendChild(c);
+      } else {
+        const n = document.createElement('div');
+        n.className = 'node-card';
+        n.innerHTML = '<div class="icon">' + item.icon + '</div><div class="id">' + item.id +
+          '</div><div class="role">' + item.role + '</div>';
+        topoEl.appendChild(n);
+      }
+    });
+
+    activeConflicts = data.conflicts.map(function (c) { return Object.assign({ resolved: false }, c); });
+    updateConflictsUI();
+
+    document.getElementById('manualPreviewBody').innerHTML = data.manualTasks
+      .map(function (task, i) {
+        return '<div class="task-item"><span class="n">' + (i + 1) + '</span><div>' +
+          '<h4 style="margin:0;font-size:12.5px;">' + task.title + '</h4>' +
+          '<p style="margin:2px 0 0;font-size:11.5px;color:var(--muted);">' + task.text + '</p>' +
+          '</div></div>';
+      })
+      .join('');
+
+    showScreen('screen-preview');
+  }
+
+  function updateConflictsUI() {
+    const unresolved = activeConflicts.filter(function (c) { return !c.resolved; });
+    const banner = document.getElementById('conflictBanner');
+    const tableWrap = document.getElementById('conflictTableWrap');
+    const startBtn = document.getElementById('startLabButton');
+    const statusPill = document.getElementById('previewStatusPill');
+
+    if (activeConflicts.length === 0) {
+      banner.className = 'conflict-banner ok';
+      banner.textContent = '\u2713 No port conflicts detected.';
+      tableWrap.style.display = 'none';
+      startBtn.disabled = false;
+      statusPill.innerHTML = '<span class="status-dot"></span> Ready to start';
+    } else if (unresolved.length === 0) {
+      banner.className = 'conflict-banner ok';
+      banner.textContent = '\u2713 All port conflicts resolved.';
+      tableWrap.style.display = '';
+      startBtn.disabled = false;
+      statusPill.innerHTML = '<span class="status-dot"></span> Ready to start';
+    } else {
+      banner.className = 'conflict-banner warn';
+      banner.textContent = '\u26a0 ' + unresolved.length + ' port conflict' + (unresolved.length === 1 ? '' : 's') +
+        ' must be resolved before starting.';
+      tableWrap.style.display = '';
+      startBtn.disabled = true;
+      statusPill.innerHTML = '<span class="status-dot" style="background:#d97706"></span> Resolve conflicts to continue';
+    }
+
+    document.getElementById('conflictRows').innerHTML = activeConflicts
+      .map(function (c, i) {
+        return '<tr class="' + (c.resolved ? 'resolved' : '') + '">' +
+          '<td>' + c.node + '</td>' +
+          '<td class="mono">' + c.port + '/' + c.protocol + '</td>' +
+          '<td>' + c.reason + '</td>' +
+          '<td class="mono">' + c.recommended + '</td>' +
+          '<td>' + (c.resolved
+            ? '<span style="color:var(--green);font-weight:600;">\u2713 Applied</span>'
+            : '<button class="btn btn-secondary btn-sm" onclick="applyRecommendation(' + i + ')">Apply &rarr; ' + c.recommended + '</button>') +
+          '</td></tr>';
+      })
+      .join('');
+  }
+
+  function applyRecommendation(index) {
+    activeConflicts[index].resolved = true;
+    updateConflictsUI();
+  }
+
+  function startLabFromPreview() {
+    if (document.getElementById('startLabButton').disabled || !activePreview) return;
+    const name = activePreview.name;
+    const meta = activePreview.meta;
+
+    runLoadingSequence(
+      [
+        { text: 'Starting containers\u2026', pct: 60, duration: 700 },
+        { text: 'Waiting for services to become ready\u2026', pct: 100, duration: 600 },
+      ],
+      function () {
+        document.getElementById('runTitle').textContent = name;
+        document.getElementById('runMeta').textContent = meta;
+        showScreen('screen-running');
+      }
+    );
+  }
+</script>
+</body>
+</html>
