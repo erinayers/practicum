@@ -1,11 +1,33 @@
 # Practicum
 
-Practicum is a local-first API for defining and eventually running reproducible
-academic networking labs on student-owned hardware.
+Practicum is a local-first system for creating, distributing, and running
+reproducible academic **networking labs** on student-owned Windows hardware,
+using Docker as the execution backend. Instructors author a lab's topology
+(nodes, networks, interfaces), resource requirements, and an embedded
+step-by-step manual, then export it as a single JSON file. Students import
+that file into a Windows desktop app, validate it, start and stop it with one
+click, and follow the embedded manual alongside the running lab — no Docker
+commands, topology diagrams, or command-line tooling required on their end.
 
-The first milestone defines the API contract. It accepts a network topology as
-JSON, validates its references and addresses, and stores the definition in
-memory.
+The project has two parts:
+
+- **[`practicum`](src/practicum)** — a local FastAPI service that validates
+  lab specs, stores them, and orchestrates the Docker containers and networks
+  behind them. This repository's root package; see below for API usage.
+- **[`practicum-desktop`](desktop)** — a PySide6 (Qt) Windows GUI that talks
+  to the local API, adding a guided lab designer for instructors, an import
+  flow for students, and Docker/API health checks. See [HANDOFF.md](HANDOFF.md)
+  for how it's structured.
+
+See [HANDOFF.md](HANDOFF.md) for a full technical walkthrough of the
+codebase, and [src/user-stories.md](src/user-stories.md) for the product
+vision and phased backlog driving ongoing work.
+
+The first milestone defined the API contract: accept a network topology as
+JSON, validate its references and addresses, and store the definition in
+memory. That contract has since grown to cover import/export, Docker
+runtime orchestration, port-conflict detection, and a desktop application —
+this README's API section below reflects the current surface.
 
 ## API
 
@@ -53,35 +75,10 @@ Invoke-RestMethod `
   -InFile examples/static-routing.json
 ```
 
-## Next milestone
+## Current Status and Roadmap
 
-Add a runtime interface and a Docker implementation for starting and stopping
-the containers and networks represented by a validated lab definition.
-
-## Design Mockups
-
-The screenshots below are from a clickable HTML prototype of the desktop
-application ([design/practicum-mockups.html](design/practicum-mockups.html)),
-used to validate the end-to-end instructor and student experience before
-building each screen in the real PySide6 app. Open the file directly in any
-browser to click through the flows yourself.
-
-| Welcome | Your Labs dashboard |
-| --- | --- |
-| ![Welcome screen](design/screenshots/01-welcome.png) | ![Your Labs dashboard](design/screenshots/02-dashboard.png) |
-
-| Create New Lab | Quick Start configuration |
-| --- | --- |
-| ![Create New Lab](design/screenshots/03-create-new-lab.png) | ![Configure your Quick Start lab](design/screenshots/04-quick-start-config.png) |
-
-| Custom Lab designer | Pre-start readiness gate |
-| --- | --- |
-| ![Custom Lab designer](design/screenshots/05-custom-lab-designer.png) | ![Pre-start gate with a port conflict](design/screenshots/06-prestart-gate-conflict.png) |
-
-| Lab running (embedded view + instructions) | Import an existing lab |
-| --- | --- |
-| ![Lab running](design/screenshots/07-lab-running.png) | ![Import Lab File](design/screenshots/08-import-lab.png) |
-
-See [src/user-stories.md](src/user-stories.md) for the full, phased backlog
-these mockups are driving, including which screens are implemented in the
-real desktop app today versus still planned.
+The Docker runtime, import/export, and port-conflict detection described
+above are implemented and tested, alongside a PySide6 desktop shell. Active
+work is tracked story-by-story in [src/user-stories.md](src/user-stories.md)
+and [src/user-story-status.json](src/user-story-status.json); longer-term
+ideas live in [src/future-roadmap](src/future-roadmap).
