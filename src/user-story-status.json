@@ -3,7 +3,7 @@
   "source": "src/user-stories.md",
   "epic_folder": "src/user-stories",
   "last_updated": "2026-10-11",
-  "latest_checkpoint": "Phases 1 through 6 are complete. Phase 7 (mockup-driven desktop UI gap, plus one backend story) is now in progress: windows-desktop-in-app-dialogs landed first since two other phase-7 stories depend on it (desktop/src/practicum_desktop/dialogs.py ConfirmDialog/confirm(), tested, wired into ManualFlyout's Reset Progress action). Remaining phase-7 work (Labs Dashboard, Pre-Start Gate, Import-and-launch, Lifecycle Controls, Embedded Lab View, Visual Topology Builder, and the backend Image Pull Progress story) is not yet started. The pre-existing gap noted previously (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
+  "latest_checkpoint": "Phases 1 through 6 are complete. Phase 7 (mockup-driven desktop UI gap, plus one backend story) is in progress: windows-desktop-in-app-dialogs and windows-desktop-prestart-lab-gate are both done (ConfirmDialog/confirm() in dialogs.py wired into ManualFlyout's Reset Progress; PreStartGateDialog in prestart_gate.py wired into main_window.py's Start button, replacing the old direct start_lab call and the old has_conflicts-gated button). Remaining phase-7 work (Labs Dashboard, Import-and-launch, Lifecycle Controls, Embedded Lab View, Visual Topology Builder, and the backend Image Pull Progress story) is not yet started; Labs Dashboard and Import-and-launch are both expected to open PreStartGateDialog rather than re-implementing the gate. The pre-existing gap noted previously (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
   "next_recommended_story": "windows-desktop-labs-dashboard",
   "current_phase": "phase-7",
   "phases": [
@@ -954,24 +954,24 @@
       "id": "windows-desktop-prestart-lab-gate",
       "epic": "Windows Desktop Application",
       "title": "Pre-Start Readiness Gate",
-      "status": "not_started",
-      "notes": "New story. Unifies the already-done student-preview-imported-lab preview data and windows-desktop-port-conflict-ui conflict/recommendation UI into one mandatory screen before any Start, reachable from the dashboard, Designer save, and (conditionally) import. Reference design: screen-preview in practicum-mockups.html, verified for both a has-conflict and a zero-conflict scenario.",
+      "status": "done",
+      "notes": "Implemented as PreStartGateDialog (desktop/src/practicum_desktop/prestart_gate.py): loads GET /labs/{lab_id}/preview and GET /labs/{lab_id}/ports in parallel, shows name/description/author/version, required images, estimated CPU/memory, a read-only topology table (node/network/address), a manual step count, and a port-conflicts table with per-row 'Use <port>' buttons. Start Lab is disabled while conflicts remain and re-enables once resolved. Wired into main_window.py's existing Start button (which now opens this dialog instead of calling start_lab directly); the main window's Start button and inline port-conflict table no longer gate on conflicts themselves, since the dialog is now the single authority for that. Required extending PreviewResult/get_preview in api_client.py to parse required_images/estimated_resources/topology fields the API already returned but the desktop client was discarding. 11 new tests (7 dialog + 4 extended api_client assertions implicitly covered by existing suite), all passing; PORT_CONFLICT_REASONS moved to api_client.py as a shared constant to avoid duplicating it between main_window.py and this dialog. Not yet reachable from the Labs Dashboard or Import flows since those don't exist yet (windows-desktop-labs-dashboard, windows-desktop-import-lab-file) - both should open this same dialog rather than re-implementing the gate once built.",
       "acceptance_criteria": [
         {
           "text": "The screen shows lab name, description, required images, estimated resources, and read-only topology.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Port conflicts block Start until resolved, and applying a recommendation re-checks and clears that conflict.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "A lab with zero conflicts shows a clear ready-to-start state and an immediately-enabled Start button.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Canceling this screen does not start, modify, or delete the lab.",
-          "complete": false
+          "complete": true
         }
       ]
     },

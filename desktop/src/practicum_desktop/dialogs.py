@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout, QWidget
 
 DESTRUCTIVE_BUTTON_STYLE = "background-color: #dc2626; color: white; font-weight: 600;"
+
+COPYABLE_TEXT_FLAGS = (
+    Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+)
 
 
 class ConfirmDialog(QDialog):

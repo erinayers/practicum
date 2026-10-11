@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from practicum_desktop.api_client import (
     DEFAULT_BASE_URL,
+    PORT_CONFLICT_REASONS,
     ApiClient,
     CreateLabResult,
     LabsResult,
@@ -26,11 +27,11 @@ from practicum_desktop.api_client import (
     PortConflict,
     PortMappingInfo,
     PreviewResult,
-    StartResult,
 )
 from practicum_desktop.app_status import AppStatus
 from practicum_desktop.designer import DesignerDialog
 from practicum_desktop.manual import NO_LAB_SELECTED_MESSAGE, ManualFlyout
+from practicum_desktop.prestart_gate import PreStartGateDialog
 from practicum_desktop.quickstart import UBUNTU_QUICK_START_LAB
 from practicum_desktop.startup import StartupWorker
 from practicum_desktop.workers import CallableWorker
@@ -42,12 +43,6 @@ READINESS_LABELS = {
     "ready": "Ready",
     "degraded": "Degraded",
     "blocked": "Blocked",
-}
-
-PORT_CONFLICT_REASONS = {
-    "duplicate_in_spec": "Duplicate port in this lab",
-    "reserved_by_practicum_api": "Reserved by the Practicum API",
-    "in_use_on_host": "Already in use on this machine",
 }
 
 COPYABLE_TEXT_FLAGS = (
@@ -74,7 +69,6 @@ class MainWindow(QMainWindow):
         self._worker: StartupWorker | None = None
         self._port_worker: CallableWorker | None = None
         self._apply_worker: CallableWorker | None = None
-        self._start_worker: CallableWorker | None = None
         self._manual_worker: CallableWorker | None = None
         self._quick_start_worker: CallableWorker | None = None
         self._lab_ids: list[str] = []
@@ -151,7 +145,7 @@ class MainWindow(QMainWindow):
         self.browser_access_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.browser_access_table)
 
-        self.start_button = QPushButton("Start Selected Lab")
+        self.start_button = QPushButton("Start Selected Lab…")
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self._on_start_clicked)
         layout.addWidget(self.start_button)
@@ -298,11 +292,11 @@ class MainWindow(QMainWindow):
             return
 
         self._render_port_conflicts(result)
-        self.start_button.setEnabled(not result.has_conflicts)
+        self.start_button.setEnabled(True)
         self.port_check_status_label.setText(
             "No port conflicts."
             if not result.has_conflicts
-            else "Resolve the port conflicts below before starting."
+            else "Port conflicts exist; Start will let you resolve them before launching."
         )
 
     def _render_port_conflicts(self, result: PortCheckResult) -> None:
@@ -343,13 +337,13 @@ class MainWindow(QMainWindow):
         if self._selected_lab_id is None:
             return
 
-        self.start_button.setEnabled(False)
-        self.start_result_label.setText("Starting lab…")
-        self._start_worker = CallableWorker(self._api_client.start_lab, self._selected_lab_id)
-        self._start_worker.finished_call.connect(self._on_start_finished)
-        self._start_worker.start()
+        dialog = PreStartGateDialog(self._api_client, self._selected_lab_id, parent=self)
+        if dialog.exec() == PreStartGateDialog.DialogCode.Accepted:
+            self.start_result_label.setText("✅ Lab started.")
+        else:
+            self.start_result_label.setText("")
 
-    def _on_start_finished(self, result: StartResult) -> None:
-        icon = "✅" if result.success else "❌"
-        self.start_result_label.setText(f"{icon} {result.detail}")
-        self.start_button.setEnabled(True)
+        # Conditions (e.g. port availability) may have changed while the gate was open.
+        self._port_worker = CallableWorker(self._api_client.check_ports, self._selected_lab_id)
+        self._port_worker.finished_call.connect(self._on_ports_checked)
+        self._port_worker.start()

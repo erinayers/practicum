@@ -39,6 +39,13 @@ class PortConflict:
     recommended_port: int | None
 
 
+PORT_CONFLICT_REASONS = {
+    "duplicate_in_spec": "Duplicate port in this lab",
+    "reserved_by_practicum_api": "Reserved by the Practicum API",
+    "in_use_on_host": "Already in use on this machine",
+}
+
+
 @dataclass
 class PortCheckResult:
     success: bool
@@ -98,9 +105,47 @@ class PortMappingInfo:
 
 
 @dataclass
+class TopologyNodeInfo:
+    id: str
+    image: str
+
+
+@dataclass
+class TopologyNetworkInfo:
+    id: str
+    subnet: str
+
+
+@dataclass
+class TopologyInterfaceInfo:
+    node: str
+    network: str
+    address: str
+
+
+@dataclass
+class TopologyInfo:
+    nodes: list[TopologyNodeInfo] = field(default_factory=list)
+    networks: list[TopologyNetworkInfo] = field(default_factory=list)
+    interfaces: list[TopologyInterfaceInfo] = field(default_factory=list)
+
+
+@dataclass
+class EstimatedResourcesInfo:
+    total_cpu: float | None = None
+    total_memory_mb: int | None = None
+
+
+@dataclass
 class PreviewResult:
     success: bool
     name: str = ""
+    description: str = ""
+    author: str = ""
+    version: str = ""
+    required_images: list[str] = field(default_factory=list)
+    estimated_resources: EstimatedResourcesInfo = field(default_factory=EstimatedResourcesInfo)
+    topology: TopologyInfo = field(default_factory=TopologyInfo)
     manual_sections: list[ManualSectionInfo] = field(default_factory=list)
     port_mappings: list[PortMappingInfo] = field(default_factory=list)
     detail: str = ""
@@ -314,11 +359,11 @@ class ApiClient:
         try:
             response = httpx.get(f"{self.base_url}/labs/{lab_id}/preview", timeout=self.timeout)
         except httpx.HTTPError as exc:
-            return PreviewResult(success=False, detail=f"Could not load the lab manual: {exc}")
+            return PreviewResult(success=False, detail=f"Could not load the lab preview: {exc}")
 
         if response.status_code != 200:
             return PreviewResult(
-                success=False, detail=f"Could not load the lab manual (status {response.status_code})."
+                success=False, detail=f"Could not load the lab preview (status {response.status_code})."
             )
 
         body = response.json()
@@ -335,12 +380,44 @@ class ApiClient:
             )
             for section in manual.get("sections", [])
         ]
+        estimated = body.get("estimated_resources") or {}
         port_mappings = [
             PortMappingInfo(
                 host=mapping["host"], container=mapping["container"], protocol=mapping["protocol"]
             )
-            for mapping in body.get("estimated_resources", {}).get("port_mappings", [])
+            for mapping in estimated.get("port_mappings", [])
         ]
+        topology_body = body.get("topology") or {}
+        topology = TopologyInfo(
+            nodes=[
+                TopologyNodeInfo(id=node["id"], image=node["image"])
+                for node in topology_body.get("nodes", [])
+            ],
+            networks=[
+                TopologyNetworkInfo(id=network["id"], subnet=network["subnet"])
+                for network in topology_body.get("networks", [])
+            ],
+            interfaces=[
+                TopologyInterfaceInfo(
+                    node=interface["node"],
+                    network=interface["network"],
+                    address=interface["address"],
+                )
+                for interface in topology_body.get("interfaces", [])
+            ],
+        )
         return PreviewResult(
-            success=True, name=body.get("name", ""), manual_sections=sections, port_mappings=port_mappings
+            success=True,
+            name=body.get("name", ""),
+            description=body.get("description") or "",
+            author=body.get("author") or "",
+            version=body.get("version") or "",
+            required_images=list(body.get("required_images", [])),
+            estimated_resources=EstimatedResourcesInfo(
+                total_cpu=estimated.get("total_cpu"),
+                total_memory_mb=estimated.get("total_memory_mb"),
+            ),
+            topology=topology,
+            manual_sections=sections,
+            port_mappings=port_mappings,
         )
