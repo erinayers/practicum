@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from practicum_desktop.api_client import ManualSectionInfo
+from practicum_desktop.dialogs import confirm
 
 NO_LAB_SELECTED_MESSAGE = "Select a lab to view its manual."
 
@@ -123,6 +124,18 @@ class ManualFlyout(QDockWidget):
 
     def _on_reset_clicked(self) -> None:
         if self._lab_id is None:
+            return
+        if not confirm(
+            self,
+            title="Reset progress?",
+            message=(
+                f'This clears your checked-off tasks for "{self._name}". It does not '
+                "affect the lab's containers or the instructor's content, and cannot be "
+                "undone."
+            ),
+            confirm_label="Reset Progress",
+            destructive=True,
+        ):
             return
         self._settings.remove(f"manual_progress/{self._lab_id}")
         self.show_lab(self._lab_id, self._name, self._sections)

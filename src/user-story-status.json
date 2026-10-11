@@ -3,8 +3,8 @@
   "source": "src/user-stories.md",
   "epic_folder": "src/user-stories",
   "last_updated": "2026-10-11",
-  "latest_checkpoint": "Phases 1 through 6 are complete. Interactive clickable mockups (see session artifact practicum-mockups.html) reviewed against the real desktop app surfaced a meaningful gap: several backend capabilities marked done (import, preview, port-conflict UI, reset) are not yet exposed in the desktop app the way the mockups show, and a few net-new UX requirements emerged (labs dashboard, a unified pre-start gate, an embedded in-app browser view, and a strict no-native-dialogs rule after a native confirm() was caught during mockup review). Phase 7 captures these as new desktop-UI-only stories (no new API work expected) in src/user-stories/windows-desktop-application/ and one in src/user-stories/designer-mode/. The pre-existing gap noted previously (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
-  "next_recommended_story": "windows-desktop-in-app-dialogs",
+  "latest_checkpoint": "Phases 1 through 6 are complete. Phase 7 (mockup-driven desktop UI gap, plus one backend story) is now in progress: windows-desktop-in-app-dialogs landed first since two other phase-7 stories depend on it (desktop/src/practicum_desktop/dialogs.py ConfirmDialog/confirm(), tested, wired into ManualFlyout's Reset Progress action). Remaining phase-7 work (Labs Dashboard, Pre-Start Gate, Import-and-launch, Lifecycle Controls, Embedded Lab View, Visual Topology Builder, and the backend Image Pull Progress story) is not yet started. The pre-existing gap noted previously (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
+  "next_recommended_story": "windows-desktop-labs-dashboard",
   "current_phase": "phase-7",
   "phases": [
     {
@@ -82,7 +82,7 @@
     {
       "id": "phase-7",
       "title": "Close the Desktop UI Gap (mockup-driven)",
-      "status": "not_started",
+      "status": "in_progress",
       "stories": [
         "windows-desktop-in-app-dialogs",
         "windows-desktop-labs-dashboard",
@@ -900,8 +900,8 @@
       "id": "windows-desktop-in-app-dialogs",
       "epic": "Windows Desktop Application",
       "title": "In-App Dialogs Only",
-      "status": "not_started",
-      "notes": "New story. A native browser confirm() popup was caught during clickable-mockup review when wiring a Delete action, which visibly broke the 'self-contained app' illusion. Mockup now has a reusable showConfirm()/#confirmModal pattern in practicum-mockups.html; the real PySide6 app needs an equivalent shared QDialog-based component. Blocks windows-desktop-labs-dashboard and windows-desktop-lab-lifecycle-controls, which both need it for their destructive actions.",
+      "status": "in_progress",
+      "notes": "ConfirmDialog/confirm() implemented in desktop/src/practicum_desktop/dialogs.py: a reusable QDialog-based component (title, message, confirm/cancel labels, destructive styling) with 7 passing tests in desktop/tests/test_dialogs.py (desktop/tests/conftest.py adds a session QApplication fixture, new in this repo). Wired into the one destructive action that already existed in the real app, ManualFlyout._on_reset_clicked (manual.py) 'Reset Progress'. Still pending: the Labs Dashboard Delete action and the lab-lifecycle Reset action, since those screens don't exist yet (windows-desktop-labs-dashboard, windows-desktop-lab-lifecycle-controls) - this story will be fully done once those consume the same component.",
       "acceptance_criteria": [
         {
           "text": "Deleting a lab from the Labs Dashboard shows the in-app confirmation component, not a native dialog.",
@@ -913,7 +913,7 @@
         },
         {
           "text": "Any other destructive or irreversible action reuses this same component rather than introducing a new native dialog.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "The only native OS dialog anywhere in the app is the system file-open picker used during import.",
