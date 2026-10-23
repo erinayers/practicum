@@ -48,6 +48,14 @@ this README's API section below reflects the current surface.
 
 Interactive API documentation is available at `/docs`.
 
+## Quick start (Windows)
+
+Double-click `start-practicum.bat` (or run it from a terminal in the repo root). It creates
+`.venv` and installs both packages on first run, starts the API in its own window, waits for
+`/health`, then launches the desktop app. Closing the desktop app stops the API again.
+`start-practicum.bat --dev` runs the API with `--reload`; `stop-practicum.bat` cleans up an
+API window if one is left behind.
+
 ## Development
 
 Python 3.12 or newer is required.
