@@ -4,6 +4,7 @@ from practicum.models import (
     Lab,
     LabDefinition,
     LabPreview,
+    NetworkCheckResult,
     PortCheckResult,
     PortMapping,
     ResourceEstimate,
@@ -12,6 +13,7 @@ from practicum.models import (
     RuntimeStatusResult,
     TopologyPreview,
 )
+from practicum.networks import find_subnet_conflicts, move_subnet
 from practicum.ports import check_lab_ports
 from practicum.runtime import DockerRuntime, LabRuntime, RuntimeFailure
 
@@ -21,6 +23,14 @@ class LabNotFoundError(Exception):
 
 
 class PortRecommendationUnavailableError(Exception):
+    pass
+
+
+class SubnetRecommendationUnavailableError(Exception):
+    pass
+
+
+class LeftoverNetworkNotRemovableError(Exception):
     pass
 
 
@@ -222,6 +232,71 @@ class LabService:
         self._labs[lab_id] = Lab(id=lab.id, status=lab.status, **updated_definition.model_dump())
 
         return self.check_ports(lab_id)
+
+    def check_networks(self, lab_id: str) -> NetworkCheckResult:
+        """Subnet overlaps between this lab and networks already on the Docker host.
+        A Docker query failure is reported in `error` (conflicts unknown), not raised."""
+        lab = self.get(lab_id)
+        try:
+            docker_networks = self.runtime.list_networks()
+        except RuntimeFailure as exc:
+            return NetworkCheckResult(
+                lab_id=lab.id, has_conflicts=False, error=exc.message
+            )
+        conflicts = find_subnet_conflicts(lab, docker_networks, self._labs)
+        return NetworkCheckResult(
+            lab_id=lab.id, has_conflicts=bool(conflicts), conflicts=conflicts
+        )
+
+    def apply_subnet_recommendation(self, lab_id: str, network_id: str) -> NetworkCheckResult:
+        """Moves `network_id` (and its interfaces) to the recommended free subnet."""
+        result = self.check_networks(lab_id)
+        if result.error:
+            raise SubnetRecommendationUnavailableError(result.error)
+        conflict = next((c for c in result.conflicts if c.network_id == network_id), None)
+        if conflict is None or conflict.recommended_subnet is None:
+            raise SubnetRecommendationUnavailableError(
+                f"No recommended subnet is available for network '{network_id}'"
+            )
+
+        lab = self.get(lab_id)
+        updated_definition = LabDefinition.model_validate(
+            move_subnet(lab, network_id, conflict.recommended_subnet)
+        )
+        self._labs[lab_id] = Lab(id=lab.id, status=lab.status, **updated_definition.model_dump())
+        return self.check_networks(lab_id)
+
+    def remove_leftover_network(self, lab_id: str, network_name: str) -> NetworkCheckResult:
+        """Removes a Practicum-labelled Docker network (and its containers) whose lab is no
+        longer known to this API - typically left behind by an earlier session - but only
+        when it actually conflicts with `lab_id`."""
+        result = self.check_networks(lab_id)
+        if result.error:
+            raise LeftoverNetworkNotRemovableError(result.error)
+        conflict = next(
+            (c for c in result.conflicts if c.owner_network_name == network_name), None
+        )
+        if conflict is None:
+            raise LeftoverNetworkNotRemovableError(
+                f"Network '{network_name}' does not conflict with this lab"
+            )
+        if conflict.reason != "overlaps_leftover":
+            raise LeftoverNetworkNotRemovableError(
+                f"Network '{network_name}' is not a Practicum leftover; "
+                + (
+                    f"it belongs to lab '{conflict.owner_lab_name}' - reset that lab instead"
+                    if conflict.reason == "overlaps_other_lab"
+                    else "it was not created by Practicum, so Practicum will not remove it"
+                )
+            )
+
+        network = next(
+            (n for n in self.runtime.list_networks() if n.name == network_name), None
+        )
+        if network is None:  # vanished between the check and now; nothing left to do
+            return self.check_networks(lab_id)
+        self.runtime.remove_network(network)
+        return self.check_networks(lab_id)
 
     def clear(self) -> None:
         self._labs.clear()

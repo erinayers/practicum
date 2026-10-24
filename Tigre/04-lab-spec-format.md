@@ -9,7 +9,7 @@ students import; it is the public contract the future-roadmap promises to keep s
 
 | Field | Type | Rules / default |
 |---|---|---|
-| `schema_version` | str | default `"1.0"`, pattern `^\d+\.\d+$` (no version negotiation exists yet — any `X.Y` accepted) |
+| `schema_version` | str | default `"1.0"`, pattern `^\d+\.\d+$`; since 2026-10-23 the **major must be in `SUPPORTED_SCHEMA_MAJOR_VERSIONS = (1,)`** (`models.py`) — `1.7` passes, `2.0` fails with "schema_version '2.0' is not supported by this version of Practicum (supported: 1.x)" (D-20) |
 | `name` | str | required, 1–120 chars |
 | `description` | str? | ≤ 2000 |
 | `author` | str? | 1–120 |

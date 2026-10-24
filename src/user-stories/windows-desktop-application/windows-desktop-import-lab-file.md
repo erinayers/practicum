@@ -49,3 +49,17 @@ so that running an instructor's lab feels as simple as opening a document.
 - Confirmed product direction: importing a conflict-free lab auto-starts it (see the updated `student-import-spec.md`); this is a deliberate UX decision, not an open question.
 - Reference design: the "Open Lab File" modal and the import loading sequence in the clickable mockup (`practicum-mockups.html`, `importModal` / `importingOverlay`).
 - Reuse the same multi-stage progress pattern for import as for Start (see `windows-desktop-lab-lifecycle-controls.md`) rather than building a second one.
+
+## Implementation Status (2026-10-23)
+
+Implemented in `desktop/src/practicum_desktop/import_lab.py` (`ImportLabDialog`) and `lab_file.py`, reached from the new **Import Lab File…** button in `main_window.py`. Decisions taken while building it:
+
+- **`.zip` is not accepted.** No bundle format exists (see `student-import-spec.md` / Tigre S-13); picking a `.zip` shows a specific "choose the .json export" message rather than a JSON parse error. Re-add `.zip` to the file filter when a bundle format is defined.
+- **Duplicate imports create a new lab each time** (the API's behaviour). Detecting and offering "resume the existing lab" needs a stable lab identity in the spec and is still an open product question.
+- **Unsupported `schema_version`** is rejected by the API (`LabDefinition` now accepts only major version 1) and shown inline like any other schema error.
+- **Recent/sample list**: recent files live in QSettings (`recent_lab_files`, newest first, max 8; missing files are greyed out); sample labs are copies of `examples/*.json` bundled inside the desktop package (`practicum_desktop/samples/`, kept byte-identical by a test).
+- **"Browse computer…"** opens the system picker (the only native dialog in the app); choosing a file there is the confirmation, so the flow continues without a second "Open".
+- **Running view**: the app has no dedicated running screen yet (`windows-desktop-embedded-lab-view.md`). After a started import the main window selects the lab, shows "imported and started", and opens the manual flyout. Re-point `MainWindow._apply_pending_selection` at the running view once it exists.
+- **Port check cannot be answered** (API error mid-flow): treated like a conflict — the pre-start gate opens rather than starting blind.
+- **API unreachable**: the dialog shows a blocked banner pointing at the main window's status/Retry; Open/Browse are disabled.
+- **Image pulls**: the "Starting containers…" stage explains the first start may take minutes; `start_lab` now uses a 15-minute timeout. Real per-image progress remains `runtime-image-pull-progress.md`.

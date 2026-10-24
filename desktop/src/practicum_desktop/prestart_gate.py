@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,
@@ -16,12 +17,14 @@ from PySide6.QtWidgets import (
 from practicum_desktop.api_client import (
     PORT_CONFLICT_REASONS,
     ApiClient,
+    NetworkCheckResult,
     PortCheckResult,
     PortConflict,
     PreviewResult,
     StartResult,
+    SubnetConflict,
 )
-from practicum_desktop.dialogs import COPYABLE_TEXT_FLAGS
+from practicum_desktop.dialogs import COPYABLE_TEXT_FLAGS, confirm
 from practicum_desktop.workers import CallableWorker
 
 
@@ -32,12 +35,29 @@ def _copyable_label(text: str = "") -> QLabel:
     return label
 
 
+def _subnet_issue_text(conflict: SubnetConflict) -> str:
+    if conflict.reason == "overlaps_other_lab":
+        status = f", {conflict.owner_lab_status}" if conflict.owner_lab_status else ""
+        return f"Used by lab '{conflict.owner_lab_name}' ({conflict.owner_subnet}{status})"
+    if conflict.reason == "overlaps_leftover":
+        plural = "s" if conflict.owner_container_count != 1 else ""
+        return (
+            f"Left over from an earlier session: '{conflict.owner_network_name}' "
+            f"({conflict.owner_subnet}, {conflict.owner_container_count} container{plural})"
+        )
+    return (
+        f"Used by Docker network '{conflict.owner_network_name}' ({conflict.owner_subnet}), "
+        "not created by Practicum"
+    )
+
+
 class PreStartGateDialog(QDialog):
     """The mandatory screen between selecting a lab and actually starting it.
 
     Shows what will run on the student's machine (required images, estimated
     resources, read-only topology, manual step count) and blocks Start until any host
-    port conflicts are resolved. See windows-desktop-prestart-lab-gate.md.
+    port conflicts and subnet conflicts (a Docker network already using the lab's
+    address space) are resolved. See windows-desktop-prestart-lab-gate.md.
 
     Every entry point capable of starting a lab should route through this same dialog
     rather than re-implementing the gate; today that's the main window's Start button,
@@ -47,15 +67,21 @@ class PreStartGateDialog(QDialog):
     def __init__(self, api_client: ApiClient, lab_id: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Review Before Starting")
-        self.resize(640, 680)
+        self.resize(720, 820)
 
         self._api_client = api_client
         self._lab_id = lab_id
         self._conflicts: list[PortConflict] = []
+        self._subnet_conflicts: list[SubnetConflict] = []
+        self._ports_known = False
+        self._networks_known = False
         self._preview_worker: CallableWorker | None = None
         self._ports_worker: CallableWorker | None = None
+        self._networks_worker: CallableWorker | None = None
         self._apply_worker: CallableWorker | None = None
+        self._network_fix_worker: CallableWorker | None = None
         self._start_worker: CallableWorker | None = None
+        self._subnet_moved_note = ""
 
         self._build_ui()
         self._load()
@@ -110,6 +136,21 @@ class PreStartGateDialog(QDialog):
         conflicts_layout.addWidget(self.conflicts_table)
         layout.addWidget(conflicts_group)
 
+        networks_group = QGroupBox("Network Conflicts")
+        networks_layout = QVBoxLayout(networks_group)
+        self.networks_banner = _copyable_label()
+        networks_layout.addWidget(self.networks_banner)
+        self.networks_table = QTableWidget(0, 4)
+        self.networks_table.setHorizontalHeaderLabels(["Network", "Subnet", "Issue", "Fix"])
+        header = self.networks_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.networks_table.setWordWrap(True)
+        self.networks_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        networks_layout.addWidget(self.networks_table)
+        layout.addWidget(networks_group)
+
         self.status_label = _copyable_label()
         layout.addWidget(self.status_label)
 
@@ -135,6 +176,16 @@ class PreStartGateDialog(QDialog):
         self._ports_worker.finished_call.connect(self._on_ports_checked)
         self._ports_worker.start()
 
+        self.networks_banner.setText("Checking Docker networks…")
+        self._networks_worker = CallableWorker(self._api_client.check_networks, self._lab_id)
+        self._networks_worker.finished_call.connect(self._on_networks_checked)
+        self._networks_worker.start()
+
+    def _reload_preview(self) -> None:
+        self._preview_worker = CallableWorker(self._api_client.get_preview, self._lab_id)
+        self._preview_worker.finished_call.connect(self._on_preview_loaded)
+        self._preview_worker.start()
+
     def _on_preview_loaded(self, result: PreviewResult) -> None:
         if not result.success:
             self.name_label.setText("Could not load this lab.")
@@ -143,6 +194,8 @@ class PreStartGateDialog(QDialog):
 
         self.name_label.setText(result.name)
         self.description_label.setText(result.description or "No description provided.")
+        if self.status_label.text() == "Loading lab details…":
+            self.status_label.setText("")
 
         author_parts = [part for part in (result.author, result.version) if part]
         self.author_label.setText(" · ".join(author_parts))
@@ -175,12 +228,23 @@ class PreStartGateDialog(QDialog):
             self.topology_table.setItem(row, 1, QTableWidgetItem(interface.network))
             self.topology_table.setItem(row, 2, QTableWidgetItem(interface.address))
 
+    def _update_start_enabled(self) -> None:
+        """Start is allowed only once both checks have answered and neither found anything."""
+        self.start_button.setEnabled(
+            self._ports_known
+            and self._networks_known
+            and not self._conflicts
+            and not self._subnet_conflicts
+        )
+
     def _on_ports_checked(self, result: PortCheckResult) -> None:
         if not result.success:
+            self._ports_known = False
             self.conflicts_banner.setText(result.detail)
-            self.start_button.setEnabled(False)
+            self._update_start_enabled()
             return
 
+        self._ports_known = True
         self._conflicts = result.conflicts
         self._render_conflicts()
 
@@ -205,14 +269,161 @@ class PreStartGateDialog(QDialog):
 
         if not self._conflicts:
             self.conflicts_banner.setText("No port conflicts detected.")
-            self.start_button.setEnabled(True)
         else:
             plural = "s" if len(self._conflicts) != 1 else ""
             self.conflicts_banner.setText(
                 f"{len(self._conflicts)} port conflict{plural} must be resolved before "
                 "starting."
             )
-            self.start_button.setEnabled(False)
+        self._update_start_enabled()
+
+    # ----- subnet conflicts -------------------------------------------------------------
+
+    def _on_networks_checked(self, result: NetworkCheckResult) -> None:
+        if not result.success:
+            self._networks_known = False
+            self.networks_banner.setText(
+                f"Could not check Docker networks: {result.detail} "
+                "Start stays disabled until this can be verified."
+            )
+            self._update_start_enabled()
+            return
+
+        self._networks_known = True
+        self._subnet_conflicts = result.conflicts
+        self._render_subnet_conflicts()
+
+    def _render_subnet_conflicts(self) -> None:
+        self.networks_table.setRowCount(len(self._subnet_conflicts))
+        for row, conflict in enumerate(self._subnet_conflicts):
+            self.networks_table.setItem(row, 0, QTableWidgetItem(conflict.network_id))
+            self.networks_table.setItem(row, 1, QTableWidgetItem(conflict.subnet))
+            self.networks_table.setItem(row, 2, QTableWidgetItem(_subnet_issue_text(conflict)))
+            self.networks_table.setCellWidget(row, 3, self._subnet_fix_widget(conflict))
+        self.networks_table.resizeRowsToContents()
+
+        if not self._subnet_conflicts:
+            self.networks_banner.setText("No subnet conflicts with existing Docker networks.")
+        else:
+            plural = "s" if len(self._subnet_conflicts) != 1 else ""
+            self.networks_banner.setText(
+                f"{len(self._subnet_conflicts)} network{plural} overlap{'' if plural else 's'} "
+                "address space already in use on this machine. Docker refuses to create such "
+                "networks, so the lab cannot start until each one is fixed."
+            )
+        self._update_start_enabled()
+
+    def _subnet_fix_widget(self, conflict: SubnetConflict) -> QWidget:
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(2, 2, 2, 2)
+
+        if conflict.reason == "overlaps_leftover":
+            remove_button = QPushButton("Remove leftover")
+            remove_button.clicked.connect(
+                lambda _checked=False, c=conflict: self._on_remove_leftover(c)
+            )
+            row.addWidget(remove_button)
+        elif conflict.reason == "overlaps_other_lab" and conflict.owner_lab_id:
+            reset_button = QPushButton(f"Reset '{conflict.owner_lab_name}'")
+            reset_button.clicked.connect(
+                lambda _checked=False, c=conflict: self._on_reset_owner_lab(c)
+            )
+            row.addWidget(reset_button)
+
+        if conflict.recommended_subnet:
+            use_button = QPushButton(f"Use {conflict.recommended_subnet}")
+            use_button.clicked.connect(
+                lambda _checked=False, c=conflict: self._on_apply_subnet_recommendation(c)
+            )
+            row.addWidget(use_button)
+
+        if row.count() == 0:
+            row.addWidget(QLabel("No automatic fix available"))
+        row.addStretch(1)
+        return container
+
+    def _on_remove_leftover(self, conflict: SubnetConflict) -> None:
+        plural = "s" if conflict.owner_container_count != 1 else ""
+        if not confirm(
+            self,
+            "Remove leftover lab resources?",
+            f"This deletes the Docker network '{conflict.owner_network_name}' and its "
+            f"{conflict.owner_container_count} container{plural}, left behind by an earlier "
+            "Practicum session that is no longer in your lab list. Anything inside those "
+            "containers is lost. This cannot be undone.",
+            confirm_label="Remove",
+            destructive=True,
+        ):
+            return
+        self._run_network_fix(
+            "Removing leftover resources…",
+            self._api_client.remove_leftover_network,
+            self._lab_id,
+            conflict.owner_network_name,
+        )
+
+    def _on_reset_owner_lab(self, conflict: SubnetConflict) -> None:
+        if not confirm(
+            self,
+            f"Reset '{conflict.owner_lab_name}'?",
+            f"'{conflict.owner_lab_name}' owns the address space this lab needs. Resetting "
+            "it removes its containers and networks and returns it to its original state; "
+            "any work inside it is lost. Its manual progress on this computer is kept.",
+            confirm_label="Reset",
+            destructive=True,
+        ):
+            return
+        self._run_network_fix(
+            f"Resetting '{conflict.owner_lab_name}'…",
+            self._reset_owner_then_recheck,
+            conflict.owner_lab_id,
+        )
+
+    def _reset_owner_then_recheck(self, owner_lab_id: str) -> NetworkCheckResult:
+        """Runs on the worker thread: reset the other lab, then re-check this one."""
+        reset = self._api_client.reset_lab(owner_lab_id)
+        if not reset.success:
+            return NetworkCheckResult(success=False, detail=reset.detail)
+        return self._api_client.check_networks(self._lab_id)
+
+    def _on_apply_subnet_recommendation(self, conflict: SubnetConflict) -> None:
+        self._run_network_fix(
+            f"Moving '{conflict.network_id}' to {conflict.recommended_subnet}…",
+            self._apply_subnet_then_note,
+            conflict,
+        )
+
+    def _apply_subnet_then_note(self, conflict: SubnetConflict) -> NetworkCheckResult:
+        result = self._api_client.apply_subnet_recommendation(self._lab_id, conflict.network_id)
+        if result.success:
+            self._subnet_moved_note = (
+                f"Network '{conflict.network_id}' now uses {conflict.recommended_subnet}; "
+                "addresses on it were remapped. The lab manual may still mention the "
+                "original addresses."
+            )
+        return result
+
+    def _run_network_fix(self, progress_text: str, func, *args) -> None:
+        self.networks_banner.setText(progress_text)
+        self.start_button.setEnabled(False)
+        self._network_fix_worker = CallableWorker(func, *args)
+        self._network_fix_worker.finished_call.connect(self._on_network_fix_done)
+        self._network_fix_worker.start()
+
+    def _on_network_fix_done(self, result: NetworkCheckResult) -> None:
+        if not result.success:
+            # Keep the previous conflict list visible; just explain what went wrong.
+            self.networks_banner.setText(f"❌ {result.detail}")
+            self._update_start_enabled()
+            return
+        self._on_networks_checked(result)
+        if self._subnet_moved_note:
+            self.networks_banner.setText(
+                f"{self.networks_banner.text()} {self._subnet_moved_note}"
+            )
+            self._subnet_moved_note = ""
+            self._reload_preview()  # topology addresses changed
 
     def _on_apply_recommendation(self, conflict: PortConflict) -> None:
         self.conflicts_banner.setText("Applying recommended port…")
@@ -241,4 +452,4 @@ class PreStartGateDialog(QDialog):
             self.accept()
             return
         self.status_label.setText(f"❌ {result.detail}")
-        self.start_button.setEnabled(not self._conflicts)
+        self._update_start_enabled()

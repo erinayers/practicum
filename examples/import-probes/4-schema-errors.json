@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "name": "Import Probe \u2013 Schema Errors",
+  "difficulty": "easy",
+  "nodes": [
+    {
+      "id": "host-a"
+    },
+    {
+      "id": "Host B",
+      "image": "alpine:3.21"
+    }
+  ],
+  "networks": [
+    {
+      "id": "lan",
+      "subnet": "10.93.3.0/24"
+    }
+  ],
+  "interfaces": [
+    {
+      "node": "host-a",
+      "network": "lan",
+      "address": "192.168.50.10/24"
+    }
+  ]
+}

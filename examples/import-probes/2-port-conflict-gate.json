@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "name": "Import Probe \u2013 Port Conflict",
+  "description": "Maps host port 8000, which the Practicum API already occupies. Import must stop at the pre-start review screen and offer a recommended port instead of starting.",
+  "author": "Practicum QA",
+  "version": "0.1.0",
+  "nodes": [
+    {
+      "id": "web",
+      "image": "nginx:alpine",
+      "resources": {
+        "cpu": 0.5,
+        "memory_mb": 128,
+        "port_mappings": [
+          {
+            "host": 8000,
+            "container": 80,
+            "protocol": "tcp"
+          }
+        ]
+      }
+    }
+  ],
+  "networks": [
+    {
+      "id": "probe-dmz",
+      "subnet": "10.93.2.0/24"
+    }
+  ],
+  "interfaces": [
+    {
+      "node": "web",
+      "network": "probe-dmz",
+      "address": "10.93.2.10/24"
+    }
+  ]
+}

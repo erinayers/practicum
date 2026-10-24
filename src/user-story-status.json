@@ -2,8 +2,8 @@
   "project": "Practicum",
   "source": "src/user-stories.md",
   "epic_folder": "src/user-stories",
-  "last_updated": "2026-10-11",
-  "latest_checkpoint": "Phases 1 through 6 are complete. Phase 7 (mockup-driven desktop UI gap, plus one backend story) is in progress: windows-desktop-in-app-dialogs and windows-desktop-prestart-lab-gate are both done (ConfirmDialog/confirm() in dialogs.py wired into ManualFlyout's Reset Progress; PreStartGateDialog in prestart_gate.py wired into main_window.py's Start button, replacing the old direct start_lab call and the old has_conflicts-gated button). Remaining phase-7 work (Labs Dashboard, Import-and-launch, Lifecycle Controls, Embedded Lab View, Visual Topology Builder, and the backend Image Pull Progress story) is not yet started; Labs Dashboard and Import-and-launch are both expected to open PreStartGateDialog rather than re-implementing the gate. The pre-existing gap noted previously (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
+  "last_updated": "2026-10-23",
+  "latest_checkpoint": "Phases 1 through 6 are complete. Phase 7 (mockup-driven desktop UI gap, plus one backend story) is in progress: windows-desktop-prestart-lab-gate is done (PreStartGateDialog); windows-desktop-import-lab-file is done (ImportLabDialog in import_lab.py + lab_file.py, 'Import Lab File…' button in main_window.py; conflict-free imports auto-start, conflicts hand over to PreStartGateDialog; bundled sample labs; recent-files list; awaiting a Windows smoke run); windows-desktop-in-app-dialogs is in_progress with the file-picker AC now met and only the Dashboard Delete / Lifecycle Reset ACs open. Remaining phase-7 work (Labs Dashboard, Lifecycle Controls, Embedded Lab View, Visual Topology Builder, Image Pull Progress) is not yet started; the Labs Dashboard should reuse ImportLabDialog for its 'Import Existing Lab' action and PreStartGateDialog for Start. New backend+desktop story runtime-subnet-conflicts is done (GET/POST /labs/{id}/networks[...], 'Network Conflicts' in the gate, import hands over on subnet overlap) after the Windows smoke run of import hit a Docker 'Pool overlaps' failure caused by a leftover Quick Start network. windows-desktop-open-node-shell (new, done): Lab Nodes table + Open shell button (docker exec in a new console) so CLI nodes are usable from the app. Side fixes this checkpoint: start_lab lifecycle timeout (900 s), docker CLI OSError handling in runtime.py and docker_status.py, and server-side rejection of unsupported schema_version majors. The pre-existing gap (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
   "next_recommended_story": "windows-desktop-labs-dashboard",
   "current_phase": "phase-7",
   "phases": [
@@ -88,6 +88,8 @@
         "windows-desktop-labs-dashboard",
         "windows-desktop-prestart-lab-gate",
         "windows-desktop-import-lab-file",
+        "runtime-subnet-conflicts",
+        "windows-desktop-open-node-shell",
         "windows-desktop-lab-lifecycle-controls",
         "windows-desktop-embedded-lab-view",
         "designer-visual-topology-builder",
@@ -427,7 +429,7 @@
       "epic": "Student Import Mode",
       "title": "Import Instructor Spec",
       "status": "done",
-      "notes": "The API now exposes POST /labs/import. Valid instructor specs are validated, normalized, assigned a lab id, and added to the local in-memory lab list. Invalid specs return structured errors and are not stored. The future desktop app will handle the actual file picker and malformed file handling before sending JSON to the API. Product decision confirmed 2026-10-11: a conflict-free import auto-starts the lab rather than stopping at an unstarted list entry; see windows-desktop-import-lab-file for the desktop flow.",
+      "notes": "The API now exposes POST /labs/import. Valid instructor specs are validated, normalized, assigned a lab id, and added to the local in-memory lab list. Invalid specs return structured errors and are not stored. The future desktop app will handle the actual file picker and malformed file handling before sending JSON to the API. Product decision confirmed 2026-10-11: a conflict-free import auto-starts the lab rather than stopping at an unstarted list entry; see windows-desktop-import-lab-file for the desktop flow. Update 2026-10-23: the desktop file picker, malformed-file handling and structured-error display now exist (windows-desktop-import-lab-file, import_lab.py / lab_file.py).",
       "acceptance_criteria": [
         {
           "text": "The student can select a spec file from disk.",
@@ -664,7 +666,7 @@
       "epic": "Docker Runtime API",
       "title": "Report Lab Runtime Status",
       "status": "done",
-      "notes": "The API now exposes GET /labs/{lab_id}/status. It returns stored lab status plus runtime resource status for networks and containers, including missing-resource errors when detected by the runtime.",
+      "notes": "The API now exposes GET /labs/{lab_id}/status. It returns stored lab status plus runtime resource status for networks and containers, including missing-resource errors when detected by the runtime. Update 2026-10-23: the desktop now calls GET /labs/{id}/status (ApiClient.get_status) to fill the Lab Nodes table on selection and after Start (windows-desktop-open-node-shell); continuous polling is still S-12.",
       "acceptance_criteria": [
         {
           "text": "API exposes lab runtime status.",
@@ -897,11 +899,48 @@
       ]
     },
     {
+      "id": "runtime-subnet-conflicts",
+      "epic": "Docker Runtime API",
+      "title": "Subnet Conflict Detection and Resolution",
+      "status": "done",
+      "notes": "Added and implemented 2026-10-23 after the first Windows smoke run of the import flow failed at start with Docker's 'Pool overlaps with other one on this address space' (Tigre/06 #13; was Tigre/11 proposal S-16). Core: src/practicum/networks.py (find_subnet_conflicts / recommend_subnet from 10.90.0.0/16 / move_subnet keeping host offsets), DockerRuntime.list_networks() (docker network ls + inspect, parses IPAM subnets, practicum.lab_id label, attached containers) and remove_network() (docker rm -f containers, then network rm), LabService.check_networks / apply_subnet_recommendation / remove_leftover_network, routes GET /labs/{id}/networks, POST /labs/{id}/networks/apply-recommendation, POST /labs/{id}/networks/remove-leftover (409 for no recommendation / not a leftover), models DockerNetworkInfo, SubnetConflict (reasons overlaps_other_lab | overlaps_leftover | overlaps_docker_network), NetworkCheckResult (error field when Docker is unreachable), and LabDefinition now rejects overlapping subnets within a lab. Desktop: ApiClient.check_networks / apply_subnet_recommendation / remove_leftover_network / reset_lab; PreStartGateDialog gained a 'Network Conflicts' group (owner text per reason; fixes 'Remove leftover' and 'Reset <lab>' via confirm(destructive=True), 'Use <subnet>' which re-renders the topology and warns that the manual may mention old addresses; Start requires both port and network checks to have answered clean); ImportLabDialog's check stage is now 'Checking host ports and networks…' and hands over to the gate on subnet conflicts. Tests: core +27 (test_networks 11, test_network_conflicts_api 11 with a FakeRuntime, test_runtime +5), desktop +17 (gate +8, api_client +7, import +2). Verified end-to-end in the sandbox against a stateful fake docker CLI: the user's exact failure reproduced, then all three fixes (remove leftover, reset owner, use subnet) cleared it and the lab started. Not yet verified on Windows with real Docker Desktop.",
+      "acceptance_criteria": [
+        {
+          "text": "A lab whose subnet overlaps an existing Docker network is reported by GET /labs/{lab_id}/networks with the owner identified and a recommended subnet, before any Start is attempted.",
+          "complete": true
+        },
+        {
+          "text": "The pre-start gate blocks Start while subnet conflicts exist and shows the owner of each.",
+          "complete": true
+        },
+        {
+          "text": "Removing a leftover from the gate deletes that network and its containers and clears the conflict; the lab definition is unchanged.",
+          "complete": true
+        },
+        {
+          "text": "Resetting the owning lab from the gate clears the conflict.",
+          "complete": true
+        },
+        {
+          "text": "Applying the recommended subnet moves the network and its addresses, the topology shown in the gate updates, and the user is told the manual may still mention the old addresses.",
+          "complete": true
+        },
+        {
+          "text": "Importing a lab with a subnet conflict stops at the gate instead of failing at start.",
+          "complete": true
+        },
+        {
+          "text": "Overlapping subnets within one lab are rejected at validation.",
+          "complete": true
+        }
+      ]
+    },
+    {
       "id": "windows-desktop-in-app-dialogs",
       "epic": "Windows Desktop Application",
       "title": "In-App Dialogs Only",
       "status": "in_progress",
-      "notes": "ConfirmDialog/confirm() implemented in desktop/src/practicum_desktop/dialogs.py: a reusable QDialog-based component (title, message, confirm/cancel labels, destructive styling) with 7 passing tests in desktop/tests/test_dialogs.py (desktop/tests/conftest.py adds a session QApplication fixture, new in this repo). Wired into the one destructive action that already existed in the real app, ManualFlyout._on_reset_clicked (manual.py) 'Reset Progress'. Still pending: the Labs Dashboard Delete action and the lab-lifecycle Reset action, since those screens don't exist yet (windows-desktop-labs-dashboard, windows-desktop-lab-lifecycle-controls) - this story will be fully done once those consume the same component.",
+      "notes": "ConfirmDialog/confirm() implemented in desktop/src/practicum_desktop/dialogs.py: a reusable QDialog-based component (title, message, confirm/cancel labels, destructive styling) with 7 passing tests in desktop/tests/test_dialogs.py (desktop/tests/conftest.py adds a session QApplication fixture, new in this repo). Wired into the one destructive action that already existed in the real app, ManualFlyout._on_reset_clicked (manual.py) 'Reset Progress'. Still pending: the Labs Dashboard Delete action and the lab-lifecycle Reset action, since those screens don't exist yet (windows-desktop-labs-dashboard, windows-desktop-lab-lifecycle-controls) - this story will be fully done once those consume the same component. Update 2026-10-23: the import flow (windows-desktop-import-lab-file) added the system file-open picker (QFileDialog.getOpenFileName in import_lab.py) - it is the only native dialog in the app; there is still no QMessageBox anywhere (grep-verified), and import progress/errors are rendered in-app in the same dialog. That AC is now met; Delete (dashboard) and Reset (lifecycle) remain the two open ACs. The gate's 'Remove leftover' and 'Reset <lab>' subnet fixes (2026-10-23) also use confirm(destructive=True).",
       "acceptance_criteria": [
         {
           "text": "Deleting a lab from the Labs Dashboard shows the in-app confirmation component, not a native dialog.",
@@ -917,7 +956,32 @@
         },
         {
           "text": "The only native OS dialog anywhere in the app is the system file-open picker used during import.",
-          "complete": false
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-open-node-shell",
+      "epic": "Windows Desktop Application",
+      "title": "Open a Shell on a Lab Node",
+      "status": "done",
+      "notes": "Added and implemented 2026-10-23 (was Tigre/11 proposal S-11, P0) after the user's first started lab was unusable: they tried `ssh 10.93.1.0` from Windows - node addresses live inside Docker Desktop's VM and the nodes run no SSH server. MVP: desktop/src/practicum_desktop/node_shell.py (shell_command = docker exec -it <container> sh -c 'command -v bash && exec bash || exec sh'; open_node_shell launches it in a new console - Windows: cmd.exe /k with CREATE_NEW_CONSOLE so errors stay visible; Linux: first of x-terminal-emulator/gnome-terminal/konsole/xterm; otherwise returns the command for copying). ApiClient.get_status -> StatusResult{lab_status, resources:[ResourceStatusInfo], containers}. main_window.py gained a 'Lab Nodes' table (Node / Container / State / Open shell) filled from GET /labs/{id}/status on selection and after Start; button enabled only for running containers; status line explains addresses are reachable only inside the lab. Default window size raised to 560x760. Probe kit lab 1's manual now says to use Open shell. Tests: desktop +12 (test_node_shell 5, test_main_window +4, test_api_client +3) -> 134. Rendered offscreen against the fake-docker API. Not yet verified on Windows (CREATE_NEW_CONSOLE + cmd /k with Docker Desktop).",
+      "acceptance_criteria": [
+        {
+          "text": "A running lab's nodes are listed with their container state, each running node offering Open shell.",
+          "complete": true
+        },
+        {
+          "text": "Open shell opens a terminal inside that node without the user typing a Docker command.",
+          "complete": true
+        },
+        {
+          "text": "Nodes that are not running show a disabled button and a hint to start the lab.",
+          "complete": true
+        },
+        {
+          "text": "A launch failure is reported with the command the user could run manually.",
+          "complete": true
         }
       ]
     },
@@ -955,7 +1019,7 @@
       "epic": "Windows Desktop Application",
       "title": "Pre-Start Readiness Gate",
       "status": "done",
-      "notes": "Implemented as PreStartGateDialog (desktop/src/practicum_desktop/prestart_gate.py): loads GET /labs/{lab_id}/preview and GET /labs/{lab_id}/ports in parallel, shows name/description/author/version, required images, estimated CPU/memory, a read-only topology table (node/network/address), a manual step count, and a port-conflicts table with per-row 'Use <port>' buttons. Start Lab is disabled while conflicts remain and re-enables once resolved. Wired into main_window.py's existing Start button (which now opens this dialog instead of calling start_lab directly); the main window's Start button and inline port-conflict table no longer gate on conflicts themselves, since the dialog is now the single authority for that. Required extending PreviewResult/get_preview in api_client.py to parse required_images/estimated_resources/topology fields the API already returned but the desktop client was discarding. 11 new tests (7 dialog + 4 extended api_client assertions implicitly covered by existing suite), all passing; PORT_CONFLICT_REASONS moved to api_client.py as a shared constant to avoid duplicating it between main_window.py and this dialog. Not yet reachable from the Labs Dashboard or Import flows since those don't exist yet (windows-desktop-labs-dashboard, windows-desktop-import-lab-file) - both should open this same dialog rather than re-implementing the gate once built.",
+      "notes": "Implemented as PreStartGateDialog (desktop/src/practicum_desktop/prestart_gate.py): loads GET /labs/{lab_id}/preview and GET /labs/{lab_id}/ports in parallel, shows name/description/author/version, required images, estimated CPU/memory, a read-only topology table (node/network/address), a manual step count, and a port-conflicts table with per-row 'Use <port>' buttons. Start Lab is disabled while conflicts remain and re-enables once resolved. Wired into main_window.py's existing Start button (which now opens this dialog instead of calling start_lab directly); the main window's Start button and inline port-conflict table no longer gate on conflicts themselves, since the dialog is now the single authority for that. Required extending PreviewResult/get_preview in api_client.py to parse required_images/estimated_resources/topology fields the API already returned but the desktop client was discarding. 11 new tests (7 dialog + 4 extended api_client assertions implicitly covered by existing suite), all passing; PORT_CONFLICT_REASONS moved to api_client.py as a shared constant to avoid duplicating it between main_window.py and this dialog. Not yet reachable from the Labs Dashboard or Import flows since those don't exist yet (windows-desktop-labs-dashboard, windows-desktop-import-lab-file) - both should open this same dialog rather than re-implementing the gate once built. Update 2026-10-23: the gate now also checks Docker subnet overlaps (GET /labs/{id}/networks) in a 'Network Conflicts' group with Remove leftover / Reset <lab> / Use <subnet> fixes; Start requires both the port and the network check to be clean (runtime-subnet-conflicts).",
       "acceptance_criteria": [
         {
           "text": "The screen shows lab name, description, required images, estimated resources, and read-only topology.",
@@ -979,24 +1043,28 @@
       "id": "windows-desktop-import-lab-file",
       "epic": "Windows Desktop Application",
       "title": "Import Lab File and Launch",
-      "status": "not_started",
-      "notes": "New story. Defines the desktop-specific file-open experience for POST /labs/import (already done); a conflict-free import auto-starts the lab (confirmed 2026-10-11, student-import-spec updated to match), falling back to windows-desktop-prestart-lab-gate when conflicts exist.",
+      "status": "done",
+      "notes": "Implemented 2026-10-23 as ImportLabDialog in desktop/src/practicum_desktop/import_lab.py, opened from the new 'Import Lab File…' button in main_window.py. The dialog is the in-app 'Open Lab File' modal from the mockup (importModal): a list of recently imported files (QSettings key recent_lab_files, newest first, max 8, missing files shown greyed) plus the sample labs bundled in the package (desktop/src/practicum_desktop/samples/*.json, byte-identical copies of examples/ guarded by a test), and 'Browse computer…' which opens QFileDialog.getOpenFileName (filter *.json) - the single sanctioned native dialog; picking a file there continues immediately. The same dialog then becomes the staged progress view (importingOverlay): Reading lab file -> Importing lab definition (POST /labs/import via the new ApiClient.import_lab/ImportLabResult) -> Checking host ports (GET /labs/{id}/ports) -> Starting containers (POST /labs/{id}/start). Conflict-free labs start with no further clicks; labs with conflicts (or an unanswerable port check) return gate_required and MainWindow opens PreStartGateDialog for them, so the gate stays the only authority for starting with conflicts. File problems are caught before any API call by lab_file.read_lab_file: missing file, directory, >5 MB, non-UTF-8, JSON syntax error with line/column, non-object JSON, and .zip (no bundle format exists yet - rejected with 'choose the .json export' guidance). API schema errors are listed inline as 'nodes[0].image: Field required' lines (lab_file.format_issue); unsupported schema_version majors (e.g. 2.0) are now rejected server-side by LabDefinition with a readable message. If the API is down the dialog shows a blocked banner pointing at the main window's status/Retry instead of a generic failure. After the dialog closes MainWindow refreshes GET /labs, selects the imported lab, shows 'imported and started' (or 'imported - use Start when ready'), and opens the manual flyout when started - today's equivalent of the running view until windows-desktop-embedded-lab-view exists; re-point _apply_pending_selection when it does. Duplicate imports create a new lab each time (API behaviour; Tigre/09 Q-1 still open). Also fixed on the way: ApiClient.start_lab now uses a 900 s lifecycle timeout (Tigre/06 #3) with a specific timeout message; the runtime and docker_status now treat any OSError from the docker CLI (e.g. PermissionError) as a structured failure instead of a 500 / a dead startup thread. Tests: desktop 105 (+56: test_lab_file 19, test_import_lab 21, test_main_window 7, test_api_client +8, test_docker_status +1; shared tests/qt_helpers.py), core 104 (+4). Exercised end-to-end in a Linux sandbox against a live API (PySide6 offscreen): valid import, schema 2.0 rejection, multi-error file, forced port conflict -> gate, conflict-free -> start failure surfaced with guidance. NOT yet manually verified on Windows - needs one smoke run with Docker Desktop (native picker look, auto-start landing, recent list). Update 2026-10-23 (after the first Windows smoke run hit Tigre/06 #13): the check stage is now 'Checking host ports and networks…' - a subnet overlap with an existing Docker network (typically a leftover from an earlier session) hands over to the gate, which can fix it, instead of failing at start (runtime-subnet-conflicts).",
       "acceptance_criteria": [
         {
           "text": "The user can select a lab file via a file-open affordance.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Invalid or malformed files show a clear, specific error and the import does not proceed.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "A valid, conflict-free import proceeds straight to the running view without extra clicks.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "A valid import with port conflicts stops at the pre-start readiness gate instead of starting.",
-          "complete": false
+          "complete": true
+        },
+        {
+          "text": "The imported lab appears in the Labs Dashboard list afterward, whether or not it was started in the same flow.",
+          "complete": true
         }
       ]
     },

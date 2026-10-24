@@ -3,17 +3,26 @@ from pydantic import ValidationError
 
 from practicum.models import (
     ApplyPortRecommendationRequest,
+    ApplySubnetRecommendationRequest,
     ImportResult,
     Lab,
     LabDefinition,
     LabPreview,
+    NetworkCheckResult,
     PortCheckResult,
+    RemoveLeftoverNetworkRequest,
     RuntimeActionResult,
     RuntimeStatusResult,
     ValidationIssue,
     ValidationResult,
 )
-from practicum.service import LabNotFoundError, LabService, PortRecommendationUnavailableError
+from practicum.service import (
+    LabNotFoundError,
+    LabService,
+    LeftoverNetworkNotRemovableError,
+    PortRecommendationUnavailableError,
+    SubnetRecommendationUnavailableError,
+)
 
 app = FastAPI(
     title="Practicum API",
@@ -144,4 +153,36 @@ def apply_port_recommendation(
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
     except PortRecommendationUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/labs/{lab_id}/networks", response_model=NetworkCheckResult)
+def get_lab_networks(lab_id: str) -> NetworkCheckResult:
+    try:
+        return service.check_networks(lab_id)
+    except LabNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Lab not found") from exc
+
+
+@app.post("/labs/{lab_id}/networks/apply-recommendation", response_model=NetworkCheckResult)
+def apply_subnet_recommendation(
+    lab_id: str, request: ApplySubnetRecommendationRequest
+) -> NetworkCheckResult:
+    try:
+        return service.apply_subnet_recommendation(lab_id, request.network_id)
+    except LabNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except SubnetRecommendationUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/labs/{lab_id}/networks/remove-leftover", response_model=NetworkCheckResult)
+def remove_leftover_network(
+    lab_id: str, request: RemoveLeftoverNetworkRequest
+) -> NetworkCheckResult:
+    try:
+        return service.remove_leftover_network(lab_id, request.network_name)
+    except LabNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except LeftoverNetworkNotRemovableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

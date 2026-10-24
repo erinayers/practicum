@@ -1047,6 +1047,191 @@
       ]
     },
     {
+      "name": "Check Created Lab Networks",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/networks",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "networks"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Network check response has expected shape', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.lab_id).to.eql(pm.collectionVariables.get('labId'));",
+              "  pm.expect(body.has_conflicts).to.be.a('boolean');",
+              "  pm.expect(body.conflicts).to.be.an('array');",
+              "  // error is null when Docker could be queried, otherwise the reason as a string",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Check Missing Lab Networks",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/missing-lab-id/networks",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "missing-lab-id",
+            "networks"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Apply Subnet Recommendation - No Conflict (409)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"network_id\": \"left\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/networks/apply-recommendation",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "networks",
+            "apply-recommendation"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 409 when the network is not actually conflicting', function () {",
+              "  pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Remove Leftover Network - Not a Conflict (409)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"network_name\": \"practicum-deadbeef-lab-net\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/networks/remove-leftover",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "networks",
+            "remove-leftover"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 409 when that network does not conflict with this lab', function () {",
+              "  pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Validate Invalid Lab - Address Outside Network",
       "request": {
         "method": "POST",

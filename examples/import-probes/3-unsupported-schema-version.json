@@ -1,0 +1,66 @@
+{
+  "schema_version": "2.0",
+  "name": "Import Probe \u2013 Schema 2.0",
+  "description": "Small two-host lab for exercising the Import Lab File flow. No host ports are mapped, so it should start without stopping at the review screen.",
+  "author": "Practicum QA",
+  "version": "0.1.0",
+  "manual": {
+    "sections": [
+      {
+        "id": "check-connectivity",
+        "title": "Check connectivity",
+        "content_markdown": "Both hosts sit on `10.93.1.0/24`: **host-a** is `10.93.1.10`, **host-b** is `10.93.1.20`.\n\nNode addresses are only reachable from *inside* the lab (Docker Desktop keeps lab networks inside its VM), so don't try to ping or ssh them from Windows. Instead, in the **Lab Nodes** table click **Open shell** next to `host-a` \u2014 a terminal window opens inside that node \u2014 and run:\n\n```\nping -c 3 10.93.1.20\n```\n\nThen do the same from `host-b` towards `10.93.1.10`.",
+        "tasks": [
+          {
+            "id": "shell-a",
+            "text": "Open a shell on host-a with the Open shell button"
+          },
+          {
+            "id": "ping-b",
+            "text": "From host-a, ping host-b (10.93.1.20)"
+          },
+          {
+            "id": "ping-a",
+            "text": "From host-b, ping host-a (10.93.1.10)"
+          }
+        ]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "host-a",
+      "image": "alpine:3.21",
+      "resources": {
+        "cpu": 0.5,
+        "memory_mb": 128
+      }
+    },
+    {
+      "id": "host-b",
+      "image": "alpine:3.21",
+      "resources": {
+        "cpu": 0.5,
+        "memory_mb": 128
+      }
+    }
+  ],
+  "networks": [
+    {
+      "id": "probe-lan",
+      "subnet": "10.93.1.0/24"
+    }
+  ],
+  "interfaces": [
+    {
+      "node": "host-a",
+      "network": "probe-lan",
+      "address": "10.93.1.10/24"
+    },
+    {
+      "node": "host-b",
+      "network": "probe-lan",
+      "address": "10.93.1.20/24"
+    }
+  ]
+}

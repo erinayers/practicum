@@ -23,6 +23,10 @@ def check_docker() -> DockerStatus:
         )
     except FileNotFoundError:
         return DockerStatus(available=False, detail="Docker is not installed or not on PATH.")
+    except OSError as exc:
+        # e.g. PermissionError: the binary exists but cannot be executed. Must not escape,
+        # or the startup worker thread dies and the window stays on "checking" forever.
+        return DockerStatus(available=False, detail=f"Docker could not be run: {exc}")
     except subprocess.TimeoutExpired:
         return DockerStatus(
             available=False,

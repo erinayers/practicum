@@ -619,6 +619,22 @@ def test_rejects_invalid_schema_version(client: TestClient, lab_definition: dict
     assert body["errors"][0]["location"] == ["schema_version"]
 
 
+def test_import_rejects_unsupported_schema_version(
+    client: TestClient, lab_definition: dict
+) -> None:
+    lab_definition["schema_version"] = "2.0"
+
+    response = client.post("/labs/import", json=lab_definition)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported"] is False
+    assert body["lab"] is None
+    assert body["errors"][0]["location"] == ["schema_version"]
+    assert "not supported by this version of Practicum" in body["errors"][0]["message"]
+    assert client.get("/labs").json() == []
+
+
 def test_rejects_interface_outside_network(client: TestClient, lab_definition: dict) -> None:
     lab_definition["interfaces"][0]["address"] = "192.168.1.10/24"
 

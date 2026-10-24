@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QPushButton
 
 from practicum_desktop import prestart_gate
 from practicum_desktop.api_client import (
     EstimatedResourcesInfo,
     ManualSectionInfo,
     ManualTaskInfo,
+    NetworkCheckResult,
     PortCheckResult,
     PortConflict,
     PreviewResult,
     StartResult,
+    SubnetConflict,
     TopologyInfo,
     TopologyInterfaceInfo,
 )
@@ -35,12 +37,32 @@ class ImmediateWorker(QObject):
 
 
 class FakeApiClient:
-    def __init__(self, preview=None, ports=None, start=None) -> None:
+    def __init__(self, preview=None, ports=None, start=None, networks=None) -> None:
         self._preview = preview
         self._ports = ports
         self._start = start
+        self._networks = networks or NetworkCheckResult(success=True, has_conflicts=False)
         self.apply_calls: list[tuple[str, str, int, str]] = []
         self.start_calls: list[str] = []
+        self.subnet_apply_calls: list[tuple[str, str]] = []
+        self.remove_leftover_calls: list[tuple[str, str]] = []
+        self.reset_calls: list[str] = []
+        self.reset_result = StartResult(success=True, detail="Lab reset.")
+
+    def check_networks(self, lab_id: str) -> NetworkCheckResult:
+        return self._networks
+
+    def apply_subnet_recommendation(self, lab_id: str, network_id: str) -> NetworkCheckResult:
+        self.subnet_apply_calls.append((lab_id, network_id))
+        return self._networks
+
+    def remove_leftover_network(self, lab_id: str, network_name: str) -> NetworkCheckResult:
+        self.remove_leftover_calls.append((lab_id, network_name))
+        return self._networks
+
+    def reset_lab(self, lab_id: str) -> StartResult:
+        self.reset_calls.append(lab_id)
+        return self.reset_result
 
     def get_preview(self, lab_id: str) -> PreviewResult:
         return self._preview
@@ -60,7 +82,10 @@ class FakeApiClient:
 
 
 def _preview(
-    images: tuple[str, ...] = (), cpu: float | None = None, memory: int | None = None, manual_tasks: int = 0
+    images: tuple[str, ...] = (),
+    cpu: float | None = None,
+    memory: int | None = None,
+    manual_tasks: int = 0,
 ) -> PreviewResult:
     sections = []
     if manual_tasks:
@@ -69,9 +94,7 @@ def _preview(
                 id="s1",
                 title="Section",
                 content_markdown="",
-                tasks=[
-                    ManualTaskInfo(id=f"t{i}", text=f"Task {i}") for i in range(manual_tasks)
-                ],
+                tasks=[ManualTaskInfo(id=f"t{i}", text=f"Task {i}") for i in range(manual_tasks)],
             )
         ]
     return PreviewResult(
@@ -202,3 +225,207 @@ def test_cancel_rejects_dialog(monkeypatch) -> None:
     dialog.cancel_button.click()
 
     assert dialog.result() == QDialog.DialogCode.Rejected
+
+
+# ----- subnet conflicts -------------------------------------------------------------------
+
+NO_PORT_CONFLICTS = PortCheckResult(success=True, has_conflicts=False, conflicts=[])
+
+
+def _leftover_conflict(recommended: str | None = "10.90.0.0/24") -> SubnetConflict:
+    return SubnetConflict(
+        network_id="lab-net",
+        subnet="10.50.0.0/24",
+        reason="overlaps_leftover",
+        owner_network_name="practicum-deadbeef-lab-net",
+        owner_subnet="10.50.0.0/24",
+        owner_lab_id="deadbeef-0000-0000-0000-000000000000",
+        owner_container_count=1,
+        recommended_subnet=recommended,
+    )
+
+
+def _other_lab_conflict() -> SubnetConflict:
+    return SubnetConflict(
+        network_id="lab-net",
+        subnet="10.50.0.0/24",
+        reason="overlaps_other_lab",
+        owner_network_name="practicum-11111111-lab-net",
+        owner_subnet="10.50.0.0/24",
+        owner_lab_id="11111111-aaaa-bbbb-cccc-000000000001",
+        owner_lab_name="Ubuntu Quick Start",
+        owner_lab_status="stopped",
+        owner_container_count=1,
+        recommended_subnet="10.90.0.0/24",
+    )
+
+
+def _buttons(dialog: PreStartGateDialog, row: int) -> list[str]:
+    widget = dialog.networks_table.cellWidget(row, 3)
+    return [b.text() for b in widget.findChildren(QPushButton)]
+
+
+def test_subnet_conflict_blocks_start_and_shows_owner(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(
+            success=True, has_conflicts=True, conflicts=[_leftover_conflict()]
+        ),
+    )
+
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert dialog.start_button.isEnabled() is False
+    assert dialog.conflicts_banner.text() == "No port conflicts detected."
+    assert "1 network overlaps address space already in use" in dialog.networks_banner.text()
+    assert dialog.networks_table.rowCount() == 1
+    assert dialog.networks_table.item(0, 0).text() == "lab-net"
+    assert dialog.networks_table.item(0, 1).text() == "10.50.0.0/24"
+    assert "Left over from an earlier session" in dialog.networks_table.item(0, 2).text()
+    assert "practicum-deadbeef-lab-net" in dialog.networks_table.item(0, 2).text()
+    assert _buttons(dialog, 0) == ["Remove leftover", "Use 10.90.0.0/24"]
+
+
+def test_remove_leftover_confirms_then_clears_conflict(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    prompts: list[tuple] = []
+    monkeypatch.setattr(
+        prestart_gate, "confirm", lambda *args, **kwargs: prompts.append((args, kwargs)) or True
+    )
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(
+            success=True, has_conflicts=True, conflicts=[_leftover_conflict()]
+        ),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    api._networks = NetworkCheckResult(success=True, has_conflicts=False)
+    dialog._on_remove_leftover(_leftover_conflict())
+
+    assert prompts[0][1]["destructive"] is True
+    assert "practicum-deadbeef-lab-net" in prompts[0][0][2]
+    assert api.remove_leftover_calls == [("lab-1", "practicum-deadbeef-lab-net")]
+    assert dialog.networks_table.rowCount() == 0
+    assert dialog.networks_banner.text() == "No subnet conflicts with existing Docker networks."
+    assert dialog.start_button.isEnabled() is True
+
+
+def test_remove_leftover_cancelled_changes_nothing(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    monkeypatch.setattr(prestart_gate, "confirm", lambda *args, **kwargs: False)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(
+            success=True, has_conflicts=True, conflicts=[_leftover_conflict()]
+        ),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    dialog._on_remove_leftover(_leftover_conflict())
+
+    assert api.remove_leftover_calls == []
+    assert dialog.networks_table.rowCount() == 1
+    assert dialog.start_button.isEnabled() is False
+
+
+def test_other_lab_conflict_offers_reset_and_resets_that_lab(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    monkeypatch.setattr(prestart_gate, "confirm", lambda *args, **kwargs: True)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(
+            success=True, has_conflicts=True, conflicts=[_other_lab_conflict()]
+        ),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert _buttons(dialog, 0) == ["Reset 'Ubuntu Quick Start'", "Use 10.90.0.0/24"]
+    assert "Used by lab 'Ubuntu Quick Start'" in dialog.networks_table.item(0, 2).text()
+
+    api._networks = NetworkCheckResult(success=True, has_conflicts=False)
+    dialog._on_reset_owner_lab(_other_lab_conflict())
+
+    assert api.reset_calls == ["11111111-aaaa-bbbb-cccc-000000000001"]
+    assert dialog.start_button.isEnabled() is True
+
+
+def test_failed_owner_reset_keeps_conflict_and_explains(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    monkeypatch.setattr(prestart_gate, "confirm", lambda *args, **kwargs: True)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(
+            success=True, has_conflicts=True, conflicts=[_other_lab_conflict()]
+        ),
+    )
+    api.reset_result = StartResult(success=False, detail="Docker is unavailable")
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    dialog._on_reset_owner_lab(_other_lab_conflict())
+
+    assert dialog.networks_banner.text() == "❌ Docker is unavailable"
+    assert dialog.networks_table.rowCount() == 1
+    assert dialog.start_button.isEnabled() is False
+
+
+def test_use_recommended_subnet_applies_and_notes_remap(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(
+            success=True, has_conflicts=True, conflicts=[_leftover_conflict()]
+        ),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    api._networks = NetworkCheckResult(success=True, has_conflicts=False)
+    dialog._on_apply_subnet_recommendation(_leftover_conflict())
+
+    assert api.subnet_apply_calls == [("lab-1", "lab-net")]
+    assert "now uses 10.90.0.0/24" in dialog.networks_banner.text()
+    assert "manual may still mention" in dialog.networks_banner.text()
+    assert dialog.start_button.isEnabled() is True
+
+
+def test_unanswerable_network_check_blocks_start(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(success=False, detail="Docker Desktop is not running"),
+    )
+
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert dialog.start_button.isEnabled() is False
+    assert "Docker Desktop is not running" in dialog.networks_banner.text()
+
+
+def test_foreign_docker_network_only_offers_subnet_change(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    conflict = SubnetConflict(
+        network_id="lan",
+        subnet="10.0.1.0/24",
+        reason="overlaps_docker_network",
+        owner_network_name="compose_default",
+        owner_subnet="10.0.0.0/16",
+        recommended_subnet="10.90.0.0/24",
+    )
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=NO_PORT_CONFLICTS,
+        networks=NetworkCheckResult(success=True, has_conflicts=True, conflicts=[conflict]),
+    )
+
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert _buttons(dialog, 0) == ["Use 10.90.0.0/24"]
+    assert "not created by Practicum" in dialog.networks_table.item(0, 2).text()

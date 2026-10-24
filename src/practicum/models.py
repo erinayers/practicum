@@ -1,7 +1,11 @@
 from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Major schema versions this build can read. Bump when the spec changes incompatibly;
+# minor versions within a supported major are accepted as-is.
+SUPPORTED_SCHEMA_MAJOR_VERSIONS = (1,)
 
 
 PortNumber = Annotated[int, Field(ge=1, le=65535)]
@@ -120,6 +124,18 @@ class LabDefinition(BaseModel):
     networks: list[Network] = Field(min_length=1)
     interfaces: list[Interface] = Field(min_length=1)
 
+    @field_validator("schema_version")
+    @classmethod
+    def validate_schema_version_supported(cls, value: str) -> str:
+        major = int(value.split(".", 1)[0])
+        if major not in SUPPORTED_SCHEMA_MAJOR_VERSIONS:
+            supported = ", ".join(f"{m}.x" for m in SUPPORTED_SCHEMA_MAJOR_VERSIONS)
+            raise ValueError(
+                f"schema_version '{value}' is not supported by this version of Practicum "
+                f"(supported: {supported})"
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_topology(self) -> "LabDefinition":
         node_ids = [node.id for node in self.nodes]
@@ -129,6 +145,14 @@ class LabDefinition(BaseModel):
             raise ValueError("node ids must be unique")
         if len(network_ids) != len(set(network_ids)):
             raise ValueError("network ids must be unique")
+
+        for index, network in enumerate(self.networks):
+            for other in self.networks[index + 1 :]:
+                if network.subnet.overlaps(other.subnet):
+                    raise ValueError(
+                        f"network '{network.id}' ({network.subnet}) overlaps network "
+                        f"'{other.id}' ({other.subnet})"
+                    )
 
         networks = {network.id: network.subnet for network in self.networks}
         attachment_keys: set[tuple[str, str]] = set()
@@ -247,6 +271,47 @@ class PortCheckResult(BaseModel):
     lab_id: str
     has_conflicts: bool
     conflicts: list[PortConflict] = Field(default_factory=list)
+
+
+class DockerNetworkInfo(BaseModel):
+    """A network as seen on the Docker host (any driver, Practicum-owned or not)."""
+
+    name: str
+    subnets: list[IPv4Network] = Field(default_factory=list)
+    lab_id: str | None = None  # value of the practicum.lab_id label, if any
+    container_names: list[str] = Field(default_factory=list)
+
+
+class SubnetConflict(BaseModel):
+    network_id: str
+    subnet: IPv4Network
+    reason: Literal["overlaps_other_lab", "overlaps_leftover", "overlaps_docker_network"]
+    owner_network_name: str
+    owner_subnet: IPv4Network
+    owner_lab_id: str | None = None
+    owner_lab_name: str | None = None
+    owner_lab_status: str | None = None
+    owner_container_count: int = 0
+    recommended_subnet: IPv4Network | None = None
+
+
+class NetworkCheckResult(BaseModel):
+    lab_id: str
+    has_conflicts: bool
+    conflicts: list[SubnetConflict] = Field(default_factory=list)
+    error: str | None = None  # set when Docker could not be queried; conflicts unknown
+
+
+class ApplySubnetRecommendationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    network_id: str
+
+
+class RemoveLeftoverNetworkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    network_name: str
 
 
 class ApplyPortRecommendationRequest(BaseModel):

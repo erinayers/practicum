@@ -45,6 +45,9 @@ this README's API section below reflects the current surface.
 - `GET /labs/{lab_id}/status`
 - `GET /labs/{lab_id}/ports`
 - `POST /labs/{lab_id}/ports/apply-recommendation`
+- `GET /labs/{lab_id}/networks`
+- `POST /labs/{lab_id}/networks/apply-recommendation`
+- `POST /labs/{lab_id}/networks/remove-leftover`
 
 Interactive API documentation is available at `/docs`.
 
@@ -55,6 +58,13 @@ Double-click `start-practicum.bat` (or run it from a terminal in the repo root).
 `/health`, then launches the desktop app. Closing the desktop app stops the API again.
 `start-practicum.bat --dev` runs the API with `--reload`; `stop-practicum.bat` cleans up an
 API window if one is left behind.
+
+To run a lab an instructor sent you, click **Import Lab File…** in the desktop app, pick the
+`.json` export (the three labs from [`examples/`](examples) are offered as samples), and
+Practicum imports it, checks host ports and Docker subnets, and starts it. Labs whose host ports
+or subnets clash with something on your machine stop at a review screen with one-click fixes
+(use a recommended port/subnet, remove a leftover from an earlier session, or reset the lab that
+owns the address space).
 
 ## Development
 

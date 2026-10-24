@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import webbrowser
 
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -27,10 +28,14 @@ from practicum_desktop.api_client import (
     PortConflict,
     PortMappingInfo,
     PreviewResult,
+    ResourceStatusInfo,
+    StatusResult,
 )
 from practicum_desktop.app_status import AppStatus
 from practicum_desktop.designer import DesignerDialog
+from practicum_desktop.import_lab import ImportLabDialog
 from practicum_desktop.manual import NO_LAB_SELECTED_MESSAGE, ManualFlyout
+from practicum_desktop.node_shell import ShellLaunchResult, open_node_shell
 from practicum_desktop.prestart_gate import PreStartGateDialog
 from practicum_desktop.quickstart import UBUNTU_QUICK_START_LAB
 from practicum_desktop.startup import StartupWorker
@@ -57,11 +62,19 @@ def _copyable_label(text: str = "") -> QLabel:
     return label
 
 
+def _container_state_text(container: ResourceStatusInfo) -> str:
+    if container.error:
+        return f"unknown ({container.error})"
+    if not container.exists:
+        return "not created"
+    return container.status or "unknown"
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Practicum")
-        self.resize(480, 420)
+        self.resize(560, 760)
 
         self._settings = QSettings(ORG_NAME, APP_NAME)
         base_url = self._settings.value("api_base_url", DEFAULT_BASE_URL)
@@ -70,9 +83,14 @@ class MainWindow(QMainWindow):
         self._port_worker: CallableWorker | None = None
         self._apply_worker: CallableWorker | None = None
         self._manual_worker: CallableWorker | None = None
+        self._status_worker: CallableWorker | None = None
+        self._shell_worker: CallableWorker | None = None
         self._quick_start_worker: CallableWorker | None = None
         self._lab_ids: list[str] = []
         self._selected_lab_id: str | None = None
+        self._last_status: AppStatus | None = None
+        # (lab_id, message, show_manual) to apply once the next lab-list refresh lands.
+        self._pending_selection: tuple[str, str, bool] | None = None
 
         self._build_ui(base_url)
         self.check_status()
@@ -108,9 +126,15 @@ class MainWindow(QMainWindow):
         self.labs_list.currentRowChanged.connect(self._on_lab_row_changed)
         layout.addWidget(self.labs_list)
 
+        lab_actions_row = QHBoxLayout()
         self.new_lab_button = QPushButton("New Lab…")
         self.new_lab_button.clicked.connect(self._on_new_lab_clicked)
-        layout.addWidget(self.new_lab_button)
+        lab_actions_row.addWidget(self.new_lab_button)
+
+        self.import_button = QPushButton("Import Lab File…")
+        self.import_button.clicked.connect(self._on_import_clicked)
+        lab_actions_row.addWidget(self.import_button)
+        layout.addLayout(lab_actions_row)
 
         self.quick_start_button = QPushButton("Quick Start: Ubuntu")
         self.quick_start_button.clicked.connect(self._on_quick_start_clicked)
@@ -145,6 +169,19 @@ class MainWindow(QMainWindow):
         self.browser_access_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.browser_access_table)
 
+        layout.addWidget(QLabel("Lab Nodes:"))
+        self.nodes_table = QTableWidget(0, 4)
+        self.nodes_table.setHorizontalHeaderLabels(["Node", "Container", "State", ""])
+        self.nodes_table.horizontalHeader().setStretchLastSection(True)
+        self.nodes_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.nodes_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.nodes_table)
+
+        self.nodes_status_label = _copyable_label()
+        layout.addWidget(self.nodes_status_label)
+
         self.start_button = QPushButton("Start Selected Lab…")
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self._on_start_clicked)
@@ -168,6 +205,30 @@ class MainWindow(QMainWindow):
         dialog = DesignerDialog(self._api_client, parent=self)
         if dialog.exec() == DesignerDialog.DialogCode.Accepted:
             self.check_status()
+
+    def _on_import_clicked(self) -> None:
+        api_available = self._last_status is not None and self._last_status.api.healthy
+        dialog = ImportLabDialog(
+            self._api_client, self._settings, parent=self, api_available=api_available
+        )
+        dialog.exec()
+        outcome = dialog.outcome
+        if outcome is None:
+            return  # cancelled, or the file never became a lab; the dialog already said why
+
+        started = outcome.started
+        if outcome.gate_required:
+            # Conflicts (or an unanswered port check): the gate owns the Start decision.
+            gate = PreStartGateDialog(self._api_client, outcome.lab_id, parent=self)
+            started = gate.exec() == PreStartGateDialog.DialogCode.Accepted
+
+        name = outcome.lab_name or outcome.source_path.name
+        if started:
+            message = f"✅ '{name}' imported and started."
+        else:
+            message = f"'{name}' imported. Select it below and use Start when ready."
+        self._pending_selection = (outcome.lab_id, message, started)
+        self.check_status()
 
     def _on_quick_start_clicked(self) -> None:
         self.quick_start_button.setEnabled(False)
@@ -207,12 +268,15 @@ class MainWindow(QMainWindow):
         self.view_manual_button.setEnabled(False)
         self.manual_flyout.show_empty(NO_LAB_SELECTED_MESSAGE)
         self.browser_access_table.setRowCount(0)
+        self.nodes_table.setRowCount(0)
+        self.nodes_status_label.setText("")
 
         self._worker = StartupWorker(self._api_client)
         self._worker.finished_check.connect(self._on_status_checked)
         self._worker.start()
 
     def _on_status_checked(self, status: AppStatus, labs_result: LabsResult | None) -> None:
+        self._last_status = status
         self.retry_button.setEnabled(True)
         self.readiness_label.setText(f"Status: {READINESS_LABELS[status.readiness]}")
 
@@ -224,6 +288,7 @@ class MainWindow(QMainWindow):
 
         self.next_action_label.setText(status.next_action)
 
+        pending, self._pending_selection = self._pending_selection, None
         if labs_result is None:
             return
         if labs_result.success:
@@ -235,6 +300,20 @@ class MainWindow(QMainWindow):
         else:
             self.labs_list.addItem(labs_result.detail)
 
+        if pending is not None:
+            self._apply_pending_selection(*pending)
+
+    def _apply_pending_selection(self, lab_id: str, message: str, show_manual: bool) -> None:
+        """Selects a just-created/imported lab once the refreshed list contains it, so the
+        user lands on that lab (ports, browser access, manual) without hunting for it."""
+        if lab_id not in self._lab_ids:
+            return
+        self.labs_list.setCurrentRow(self._lab_ids.index(lab_id))
+        # Selecting a row clears the result label; set the message after the selection.
+        self.start_result_label.setText(message)
+        if show_manual:
+            self.manual_flyout.setVisible(True)
+
     def _on_lab_row_changed(self, row: int) -> None:
         self.port_conflicts_table.setRowCount(0)
         self.port_check_status_label.setText("")
@@ -243,6 +322,8 @@ class MainWindow(QMainWindow):
         self.view_manual_button.setEnabled(False)
         self.manual_flyout.show_empty(NO_LAB_SELECTED_MESSAGE)
         self.browser_access_table.setRowCount(0)
+        self.nodes_table.setRowCount(0)
+        self.nodes_status_label.setText("")
 
         if row < 0 or row >= len(self._lab_ids):
             self._selected_lab_id = None
@@ -258,6 +339,73 @@ class MainWindow(QMainWindow):
         self._manual_worker = CallableWorker(self._api_client.get_preview, self._selected_lab_id)
         self._manual_worker.finished_call.connect(self._on_manual_loaded)
         self._manual_worker.start()
+
+        self._refresh_nodes()
+
+    def _refresh_nodes(self) -> None:
+        """Loads the selected lab's containers (GET /status) into the Lab Nodes table."""
+        if self._selected_lab_id is None:
+            return
+        self.nodes_status_label.setText("Checking lab nodes…")
+        self._status_worker = CallableWorker(self._api_client.get_status, self._selected_lab_id)
+        self._status_worker.finished_call.connect(self._on_status_loaded)
+        self._status_worker.start()
+
+    def _on_status_loaded(self, result: StatusResult) -> None:
+        if self._selected_lab_id is None:
+            return
+        if not result.success:
+            self.nodes_table.setRowCount(0)
+            self.nodes_status_label.setText(result.detail)
+            return
+
+        containers = result.containers
+        self.nodes_table.setRowCount(len(containers))
+        running = 0
+        for row, container in enumerate(containers):
+            self.nodes_table.setItem(row, 0, QTableWidgetItem(container.id))
+            self.nodes_table.setItem(row, 1, QTableWidgetItem(container.name))
+            self.nodes_table.setItem(row, 2, QTableWidgetItem(_container_state_text(container)))
+            shell_button = QPushButton("Open shell")
+            is_running = container.exists and container.status == "running"
+            shell_button.setEnabled(is_running)
+            shell_button.setToolTip(
+                "Opens a terminal window inside this node"
+                if is_running
+                else "Start the lab to open a shell on this node"
+            )
+            shell_button.clicked.connect(
+                lambda _checked=False, c=container: self._on_open_shell_clicked(c)
+            )
+            self.nodes_table.setCellWidget(row, 3, shell_button)
+            running += int(is_running)
+
+        if result.detail:
+            self.nodes_status_label.setText(result.detail)
+        elif not containers:
+            self.nodes_status_label.setText("This lab has no nodes.")
+        elif running == 0:
+            self.nodes_status_label.setText(
+                "No node is running. Start the lab, then use Open shell to work inside a node."
+            )
+        else:
+            self.nodes_status_label.setText(
+                f"{running} of {len(containers)} node{'s' if len(containers) != 1 else ''} "
+                "running. Open shell gives you a terminal inside a node (node addresses are "
+                "only reachable from inside the lab, not from this computer)."
+            )
+
+    def _on_open_shell_clicked(self, container: ResourceStatusInfo) -> None:
+        self.nodes_status_label.setText(f"Opening a shell on '{container.id}'…")
+        self._shell_worker = CallableWorker(open_node_shell, container.name, container.id)
+        self._shell_worker.finished_call.connect(self._on_shell_opened)
+        self._shell_worker.start()
+
+    def _on_shell_opened(self, result: ShellLaunchResult) -> None:
+        text = result.detail
+        if not result.success and result.command:
+            text = f"{text}\n{' '.join(result.command)}"
+        self.nodes_status_label.setText(text)
 
     def _on_manual_loaded(self, result: PreviewResult) -> None:
         if self._selected_lab_id is None:
@@ -343,7 +491,9 @@ class MainWindow(QMainWindow):
         else:
             self.start_result_label.setText("")
 
-        # Conditions (e.g. port availability) may have changed while the gate was open.
+        # Conditions (e.g. port availability, node state) may have changed while the gate
+        # was open.
         self._port_worker = CallableWorker(self._api_client.check_ports, self._selected_lab_id)
         self._port_worker.finished_call.connect(self._on_ports_checked)
         self._port_worker.start()
+        self._refresh_nodes()

@@ -31,6 +31,16 @@ Format: D-<n> · date (if known) · decision · source.
 - **D-8 · Target platform is Windows** (student-owned hardware, Docker Desktop). Linux/macOS
   aren't targets though nothing in the code is Windows-specific.
 
+- **D-18 · 2026-10-23 · `.zip` lab files are not accepted (yet).** The import picker filters on
+  `*.json`; a `.zip` chosen via "All files" is rejected with "Bundles aren't supported yet — choose
+  the .json lab export". Re-enable when a bundle format (Tigre/11 S-13) is defined. Resolves C8.
+- **D-19 · 2026-10-23 · Importing the same file twice creates a second lab** (interim). The API
+  assigns a fresh id per import and nothing in the spec identifies a lab stably. Q-1 stays open;
+  S-14 (`lab_key`) is the path to "resume existing".
+- **D-21 · 2026-10-23 · Import falls back to the gate whenever it cannot prove "no conflicts".**
+  If `GET /labs/{id}/ports` fails mid-flow, the lab is treated as conflicted (`gate_required`)
+  and `PreStartGateDialog` opens rather than starting blind. Keeps D-2 and D-4 consistent.
+
 ## Technical
 
 - **D-9 · Docker via CLI subprocess, not the SDK.** `DockerRuntime` builds `docker …` argv and
@@ -52,13 +62,30 @@ Format: D-<n> · date (if known) · decision · source.
   404/409/422 only for lookup/conflict/schema problems.
 - **D-16 · Embedded lab view = QWebEngineView** from PySide6 QtWebEngineWidgets (already bundled;
   no new dependency). Source: `windows-desktop-embedded-lab-view.md`.
+- **D-20 · 2026-10-23 · Schema major-version support is enforced server-side.**
+  `LabDefinition.schema_version` accepts only majors in `SUPPORTED_SCHEMA_MAJOR_VERSIONS = (1,)`
+  (minor versions pass); validate/create/import all report it as a structured `schema_version`
+  error. The desktop never inspects `schema_version` (D-12).
+- **D-22 · 2026-10-23 · Lifecycle calls get their own long timeout** (`ApiClient.lifecycle_timeout`,
+  900 s) separate from the 3 s lookup timeout. Stop/reset/restart wrappers must use it too.
+- **D-23 · 2026-10-23 · Sample labs ship inside the desktop package** (`practicum_desktop/samples/`)
+  as byte-identical copies of `examples/`, guarded by `test_bundled_samples_match_repo_examples`.
+  Update both places together.
+- **D-24 · 2026-10-23 · Subnet conflicts are detected before Start and fixed from the gate.**
+  `GET /labs/{id}/networks` compares the lab's subnets with every Docker network (not just
+  Practicum's). Owner classes: listed lab → offer Reset; Practicum-labelled network whose lab
+  is unknown (leftover) → offer Remove (containers + network, confirmed); foreign Docker network
+  → never touched, offer a free subnet only. Recommendations come from `10.90.0.0/16`, same
+  prefix length, avoiding all Docker networks and all known labs. Moving a subnet keeps each
+  interface's host offset and warns that the manual may be stale. Source: `runtime-subnet-conflicts.md`.
 - **D-17 · Quick-start subnets should come from `10.90.0.0/16`** to avoid colliding with
   hand-authored labs (intended; not yet wired — see Tigre/06 #1).
 
 ## Open questions (need the user)
 
 - **Q-1** Duplicate import: importing the same file twice → duplicate lab, or detect and offer
-  resume? (`windows-desktop-import-lab-file.md` edge case.)
+  resume? (`windows-desktop-import-lab-file.md` edge case.) *Interim behaviour = duplicate lab
+  (D-19); still needs a real decision.*
 - **Q-2** Export + port conflicts: block export, warn, or ignore? Host-port conflicts are
   machine-specific, so blocking a portable export seems wrong; suggest "warn only" and close the
   AC that way. (`runtime-host-port-availability` last AC.)

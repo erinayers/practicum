@@ -13,7 +13,7 @@ quality/robustness; **P3** = nice to have.
 | # | Finding | Kind | Priority |
 |---|---|---|---|
 | 1 | **The instructor → student loop cannot be completed from the UI.** There is no way to export a lab to a file from the desktop (only `GET /export` exists), no manual editor, no metadata/resource authoring in the Designer. Stories `designer-export-spec`, `designer-author-manual` are marked *done* on the strength of API/spec work alone. | AC debt + missing stories | P0 |
-| 2 | **Students have no way to use a CLI lab node.** The core use case is *networking* labs (routers, `ping`), yet the only documented way to reach a container is `docker exec` in a terminal — contradicting the "no Docker commands" promise. No story covers an in-app terminal / "Open shell" per node. | Missing story | P0 |
+| 2 | ~~**Students have no way to use a CLI lab node.**~~ *Closed 2026-10-23 (MVP: Open shell button → console window).* The core use case is *networking* labs (routers, `ping`), yet the only documented way to reach a container is `docker exec` in a terminal — contradicting the "no Docker commands" promise. No story covers an in-app terminal / "Open shell" per node. | Missing story | P0 |
 | 3 | **Students must start the API themselves** (`uvicorn …` is the literal "next action" text). No story covers launching/bundling the API with the desktop app or installing the product. | Missing story | P0 |
 | 4 | **Labs vanish on API restart**, but the Labs Dashboard story is written for "returning users". No persistence story exists. | Missing story / contradiction | P0 |
 | 5 | **Labs Dashboard claims "backed entirely by existing endpoints"** — but needs `DELETE /labs/{id}` (doesn't exist), a Draft/origin/last-run concept (not in the model), and an `error` status mapping (undefined). | Story inaccuracy | P0 |
@@ -36,7 +36,7 @@ The JSON is what gets ticked; the markdown is what gets read. They disagree for 
 |---|---|---|---|
 | `windows-desktop-labs-dashboard` | 6 | 5 | "Canceling a delete confirmation leaves the lab list unchanged." |
 | `windows-desktop-prestart-lab-gate` (**done**) | 5 | 4 | "The manual's step count/preview is visible from this screen." (met — count only) |
-| `windows-desktop-import-lab-file` | 5 | 4 | "The imported lab appears in the Labs Dashboard list afterward, whether or not it was started." |
+| `windows-desktop-import-lab-file` | 5 | 4 | "The imported lab appears in the Labs Dashboard list afterward, whether or not it was started." *(added to JSON 2026-10-23)* |
 | `windows-desktop-lab-lifecycle-controls` | 5 | 4 | "Canceling the Reset confirmation leaves the lab running and unchanged." |
 | `designer-visual-topology-builder` | 5 | 4 | "Removing a machine, network, or connection updates all affected panels immediately." |
 | `runtime-image-pull-progress` | 5 | 4 | "Existing start/status/stop/reset behavior and endpoints are otherwise unchanged." |
@@ -77,7 +77,7 @@ complete whose behaviour is absent in the desktop app and **has no follow-up sto
 | `runtime-host-port-recommendations` | FR "suggest available UDP ports when needed" | UDP probed via TCP bind | **No** |
 | `windows-desktop-port-conflict-ui` | Impl note: "integrated into both Designer Mode and Student Import" | Designer has no port fields | **No** |
 | `student-stop-lab`, `student-reset-lab` | "student can stop…"; "app warns before reset" | No Stop/Reset in desktop | Yes — `lab-lifecycle-controls` |
-| `student-import-spec` | "student can select a spec file from disk" | No file picker | Yes — `import-lab-file` |
+| `student-import-spec` | "student can select a spec file from disk" | ~~No file picker~~ built 2026-10-23 | Yes — `import-lab-file` (done) |
 | `windows-desktop-prestart-lab-gate` | FR "Images already present locally are visually distinguished from images that will be pulled" | Not possible — API has no image info | Partly — `image-pull-progress` (different scope) |
 
 **Recommendation:** either (a) re-open these ACs, or (b) keep them and add the follow-up stories
@@ -90,14 +90,14 @@ exactly these ACs.
 
 | # | Stories | Conflict | Suggested resolution |
 |---|---|---|---|
-| C1 | `prestart-lab-gate` ("single mandatory screen that gates every Start action, regardless of where triggered") vs `import-lab-file` ("conflict-free import proceeds straight to the running view") | Import bypasses the review of images/resources/topology. Product decision D-2 was taken for convenience, but the gate's own "Why" is "never start a lab blind". | Keep auto-start but show the gate's summary *inside* the import progress overlay (name, images, CPU/mem) with a 1-click "Review first" escape, **or** auto-start only for labs imported from a trusted/recent list. Record the outcome in Tigre/09. |
+| C1 | `prestart-lab-gate` ("single mandatory screen that gates every Start action, regardless of where triggered") vs `import-lab-file` ("conflict-free import proceeds straight to the running view") | Import bypasses the review of images/resources/topology. Product decision D-2 was taken for convenience, but the gate's own "Why" is "never start a lab blind". | Keep auto-start but show the gate's summary *inside* the import progress overlay (name, images, CPU/mem) with a 1-click "Review first" escape, **or** auto-start only for labs imported from a trusted/recent list. Record the outcome in Tigre/09. **Status 2026-10-23: implemented per D-2 (auto-start) with D-21 (gate whenever the port check fails or finds conflicts). "Review first" escape not built — raise with the user if wanted.** |
 | C2 | `prestart-lab-gate` user flow lists "the Designer's **Save Lab** action" as a Start entry point; `designer-create-new-lab` says Save stores a draft | Does saving a lab start it? Mockup `screen-custom` "Save Lab" → `screen-preview` suggests yes. | Decide: Save = store + go to dashboard (recommended), with an explicit "Save & Start" secondary action. |
 | C3 | `labs-dashboard` defines **Draft** = "saved but never successfully started/validated", and "only Edit/Delete until it validates" | `POST /labs` rejects invalid specs, so every stored lab is validated; "unvalidated draft" cannot exist. The API statuses are `defined/starting/running/stopping/stopped/error`; the story uses Running/Stopped/Draft. `error` has no UI mapping anywhere. | Define the mapping explicitly: `defined`→"Ready" (or "Draft" if never started), `stopped`→Stopped, `running`→Running, `starting/stopping`→busy, `error`→Error with "Reset" CTA. Drop "not yet validated" unless invalid drafts become storable (see S-7). |
 | C4 | `labs-dashboard` cards show origin ("Imported from x.zip", "Quick start", "Custom lab") and "Last run yesterday" | Neither origin nor timestamps exist in `Lab`/`LabDefinition`; the story says "no backend changes". | Add `origin` + `created_at/last_started_at` to the stored `Lab` (not the portable spec) — see S-5. |
 | C5 | `labs-dashboard` "Deleting a lab … removes it" | No `DELETE /labs/{id}`; story says desktop-only. | Add S-4 backend enabler. |
 | C6 | `lab-lifecycle-controls` offers **Restart** | No API semantics for restart; `runtime-api-stop-lab` says stop may keep containers; stop→start likely fails (Tigre/06 #2). | Define Restart = `stop` + `start` at the service level (`POST /labs/{id}/restart`) and fix start-after-stop to `docker start` existing containers. See S-6. |
 | C7 | `student-stop-lab` impl note: "Decide later whether networks remain after stop" | Never decided; runtime keeps networks on stop, removes on reset. | Record as decision (current behaviour is fine). |
-| C8 | `import-lab-file` accepts `.json` **or `.zip`** | Nothing defines a zip format; the API only accepts JSON. | Either drop `.zip` from the story or add S-13 defining a bundle format. |
+| C8 | `import-lab-file` accepts `.json` **or `.zip`** | Nothing defines a zip format; the API only accepts JSON. | Either drop `.zip` from the story or add S-13 defining a bundle format. **Resolved 2026-10-23: D-18 — `.zip` rejected with a specific message; S-13 remains optional.** |
 | C9 | `windows-desktop-launch` next action = "Start the Practicum API with `uvicorn practicum.main:app --reload`" vs product vision "no command-line tooling required" | Students cannot be expected to run uvicorn. | S-2 (API lifecycle). |
 | C10 | `manual-track-progress` edge cases "instructor provides a new version of the same lab / sections reordered" | Progress key is `lab_id` (a per-import uuid) — re-importing the same lab **always** loses progress, regardless of versioning. | Key progress by a stable spec identity (e.g. hash of name+author+version, or a new `lab_key` in the spec) — see S-14. |
 | C11 | `runtime-host-port-availability` user flow "blocks validation/**export**/start" | Export is portable; host ports are machine-specific. Blocking export on a local conflict is wrong. | Change the last AC to "start" only, mark the story done (Q-2 in Tigre/09). |
@@ -125,10 +125,10 @@ every launch, which defeats its purpose).
 ("manual preview from the gate"), and mention that in the story notes so the debt is visible.
 Add the missing "re-verify ports on Start" AC (currently an edge case only).
 
-**`windows-desktop-import-lab-file`** — Resolve C1, C8. Decide duplicate-import behaviour (Q-1).
-Add AC for a non-JSON/oversized file (size limit), and for the API-unreachable case (currently an
-edge case). Define what "recent/sample files" list is backed by (S-15 bundled samples + QSettings
-recent list).
+**`windows-desktop-import-lab-file`** — *Done 2026-10-23.* C1 implemented as D-2 + D-21; C8
+resolved (D-18); Q-1 interim = duplicate lab (D-19). Size limit (5 MB), API-unreachable banner,
+recent list (QSettings) + bundled samples (the S-15 "samples ship in the package" half) are all
+built and tested, though not written as ACs — add them to the JSON if the ACs are ever revised.
 
 **`windows-desktop-lab-lifecycle-controls`** — Resolve C6. Add AC: "controls are disabled while
 a lifecycle call is in flight" (edge case → AC). Add AC: partial reset failure is shown with the
@@ -245,7 +245,7 @@ ACs: "Export…" on the dashboard/designer calls `GET /labs/{id}/export` and wri
 `in-app-dialogs` accordingly); warns (doesn't block) on local port conflicts (resolves C11);
 overwrite confirmation in-app; file round-trips through import unchanged (test).
 
-### S-11 · Open a shell into a lab node — [Windows Desktop Application] · **P0**
+### S-11 · Open a shell into a lab node — [Windows Desktop Application] · **P0** — *DONE (MVP, external console) 2026-10-23 as `windows-desktop-open-node-shell`*
 *As a student in a networking lab, I want to open a terminal on `router` from the app.*
 ACs: running view lists nodes; "Open shell" launches `docker exec -it <container> <shell>` in an
 in-app terminal widget (or, MVP, in Windows Terminal/conhost via `subprocess`), choosing
@@ -271,13 +271,14 @@ same `lab_key` offers "resume existing" vs "import as copy" (closes Q-1); differ
 with same key keeps progress for unchanged task ids.
 
 ### S-15 · Bundled sample labs and Quick Start templates — [Student Import Mode] · **P2**
-ACs: the examples ship inside the desktop package and appear in the import picker's "sample"
-list; Quick Start offers the templates from the mockup (Ubuntu now; Windows marked "coming
+*First half delivered 2026-10-23 with the import story: `practicum_desktop/samples/` + picker list.*
+ACs: ~~the examples ship inside the desktop package and appear in the import picker's "sample"
+list~~ (done); Quick Start offers the templates from the mockup (Ubuntu now; Windows marked "coming
 soon"), picks a free subnet from `10.90.0.0/16` (fixes Tigre/06 #1); optional package
 pre-install list becomes a documented `command`/`environment` pattern or is dropped from the
 mockup.
 
-### S-16 · Subnet conflict detection — [Docker Runtime API] · **P2**
+### S-16 · Subnet conflict detection — [Docker Runtime API] · **P2** — *DONE 2026-10-23 as `runtime-subnet-conflicts`*
 ACs: validation rejects overlapping subnets *within* a lab; `GET /labs/{id}/ports`-style check
 (or a new `/labs/{id}/networks`) warns when a subnet overlaps another defined lab or an existing
 Docker network; the gate shows it with a "pick a free subnet" recommendation.
@@ -339,11 +340,11 @@ Proposed order:
 
 ## 7. Quick wins that need no new story (do during the next touch)
 
-- Add the 6 missing ACs from §2.1 to the JSON.
+- Add the 6 missing ACs from §2.1 to the JSON (import-lab-file's done 2026-10-23; 5 remain).
 - Fix `latest_checkpoint` wording for `in-app-dialogs`.
 - Change `runtime-host-port-availability` last AC to "start" only and close it (after Q-2).
 - Add "edit" to `designer-visual-topology-builder` ACs.
-- Remove `.zip` from `import-lab-file` unless S-13 is accepted.
+- ~~Remove `.zip` from `import-lab-file` unless S-13 is accepted.~~ Done (D-18, story addendum).
 - Add the HTTPS/self-signed-cert edge case to `embedded-lab-view`.
 - Add the "Draft/Ready/Error" status mapping table to `labs-dashboard`.
 - Delete the stale "Suggested MVP Backlog" list from `user-stories.md` (or mark it historical)

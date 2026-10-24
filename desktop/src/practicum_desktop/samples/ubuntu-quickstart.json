@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "name": "Ubuntu Quick Start",
+  "description": "A single plain Ubuntu container for quickly exploring Practicum with no topology to configure.",
+  "author": "Practicum Team",
+  "version": "0.1.0",
+  "manual": {
+    "sections": [
+      {
+        "id": "get-started",
+        "title": "Get Started",
+        "content_markdown": "This lab gives you a single Ubuntu 22.04 container to explore. It has no GUI — you interact with it entirely from a shell.\n\n1. Start the lab from Practicum.\n2. Find the container:\n\n```\ndocker ps --filter \"name=practicum\"\n```\n\n3. Open a shell in it:\n\n```\ndocker exec -it <container-name> bash\n```\n\nYou now have a full Ubuntu shell to experiment in.",
+        "tasks": [
+          {
+            "id": "start-lab",
+            "text": "Start the lab from Practicum."
+          },
+          {
+            "id": "open-shell",
+            "text": "Open a shell in the Ubuntu container with docker exec."
+          }
+        ]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "ubuntu",
+      "image": "ubuntu:22.04",
+      "resources": {
+        "cpu": 1,
+        "memory_mb": 512
+      }
+    }
+  ],
+  "networks": [
+    {
+      "id": "lab-net",
+      "subnet": "10.50.0.0/24"
+    }
+  ],
+  "interfaces": [
+    {
+      "node": "ubuntu",
+      "network": "lab-net",
+      "address": "10.50.0.10/24"
+    }
+  ]
+}

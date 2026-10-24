@@ -4,6 +4,139 @@ Newest entry first. Each entry: date, goal, what was done, what was verified, wh
 
 ---
 
+## 2026-10-23 — Session 4: Story `windows-desktop-import-lab-file` implemented
+
+**Goal:** Build the desktop "Open Lab File" import-and-launch flow (user's pick; taken ahead of the
+dashboard in the Tigre/05 order).
+
+**Done (product code)**
+- `desktop/.../lab_file.py` (new, pure Python): `read_lab_file()` with specific errors (missing,
+  directory, >5 MB, non-UTF-8, JSON syntax + line/col, non-object, `.zip` unsupported),
+  `format_issue()` (`nodes[0].image: Field required`), `sample_lab_files()`, `LabFileEntry`.
+- `desktop/.../samples/*.json` (new): byte-identical copies of `examples/` shipped in the wheel;
+  a test fails if they drift.
+- `desktop/.../import_lab.py` (new): `ImportLabDialog` — page 0 = recent (QSettings
+  `recent_lab_files`) + samples list with a `LabFileRowDelegate` (icon / bold name / muted hint)
+  and **Browse computer…** (`QFileDialog.getOpenFileName`, the one native dialog); page 1 =
+  staged progress (read → import → ports → start) with inline error list, "Choose another file",
+  and close blocked while a stage is in flight. `ImportOutcome{lab_id, lab_name, source_path,
+  started, gate_required}`. `RecentLabFiles` helper.
+- `api_client.py`: `ImportLabResult` + `ApiClient.import_lab()`; `LIFECYCLE_TIMEOUT_SECONDS = 900`
+  used by `start_lab` (+ specific timeout wording) — **closes Tigre/06 #3**.
+- `main_window.py`: **Import Lab File…** button beside New Lab…; `_on_import_clicked` opens the
+  dialog, opens `PreStartGateDialog` when `gate_required`, then refreshes and selects the lab via
+  `_pending_selection` / `_apply_pending_selection` (shows the manual when started). Stores
+  `_last_status` so the dialog can show a "API not available" banner.
+- Core `models.py`: `SUPPORTED_SCHEMA_MAJOR_VERSIONS = (1,)`; `schema_version` field validator
+  rejects e.g. `2.0` with "not supported by this version of Practicum (supported: 1.x)".
+- Robustness found by the e2e run: `runtime.py` and `docker_status.py` caught only
+  `FileNotFoundError` from `subprocess.run(["docker", …])`; a non-executable docker binary
+  (PermissionError) produced an HTTP 500 from `POST /start` and killed the desktop's startup
+  thread (window stuck on "Checking Practicum status…", Retry disabled). Both now catch `OSError`
+  → structured failure / Degraded. Logged as Tigre/06 #12 (fixed).
+
+**Tests**: core **104** (+4), desktop **105** (+56: `test_lab_file` 19, `test_import_lab` 21,
+`test_main_window` 7 — first MainWindow tests, `test_api_client` +8, `test_docker_status` +1;
+shared `desktop/tests/qt_helpers.py` with `ImmediateWorker`/`StalledWorker`). All pass.
+
+**Verified**
+- **PySide6 6.12 installs in the sandbox now** (`pip install PySide6`) and the full Qt suite runs
+  with `QT_QPA_PLATFORM=offscreen` — no stub needed any more (Tigre/07 updated).
+- Rendered the dialog offscreen (`widget.grab().save()`) and reviewed screenshots: chooser,
+  blocked banner, schema-error list, start-failure, in-flight "Starting containers…", main window.
+- End-to-end against a live `uvicorn` API in the sandbox (no Docker): valid sample import; schema
+  `2.0` rejected inline; multi-error file; forced host-port conflict (socket on 3000) → `gate_required`;
+  conflict-free quick-start sample → start → structured "Docker CLI could not be run" shown with
+  "select it and use Start" guidance; recent list updated; no 500s.
+- **Not verified on Windows** — needs one smoke run (`start-practicum.bat`): native picker, auto-start
+  landing (lab selected, manual flyout opens), recent list persists across launches.
+
+**Decisions recorded** (Tigre/09): D-18 `.zip` not accepted until a bundle format exists (C8);
+D-19 duplicate import = new lab for now (Q-1 still open); D-20 schema major-version check is
+server-side; D-21 import flow falls back to the gate when the port check itself fails.
+
+**Docs**: `user-story-status.json` (story done, 5th AC added per Tigre/11 §2.1, in-app-dialogs
+file-picker AC ticked, checkpoint/last_updated), story markdown "Implementation Status" addendum,
+Tigre 00/03/05/06/07/09/11 updated. README/Postman untouched (no new endpoint).
+
+**Manual probe kit** (added at the user's request): `examples/import-probes/` — 7 files, one per
+flow path (auto-start, API-port conflict → gate, schema 2.0, multi-error, malformed, JSON list,
+`.zip`) + README with expected outcomes; each verified against the live API in the sandbox.
+`test_bundled_samples_match_repo_examples` only globs `examples/*.json`, so the subfolder is
+not bundled into the desktop package.
+
+**Windows smoke run (user report, same day):** importing the bundled `ubuntu-quickstart.json` got
+through read → import → ports → start and then failed at start with Docker's "Pool overlaps with
+other one on this address space" on `10.50.0.0/24` — i.e. the import flow itself worked end-to-end
+on Windows (native picker, progress, structured start failure shown with guidance, lab kept in the
+list). Diagnosed as Tigre/06 #13: the sample shares its subnet with the Quick Start button lab, and
+the owner is a still-listed lab (Stop keeps networks) or an orphan from an earlier API session.
+Fixed the misleading "Stop or reset" wording in `runtime.py` (now "Reset … Stop is not enough" +
+`docker network ls --filter label=practicum.lab_id` recipe; test updated). Gave the user the
+inspect/reset/`docker network rm` steps. Promotes S-16 (subnet overlap in the gate) and S-1.
+
+**Second user report, same error after the wording fix** → built the real fix (Tigre/11 S-16,
+now story `runtime-subnet-conflicts`, **done**):
+- Core: `networks.py` (`find_subnet_conflicts`, `recommend_subnet` from `10.90.0.0/16`,
+  `move_subnet` keeping host offsets); `DockerRuntime.list_networks()` (`docker network ls
+  --format {{.Name}}` + `docker network inspect <all>` → subnets / `practicum.lab_id` label /
+  attached containers; `_query()` helper) and `remove_network()`; `LabService.check_networks` /
+  `apply_subnet_recommendation` / `remove_leftover_network`; routes `GET /labs/{id}/networks`,
+  `POST …/networks/apply-recommendation`, `POST …/networks/remove-leftover` (409s);
+  models `DockerNetworkInfo`, `SubnetConflict`, `NetworkCheckResult(error)`; `LabDefinition`
+  rejects overlapping subnets within a lab (one old test retargeted: duplicate IPs on the *same*
+  network). README API list + Postman (4 requests) updated.
+- Desktop: `ApiClient.check_networks/apply_subnet_recommendation/remove_leftover_network/
+  reset_lab`; `PreStartGateDialog` "Network Conflicts" group (owner text per reason; fixes
+  **Remove leftover** / **Reset '<lab>'** with `confirm(destructive=True)`, **Use <subnet>** →
+  re-renders topology + "manual may still mention the original addresses"; Start requires
+  both checks answered clean; Issue column stretches; "Loading lab details…" now clears);
+  `ImportLabDialog` stage "Checking host ports and networks…" → gate on subnet conflicts.
+- Tests: core **132** (+27), desktop **122** (+17).
+- **Verified with a stateful fake `docker` CLI** (`/tmp/fakedocker/docker`, Python script with
+  JSON state; rejects overlapping pools like Docker): seeded an old-session Quick Start network
+  with its container attached → `POST /start` failed with the user's exact message →
+  `GET /networks` named the leftover → gate showed *Remove leftover* / *Use 10.90.0.0/24* →
+  each path (and *Reset 'Ubuntu Quick Start'* for a listed owner) cleared the conflict and Start
+  succeeded; topology re-rendered as `10.90.0.10/24` after a subnet move. Screenshots reviewed.
+  **Not yet verified with real Docker Desktop on Windows.**
+- Note for the fake: `docker network rm` refuses networks with active endpoints, like Docker —
+  `remove_network` removes containers first for that reason.
+
+**Third user report: the gate fix "worked great"; then `ssh localhost@10.93.1.0` timed out.**
+Three causes: `.0` is the network address; Docker Desktop keeps bridge subnets inside its VM (host
+can only reach *published* ports); the probe nodes are `alpine` + `sleep infinity` with no sshd —
+the only way in is `docker exec`, which the app didn't offer (Tigre/11 #2 / S-11, P0). Built the
+MVP → story **`windows-desktop-open-node-shell`** (done):
+- `node_shell.py`: `shell_command()` = `docker exec -it <c> sh -c "command -v bash … && exec bash
+  || exec sh"`; `open_node_shell()` → Windows `cmd.exe /k …` with `CREATE_NEW_CONSOLE` (window
+  stays open on error), Linux first available terminal, else returns the command to copy.
+- `ApiClient.get_status()` → `StatusResult{lab_status, resources, containers}` (first desktop use
+  of `GET /status`).
+- `main_window.py`: **Lab Nodes** table (Node / Container / State / **Open shell**) via
+  `_refresh_nodes()` on selection and after Start; button only for `running`; status line says
+  node addresses are reachable only inside the lab. Default size 560×760.
+- Lesson: **Qt swallows exceptions raised in slots** — `test_main_window` passed while the fake
+  client lacked `get_status`; run `pytest -s` and grep for `Traceback` when touching slots.
+  Fake now has `get_status`; +4 MainWindow tests, `test_node_shell.py` (5), api_client +3 → **134**.
+- Probe kit: lab 1's manual now tells the student to use Open shell; README gets a "don't ssh/ping
+  node addresses from Windows" note.
+
+**User confirmation received before closing**: the subnet-conflict gate fix "worked great" on
+Windows with real Docker Desktop (leftover removed, lab started) — so stories 1 and 2 of this
+session are Windows-verified; only Open shell is not.
+
+**Session close state**: all work uncommitted on `baseline`; Tigre 00 "Resume here" rewritten with
+a Windows verification checklist; tests core 132 / desktop 134 green; no `.ruff_cache` left.
+
+**Next**: user verifies on Windows (**Open shell** on probe 1 — watch the
+`cmd /k` + `CREATE_NEW_CONSOLE` behaviour with Docker Desktop's `docker.exe`); then
+`windows-desktop-labs-dashboard` (its
+"Import Existing Lab" action = `ImportLabDialog`; its Start = `PreStartGateDialog`), preceded by
+the backend enablers (`DELETE /labs/{id}`, start-after-stop Tigre/06 #2).
+
+---
+
 ## 2026-10-23 — Session 3: One-shot launcher script
 
 **Goal:** Start the API and the desktop app together instead of separately.

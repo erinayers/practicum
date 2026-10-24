@@ -42,3 +42,23 @@
   `src/user-stories/<epic-folder>/<story-id>.md`.
 - Desktop modules: one widget/dialog per file, `_on_<thing>_clicked` slot naming,
   `_render_<x>` for table fills, `_build_ui` for construction.
+
+## Added in Session 4 (2026-10-23)
+
+- **Leftover** — a Docker network/container carrying a `practicum.lab_id` label whose lab the API
+  no longer knows (labs are in-memory; Docker state survives restarts). Detected by
+  `GET /labs/{id}/networks` as `overlaps_leftover`; removable from the gate.
+- **Subnet conflict** — one of the lab's subnets overlaps an existing Docker network (Docker:
+  "Pool overlaps with other one on this address space"). Owner classes: other listed lab /
+  leftover / foreign Docker network. Recommendations come from `10.90.0.0/16`.
+- **Gate** — `PreStartGateDialog`; now checks ports *and* subnets; the only authority for Start.
+- **Probe kit** — `examples/import-probes/`: 7 files, one per import-flow path, with a README of
+  expected outcomes. Probe labs use `10.93.x.0/24`.
+- **Samples** — `desktop/src/practicum_desktop/samples/*.json`, byte-identical copies of
+  `examples/*.json`, shown in the Open Lab File list.
+- **Recent files** — QSettings key `recent_lab_files` (newest first, max 8).
+- **Open shell** — main-window button per running node: `docker exec -it <container> sh -c
+  "…bash or sh"` in a new console window (`node_shell.py`).
+- **Lab Nodes table** — main-window table fed by `GET /labs/{id}/status` (container name/state).
+- **Lifecycle timeout** — `ApiClient.lifecycle_timeout` (900 s) for start/reset/remove-leftover.
+- **ImmediateWorker / StalledWorker** — test doubles for `CallableWorker` in `tests/qt_helpers.py`.

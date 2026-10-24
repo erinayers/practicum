@@ -6,7 +6,21 @@ from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from collections.abc import Iterator
 from typing import Protocol
 
-from practicum.models import Interface, Lab, Network, Node, RuntimeResourceStatus
+from practicum.models import (
+    DockerNetworkInfo,
+    Interface,
+    Lab,
+    Network,
+    Node,
+    RuntimeResourceStatus,
+)
+
+
+def _docker_cli_error(exc: OSError) -> str:
+    """Human-readable reason the `docker` CLI could not even be launched."""
+    if isinstance(exc, FileNotFoundError):
+        return "Docker CLI was not found"
+    return f"Docker CLI could not be run: {exc}"
 
 
 class RuntimeFailure(Exception):
@@ -27,6 +41,12 @@ class LabRuntime(Protocol):
         pass
 
     def status(self, lab: Lab) -> list[RuntimeResourceStatus]:
+        pass
+
+    def list_networks(self) -> list[DockerNetworkInfo]:
+        pass
+
+    def remove_network(self, network: DockerNetworkInfo) -> None:
         pass
 
 
@@ -107,6 +127,74 @@ class DockerRuntime:
 
         return resources
 
+    def list_networks(self) -> list[DockerNetworkInfo]:
+        """Every network on the Docker host with its subnets, Practicum label (if any) and
+        attached containers. Raises RuntimeFailure when Docker cannot be queried."""
+        ls_command = ["docker", "network", "ls", "--format", "{{.Name}}"]
+        listed = self._query(ls_command)
+        names = [name for name in listed.splitlines() if name]
+        if not names:
+            return []
+
+        inspect_command = ["docker", "network", "inspect", *names]
+        try:
+            raw_networks = json.loads(self._query(inspect_command) or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeFailure(
+                "Docker returned unreadable network details", inspect_command
+            ) from exc
+
+        networks: list[DockerNetworkInfo] = []
+        for raw in raw_networks:
+            subnets: list[IPv4Network] = []
+            for config in (raw.get("IPAM") or {}).get("Config") or []:
+                subnet = config.get("Subnet")
+                if not subnet:
+                    continue
+                try:
+                    subnets.append(IPv4Network(subnet, strict=False))
+                except ValueError:
+                    continue  # IPv6 or malformed; nothing a lab subnet can overlap
+            containers = raw.get("Containers") or {}
+            networks.append(
+                DockerNetworkInfo(
+                    name=raw.get("Name", ""),
+                    subnets=subnets,
+                    lab_id=(raw.get("Labels") or {}).get("practicum.lab_id"),
+                    container_names=[
+                        entry.get("Name") or container_id
+                        for container_id, entry in containers.items()
+                    ],
+                )
+            )
+        return networks
+
+    def remove_network(self, network: DockerNetworkInfo) -> None:
+        """Force-removes the containers attached to `network`, then the network itself.
+        Meant for Practicum-labelled leftovers whose lab is no longer known to the API."""
+        for container in network.container_names:
+            try:
+                self._run(["docker", "rm", "-f", container])
+            except RuntimeFailure as exc:
+                if "no such container" not in exc.message.lower():
+                    raise
+        try:
+            self._run(["docker", "network", "rm", network.name])
+        except RuntimeFailure as exc:
+            if "no such network" not in exc.message.lower():
+                raise
+
+    def _query(self, command: list[str]) -> str:
+        """Runs a read-only docker command and returns stdout; failures become RuntimeFailure."""
+        try:
+            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), command) from exc
+        if completed.returncode != 0:
+            message = completed.stderr.strip() or completed.stdout.strip() or "Docker command failed"
+            raise RuntimeFailure(message, command)
+        return completed.stdout
+
     def _create_network(self, lab: Lab, network: Network) -> None:
         name = self._network_name(lab, network.id)
         if self._network_exists(name):
@@ -138,9 +226,12 @@ class DockerRuntime:
             if "pool overlaps" in exc.message.lower():
                 raise RuntimeFailure(
                     f"Cannot start: network '{network.id}' ({network.subnet}) overlaps with "
-                    "another Docker network that is already using that address space. Stop or "
-                    "reset whichever other lab owns it, or change this lab's subnet, then try "
-                    f"again. (Docker said: {exc.message})",
+                    "another Docker network that is already using that address space. Reset "
+                    "whichever other lab owns it (Stop is not enough - networks are kept until "
+                    "Reset), or change this lab's subnet, then try again. If the owning lab is no "
+                    "longer listed, it is left over from an earlier session: run "
+                    "`docker network ls --filter label=practicum.lab_id` and remove it with "
+                    f"`docker network rm <name>`. (Docker said: {exc.message})",
                     exc.command,
                 ) from exc
             raise
@@ -153,8 +244,8 @@ class DockerRuntime:
                 check=False,
                 text=True,
             )
-        except FileNotFoundError as exc:
-            raise RuntimeFailure("Docker CLI was not found", ["docker", "network", "ls"]) from exc
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), ["docker", "network", "ls"]) from exc
 
         if completed.returncode != 0:
             return False
@@ -219,8 +310,8 @@ class DockerRuntime:
     def _run(self, command: list[str]) -> None:
         try:
             completed = subprocess.run(command, capture_output=True, check=False, text=True)
-        except FileNotFoundError as exc:
-            raise RuntimeFailure("Docker CLI was not found", command) from exc
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), command) from exc
 
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip() or "Docker command failed"
@@ -236,13 +327,13 @@ class DockerRuntime:
     ) -> RuntimeResourceStatus:
         try:
             completed = subprocess.run(command, capture_output=True, check=False, text=True)
-        except FileNotFoundError:
+        except OSError as exc:
             return RuntimeResourceStatus(
                 kind=kind,
                 id=resource_id,
                 name=name,
                 exists=False,
-                error="Docker CLI was not found",
+                error=_docker_cli_error(exc),
             )
 
         if completed.returncode != 0:
@@ -274,8 +365,8 @@ class DockerRuntime:
                 check=False,
                 text=True,
             )
-        except FileNotFoundError as exc:
-            raise RuntimeFailure("Docker CLI was not found", ["docker", "network", "inspect"]) from exc
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), ["docker", "network", "inspect"]) from exc
 
         if completed.returncode != 0:
             return
@@ -308,8 +399,8 @@ class DockerRuntime:
                 check=False,
                 text=True,
             )
-        except FileNotFoundError as exc:
-            raise RuntimeFailure("Docker CLI was not found", ["docker", "network", "ls"]) from exc
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), ["docker", "network", "ls"]) from exc
 
         if completed.returncode != 0:
             return []

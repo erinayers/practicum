@@ -7,10 +7,12 @@ main.py (147)   FastAPI routes — thin HTTP adapter, error → status-code mapp
 service.py (227) LabService — in-memory store + lifecycle orchestration
 runtime.py (353) LabRuntime Protocol + DockerRuntime adapter (docker CLI via subprocess)
 ports.py (88)    Host port-conflict detection + recommendations (networking "ports")
-models.py (258)  Pydantic v2 domain + response models (all extra="forbid" on inputs)
+networks.py (~150) Subnet-overlap detection vs Docker networks + recommendations + subnet move
+models.py (~320) Pydantic v2 domain + response models (all extra="forbid" on inputs)
 ```
 
-Dependency direction: `main → service → (runtime, ports) → models`. Nothing imports `main`.
+Dependency direction: `main → service → (runtime, ports, networks) → models`. Nothing imports
+`main`. (`service.check_networks` feeds `runtime.list_networks()` output into `networks.py`.)
 
 ## main.py — routes
 
@@ -34,6 +36,9 @@ Single module-level `service = LabService()` (tests reset it via `service.clear(
 | `GET /labs/{id}/status` | `lab_status` | `RuntimeStatusResult{lab, resources[], errors[]}` | 404 |
 | `GET /labs/{id}/ports` | `get_lab_ports` | `PortCheckResult{lab_id, has_conflicts, conflicts[]}` | 404 |
 | `POST /labs/{id}/ports/apply-recommendation` | `apply_port_recommendation` body `{node_id, host_port, protocol="tcp"}` | `PortCheckResult` (fresh re-check) | 404, **409** if no conflict/recommendation |
+| `GET /labs/{id}/networks` | `check_networks` | `NetworkCheckResult{lab_id, has_conflicts, conflicts:[SubnetConflict], error?}` — `error` set (200) when Docker can't be queried | 404 |
+| `POST /labs/{id}/networks/apply-recommendation` | `apply_subnet_recommendation` body `{network_id}` | `NetworkCheckResult` (fresh re-check; lab + export now use the new subnet) | 404, **409** no conflict/recommendation |
+| `POST /labs/{id}/networks/remove-leftover` | `remove_leftover_network` body `{network_name}` | `NetworkCheckResult` (fresh re-check) | 404, **409** not a conflict / belongs to a listed lab / not Practicum's |
 
 `validation_issues(exc)` flattens Pydantic `ValidationError` → `ValidationIssue{location[],
 message, issue_type}`. `validate` and `import` return 200 + structured errors; `POST /labs`
@@ -76,8 +81,10 @@ Runtime failures are **not** HTTP errors: they come back as 200 with `success=fa
 
 `LabRuntime(Protocol)`: `start(lab)`, `stop(lab)`, `reset(lab)`, `status(lab) -> list[RuntimeResourceStatus]`.
 
-`RuntimeFailure(message, command)` — the only exception type; `FileNotFoundError` on the
-`docker` binary becomes `RuntimeFailure("Docker CLI was not found", cmd)`.
+`RuntimeFailure(message, command)` — the only exception type; any `OSError` launching the
+`docker` binary becomes `RuntimeFailure(...)`: `FileNotFoundError` → "Docker CLI was not found",
+anything else (e.g. `PermissionError`) → "Docker CLI could not be run: <exc>" (`_docker_cli_error`,
+since 2026-10-23 — previously only `FileNotFoundError` was caught and `POST /start` could 500).
 
 ### Naming / labels (deterministic; used by status & cleanup)
 
@@ -126,24 +133,48 @@ All subprocess calls: `capture_output=True, check=False, text=True`. Tests monke
   `max(host+1, 1024)` to 65535, or `None`.
 - Note: UDP conflicts are still probed with a TCP bind (see Tigre/06).
 
+## networks.py — subnet conflicts (added 2026-10-23, story `runtime-subnet-conflicts`)
+
+- `find_subnet_conflicts(lab, docker_networks, known_labs) -> list[SubnetConflict]`: for each lab
+  network, the first Docker network (skipping those labelled with the lab's own id) whose IPv4
+  subnet overlaps. Reason: `overlaps_other_lab` (label's lab id is in the store → name/status
+  filled), `overlaps_leftover` (Practicum label, lab unknown), `overlaps_docker_network` (no
+  label). `owner_container_count` = attached containers.
+- `recommend_subnet(prefixlen, unavailable)`: first block of that size in `RECOMMENDATION_POOL =
+  10.90.0.0/16` overlapping nothing in `unavailable` (= lab's subnets + all Docker subnets + other
+  known labs' subnets + earlier recommendations); `None` for prefixes < /16 or > /30.
+- `move_subnet(lab, network_id, new_subnet) -> dict`: definition with the network moved and every
+  interface on it re-addressed at the same host offset (`10.50.0.10/24 → 10.90.0.10/24`); same
+  prefix length required.
+- Runtime side: `DockerRuntime.list_networks()` = `docker network ls --format {{.Name}}` then one
+  `docker network inspect <all names>` → `DockerNetworkInfo{name, subnets (IPv4 only), lab_id
+  (practicum.lab_id label), container_names}`; `remove_network(info)` = `docker rm -f` each
+  container, then `docker network rm` (both tolerate "no such …"). `_query()` is the read-only
+  subprocess helper (OSError/non-zero → `RuntimeFailure`).
+- `LabDefinition` also rejects overlapping subnets *within* one lab.
+
 ## models.py — see Tigre/04 for the spec; response models summary
 
 `ValidationIssue`, `ValidationResult`, `ImportResult`, `LabPreview` (+`ResourceEstimate`,
 `TopologyPreview`), `RuntimeIssue`, `RuntimeActionResult`, `RuntimeResourceStatus{kind,id,name,
 exists,status?,error?}`, `RuntimeStatusResult`, `PortConflict{node_id,host_port,container_port,
-protocol,reason,recommended_port?}`, `PortCheckResult`, `ApplyPortRecommendationRequest`.
+protocol,reason,recommended_port?}`, `PortCheckResult`, `ApplyPortRecommendationRequest`,
+`DockerNetworkInfo`, `SubnetConflict`, `NetworkCheckResult`, `ApplySubnetRecommendationRequest`,
+`RemoveLeftoverNetworkRequest`.
 `Lab(LabDefinition)` adds `id: str`, `status: str = "defined"`.
 
-## Tests (tests/, 100 passing)
+## Tests (tests/, 132 passing)
 
 | File | Count | Strategy |
 |---|---|---|
 | `conftest.py` | — | autouse `clear_labs` resets service + runtime; `client` = `TestClient(app)`; `lab_definition` = 3-node "Static Routing Fundamentals" dict (host-a, router, host-b; left 10.0.1.0/24, right 10.0.2.0/24; router has exposed 22 + mapping 2222→22) |
-| `test_api.py` | 49 | End-to-end via TestClient; `RecordingRuntime` / `FailingRuntime` fakes assigned to `service.runtime`; port tests monkeypatch `practicum.ports.is_local_port_free` |
-| `test_models.py` | 17 | Pydantic rule checks |
+| `test_api.py` | 50 | End-to-end via TestClient; `RecordingRuntime` / `FailingRuntime` fakes assigned to `service.runtime`; port tests monkeypatch `practicum.ports.is_local_port_free` |
+| `test_models.py` | 20 | Pydantic rule checks |
 | `test_ports.py` | 9 | monkeypatched `is_local_port_free`, one real socket bind |
-| `test_runtime.py` | 14 | monkeypatch `subprocess.run`, assert exact docker argv; covers cleanup-on-failure, stale network removal, network reuse, pool overlap message, missing CLI, idempotent stop/reset, no-gateway error |
+| `test_runtime.py` | 20 | monkeypatch `subprocess.run`, assert exact docker argv; covers cleanup-on-failure, stale network removal, network reuse, pool overlap message, missing CLI, idempotent stop/reset, no-gateway error |
 | `test_service.py` | 11 | LabService with real `DockerRuntime` (no subprocess reached for CRUD/preview) |
+| `test_networks.py` | 11 | pure `networks.py` logic: recommendations, owner classification, own-network exemption, partial overlaps, `move_subnet` |
+| `test_network_conflicts_api.py` | 11 | `FakeRuntime` (in-memory network list) assigned to `service.runtime`; the three `/networks` routes incl. 409 refusals |
 
 Run: from repo root, `pytest` (needs the package importable — `pip install -e ".[dev]"` or
 `PYTHONPATH=src`).

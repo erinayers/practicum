@@ -15,3 +15,4 @@ Provide a native-feeling Windows application shell that lets instructors and stu
 - [Lab Lifecycle Controls](windows-desktop-lab-lifecycle-controls.md)
 - [Embedded Lab View](windows-desktop-embedded-lab-view.md)
 - [In-App Dialogs Only](windows-desktop-in-app-dialogs.md)
+- [Open a Shell on a Lab Node](windows-desktop-open-node-shell.md)

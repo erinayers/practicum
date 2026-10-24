@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "name": "Ubuntu Browser Desktop",
+  "description": "Launch a browser-accessible Ubuntu desktop container for GUI-based lab work.",
+  "author": "Practicum Team",
+  "version": "0.1.0",
+  "manual": {
+    "sections": [
+      {
+        "id": "open-desktop",
+        "title": "Open the Desktop",
+        "content_markdown": "Start the lab, then open `https://localhost:3001` in your browser.",
+        "tasks": [
+          {
+            "id": "start-lab",
+            "text": "Start the lab from Practicum."
+          },
+          {
+            "id": "open-browser",
+            "text": "Open the web desktop in a browser."
+          }
+        ]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "ubuntu-desktop",
+      "image": "lscr.io/linuxserver/webtop:ubuntu-xfce",
+      "command": null,
+      "environment": {
+        "TITLE": "Practicum Ubuntu"
+      },
+      "resources": {
+        "cpu": 2,
+        "memory_mb": 2048,
+        "shm_size_mb": 1024,
+        "port_mappings": [
+          {
+            "host": 3000,
+            "container": 3000
+          },
+          {
+            "host": 3001,
+            "container": 3001
+          }
+        ]
+      }
+    }
+  ],
+  "networks": [
+    {
+      "id": "desktop",
+      "subnet": "10.10.1.0/24"
+    }
+  ],
+  "interfaces": [
+    {
+      "node": "ubuntu-desktop",
+      "network": "desktop",
+      "address": "10.10.1.10/24"
+    }
+  ]
+}

@@ -41,19 +41,19 @@ eduLabs - Copy/
 ├── .gitignore                  # __pycache__, .pytest_cache, .venv, dist, build, egg-info
 ├── pyproject.toml              # core package
 ├── src/
-│   ├── practicum/              # core: __init__ main models service runtime ports
+│   ├── practicum/              # core: __init__ main models service runtime ports networks
 │   ├── user-stories.md         # vision, personas, phases 1-7 recommended order
 │   ├── user-story-status.json  # CANONICAL machine-readable status of every story
-│   ├── user-stories/<epic>/    # one .md per story (6 epics, 38 stories)
+│   ├── user-stories/<epic>/    # one .md per story (6 epics, 40 stories)
 │   ├── future-roadmap/<epic>/  # paid-tier ideas, NOT built, 6 epics
 │   └── postman/practicum-api.postman_collection.json
-├── tests/                      # core pytest suite (100 tests)
-├── examples/                   # static-routing.json, ubuntu-quickstart.json, ubuntu-webtop.json
+├── tests/                      # core pytest suite (132 tests)
+├── examples/                   # 3 sample labs + import-probes/ (7 manual-test files + README)
 ├── design/practicum-mockups.html   # clickable HTML mockups driving Phase 7
 ├── desktop/
 │   ├── pyproject.toml
-│   ├── src/practicum_desktop/  # 13 modules (see Tigre/03)
-│   └── tests/                  # 49 tests (35 pure-python + 14 needing QApplication)
+│   ├── src/practicum_desktop/  # 16 modules + samples/ (see Tigre/03)
+│   └── tests/                  # 134 tests (+ qt_helpers.py)
 └── Tigre/                      # THIS FOLDER — living memory
 ```
 
@@ -64,12 +64,12 @@ Git: single commit `59c4a9e baseline` (2026-10-23). No branches, no CI/CD, no
 
 | Epic folder | Goal | Stories |
 |-------------|------|---------|
-| `windows-desktop-application` | Native-feeling Windows shell | launch, local-api, port-conflict-ui, labs-dashboard, prestart-lab-gate, import-lab-file, lab-lifecycle-controls, embedded-lab-view, in-app-dialogs |
+| `windows-desktop-application` | Native-feeling Windows shell | launch, local-api, port-conflict-ui, labs-dashboard, prestart-lab-gate, import-lab-file, lab-lifecycle-controls, embedded-lab-view, in-app-dialogs, open-node-shell |
 | `lab-spec-format` | Portable lab JSON | metadata, docker-resources |
 | `designer-mode` | Instructor authoring | create-new-lab, add-nodes, add-networks, connect-nodes-networks, validate-lab, author-manual, export-spec, visual-topology-builder |
 | `student-import-mode` | Student import/run | import-spec, preview-imported-lab, start-lab, stop-lab, reset-lab |
 | `lab-manual-flyout` | Manual while working | view-flyout, track-progress |
-| `docker-runtime-api` | Backend runtime | api-start, api-stop, api-status, browser-accessible-nodes, node-command-options, node-environment, port-mappings, shared-memory, browser-desktop-example, host-port-availability, host-port-recommendations, image-pull-progress |
+| `docker-runtime-api` | Backend runtime | api-start, api-stop, api-status, browser-accessible-nodes, node-command-options, node-environment, port-mappings, shared-memory, browser-desktop-example, host-port-availability, host-port-recommendations, subnet-conflicts, image-pull-progress |
 
 ## The design mockup (design/practicum-mockups.html)
 
@@ -86,7 +86,7 @@ and to source Phase 7 stories. Screen ids and which story they anchor:
 | `screen-preview` | Pre-start gate: images (local vs pull), CPU/mem, topology, conflicts | `windows-desktop-prestart-lab-gate` (done) |
 | `screen-running` | Toolbar (Restart/Stop/Instructions), embedded browser pane, instructions flyout | `lab-lifecycle-controls`, `embedded-lab-view` |
 | `confirmModal` | `showConfirm(title, message, confirmLabel, destructive, onConfirm)` | `windows-desktop-in-app-dialogs` (built as `dialogs.py`) |
-| `importModal` | "Open Lab File" recent-files list + Browse | `windows-desktop-import-lab-file` |
+| `importModal` | "Open Lab File" recent-files list + Browse | `windows-desktop-import-lab-file` (done — `import_lab.py`) |
 | `importingOverlay` | Multi-stage progress bar (`runLoadingSequence`) — **fake timer** | `runtime-image-pull-progress` would make it real |
 
 ## Timeline clues
@@ -95,4 +95,6 @@ and to source Phase 7 stories. Screen ids and which story they anchor:
   HANDOFF.md references 2026-08-15; git baseline 2026-10-23. Python used by the author is
   **3.14** (`cpython-314` pyc files) on **Windows** (PowerShell in README, Qt app verified
   on Windows).
-- Phase 7 stories were authored 2026-10-11 after the mockup review.
+- Phase 7 stories were authored 2026-10-11 after the mockup review. Session 4 (2026-10-23) added
+  two stories born from the first Windows smoke run (`runtime-subnet-conflicts`,
+  `windows-desktop-open-node-shell`).

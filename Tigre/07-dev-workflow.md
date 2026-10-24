@@ -35,16 +35,37 @@ pytest                                        # 49 tests; needs PySide6 (QApplic
 Docker Desktop must be running only to actually start labs; tests never touch Docker.
 `PRACTICUM_API_PORT` env var tells `ports.py` which host port the API itself occupies (default 8000).
 
-### Linux sandbox notes (AI sessions without internet / PySide6)
+### Linux sandbox notes (AI sessions)
 
-- Core: `pip install --break-system-packages pytest` then `PYTHONPATH=src python -m pytest -q`
-  from repo root → 100 passed (verified 2026-10-23).
-- Desktop non-Qt tests: create a stub package `PySide6/{__init__,QtCore,QtWidgets}.py` providing
-  `QThread, Signal, QObject, Qt, QSettings` and `QApplication, QDialog, QDialogButtonBox,
-  QLabel, QVBoxLayout, QWidget` as dummy classes, then from `desktop/`:
-  `PYTHONPATH=src:/tmp/stub python -m pytest -q tests/test_api_client.py tests/test_app_status.py
-  tests/test_docker_status.py -p no:cacheprovider --noconftest` → 35 passed.
-- `test_dialogs.py` and `test_prestart_gate.py` (14) require real PySide6 — can't run offline.
+- Install: `pip install --break-system-packages pytest PySide6 ruff` — **PySide6 6.12 installed
+  fine on 2026-10-23 (Session 4)**; if pip has no network, fall back to the stub approach below.
+- Core: `PYTHONPATH=src python3 -m pytest -q -p no:cacheprovider` from repo root → 104 passed.
+- Desktop (all tests incl. Qt): from `desktop/`,
+  `QT_QPA_PLATFORM=offscreen PYTHONPATH=src python3 -m pytest -q -p no:cacheprovider` → 105 passed.
+- Visual check without a display: build the widget, `widget.show()`, call
+  `app.processEvents()` a couple of times (layouts are lazy), then `widget.grab().save("x.png")`
+  and view the PNG. Used in Session 4 for `ImportLabDialog` and `MainWindow`.
+- Live API for e2e: `PYTHONPATH=src python3 -m uvicorn practicum.main:app --port 8000 &`; the
+  sandbox's `docker` binary is not executable (PermissionError) — good for testing failure paths.
+  Host port 22 cannot be bound as non-root, so `static-routing.json` always reports a conflict here.
+- **Stateful fake Docker for e2e** (Session 4): a Python script named `docker` on `PATH` ahead of
+  the real one, keeping `{"networks": {name: {subnet, gateway, labels}}, "containers": {name:
+  {networks, status}}}` in a JSON file; implements `info`, `network ls/inspect/create/rm/connect`,
+  `run`, `stop`, `rm -f`, `inspect --format {{.State.Status}}`; rejects overlapping pools with
+  Docker's exact message and refuses `network rm` with active endpoints. Start uvicorn with
+  `PATH=/tmp/fakedocker:$PATH`. Seed the state file to reproduce leftovers. (Not committed — it
+  lived in `/tmp`; recreate from this description if needed, ~80 lines.)
+- **Slot exceptions are swallowed by Qt** — after changing any signal handler run the desktop
+  suite with `-s` and grep for `Traceback`; a green run alone proves nothing for slots.
+- Lint: `python3 -m ruff check <paths>` / `ruff format --check`. Pre-existing findings exist in
+  `quickstart.py`, `workers.py`, `runtime.py`, `test_runtime.py` (long lines, UP035) — leave them
+  unless touching those files. Delete `.ruff_cache/` afterwards (not gitignored).
+- **Line endings**: files are individually CRLF or LF (see Tigre/06). `Path.write_text` normalises
+  to LF — re-apply CRLF (`sed -i 's/$/\r/'`) or edit bytes. Check with `file <path>`.
+- Offline fallback (no PySide6): stub package `PySide6/{__init__,QtCore,QtWidgets}.py` with dummy
+  `QThread, Signal, QObject, Qt, QSettings, QApplication, QDialog, QDialogButtonBox, QLabel,
+  QVBoxLayout, QWidget`, then `--noconftest` on `test_api_client.py test_app_status.py
+  test_docker_status.py test_lab_file.py` only.
 
 ## Manual API poke
 
@@ -74,16 +95,22 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/labs/validate `
 **Desktop**
 - Never block the UI thread: wrap calls in `CallableWorker`, keep the worker on `self`.
 - Never use `QMessageBox`/native dialogs; use `dialogs.confirm()` (destructive=True for
-  irreversible actions). Only exception: OS file-open picker for import.
+  irreversible actions). Only exception: OS file-open picker for import (`import_lab.py`).
+- Long-running API calls (start, and later stop/reset/restart) use `ApiClient.lifecycle_timeout`,
+  not the 3 s `timeout`.
+- Subprocess calls to `docker` must catch `OSError` (not just `FileNotFoundError`) — Tigre/06 #12.
 - Labels that show errors/details use `_copyable_label()` (selectable text) — there are three
   copies of this helper (`main_window`, `designer`, `prestart_gate`); `dialogs.py` exports
   `COPYABLE_TEXT_FLAGS` — consolidate when touching.
 - All Start paths go through `PreStartGateDialog`.
 - Mirror server validation client-side for instant feedback, but the server stays authoritative.
 - Use `QSettings("Practicum", "Practicum Desktop")` via the instance passed in, not new ones.
-- Tests: inject a `FakeApiClient` and monkeypatch the module's `CallableWorker` with a synchronous
-  `ImmediateWorker` (see `desktop/tests/test_prestart_gate.py`). Import `CallableWorker` at module
-  level in new UI modules so this works.
+- Tests: inject a `FakeApiClient` and monkeypatch the module's `CallableWorker` with the shared
+  `ImmediateWorker` from `desktop/tests/qt_helpers.py` (`StalledWorker` for busy states). Import
+  `CallableWorker` at module level in new UI modules so this works. For QSettings use an ini file
+  in `tmp_path` (`QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)`), never the
+  real `("Practicum", "Practicum Desktop")` store. `test_main_window.py` shows how to construct
+  `MainWindow` with every collaborator monkeypatched.
 
 **Style** — ruff, 100 cols, py312 target, `from __future__ import annotations` in desktop
 modules, type hints everywhere, dataclasses for client results.

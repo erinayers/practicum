@@ -32,6 +32,30 @@ def test_lab_definition_defaults_schema_version_and_optional_fields(
     assert definition.manual is None
 
 
+def test_lab_definition_accepts_minor_versions_of_supported_schema(
+    lab_definition: dict,
+) -> None:
+    lab_definition["schema_version"] = "1.7"
+
+    definition = LabDefinition.model_validate(lab_definition)
+
+    assert definition.schema_version == "1.7"
+
+
+def test_lab_definition_rejects_unsupported_schema_major_version(
+    lab_definition: dict,
+) -> None:
+    lab_definition["schema_version"] = "2.0"
+
+    with pytest.raises(ValidationError) as exc_info:
+        LabDefinition.model_validate(lab_definition)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ("schema_version",)
+    assert "not supported by this version of Practicum" in error["msg"]
+    assert "1.x" in error["msg"]
+
+
 def test_lab_defaults_status_to_defined(lab_definition: dict) -> None:
     definition = LabDefinition.model_validate(lab_definition)
 
@@ -77,13 +101,22 @@ def test_rejects_duplicate_attachment_on_same_network(lab_definition: dict) -> N
         LabDefinition.model_validate(lab_definition)
 
 
-def test_rejects_duplicate_ip_assignment_across_networks(lab_definition: dict) -> None:
-    lab_definition["networks"].append({"id": "left2", "subnet": "10.0.1.0/24"})
+def test_rejects_duplicate_ip_assignment(lab_definition: dict) -> None:
     lab_definition["interfaces"].append(
-        {"node": "host-b", "network": "left2", "address": "10.0.1.10/24"}
+        {"node": "host-b", "network": "left", "address": "10.0.1.10/24"}
     )
 
     with pytest.raises(ValidationError, match="assigned more than once"):
+        LabDefinition.model_validate(lab_definition)
+
+
+def test_rejects_overlapping_subnets_within_a_lab(lab_definition: dict) -> None:
+    lab_definition["networks"].append({"id": "left-wide", "subnet": "10.0.0.0/16"})
+    lab_definition["interfaces"].append(
+        {"node": "host-b", "network": "left-wide", "address": "10.0.9.10/16"}
+    )
+
+    with pytest.raises(ValidationError, match="overlaps network 'left-wide'"):
         LabDefinition.model_validate(lab_definition)
 
 
