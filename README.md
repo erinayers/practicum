@@ -57,6 +57,19 @@ this README's API section below reflects the current surface.
 
 Interactive API documentation is available at `/docs`.
 
+## Install the Windows app
+
+1. After a release is published, download `Practicum-Setup-<version>.exe` from the [latest GitHub Release](../../releases/latest).
+2. Run the installer and follow the prompts. It installs Practicum for the current Windows user;
+   you can also choose to create a desktop shortcut.
+3. Install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/) before
+   starting a lab. Practicum uses Docker to run lab machines and networks.
+4. Launch **Practicum** from the Start menu or your desktop shortcut. Import a lab JSON file or
+   choose one of the sample labs to get started. The first lab run may download container images.
+
+To remove Practicum, uninstall it from **Settings → Apps → Installed apps**. Python is not
+required to use the installed app.
+
 ## Quick start (Windows)
 
 Double-click `start-practicum.bat` (or run it from a terminal in the repo root). It creates
@@ -81,6 +94,23 @@ pre-install and a step editor — or the Custom Lab designer: pick machines from
 router, web server, desktop…), connect them into networks with suggested addresses, and see the
 schematic topology. Any lab can be **edited** later (including quick starts) and **exported** to a
 `.json` file from its dashboard card.
+
+## Build a Windows executable
+
+On Windows with Python 3.12 installed, run:
+
+```powershell
+./build-windows.ps1
+```
+
+The script builds an onedir distribution at a timestamped `dist-release-*/Practicum/` folder; distribute the whole folder and
+launch `Practicum.exe` inside it. Before building, it removes the matching output and work folders
+from the previous run, so close the old app first. If Inno Setup 6 or 7 is installed, it also
+creates `Practicum-Setup-0.1.0.exe` alongside the folder. The installer is per-user, adds Start
+Menu and optional desktop shortcuts, and supports uninstall. The executable starts both the desktop UI and its local API, so
+Python is not needed on the target machine. Docker Desktop must still be installed and running to
+start labs. The embedded API uses `127.0.0.1:8000`; close another Practicum API using that port
+before launching the packaged app.
 
 ## Development
 

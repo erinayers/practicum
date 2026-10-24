@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect x="5" y="5" width="246" height="246" rx="56" fill="#0f172a"/>
+  <rect x="34" y="57" width="17" height="142" rx="8.5" fill="#818cf8"/>
+  <text x="145" y="164" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif"
+        font-size="91" font-weight="700" text-anchor="middle" letter-spacing="-8">PR</text>
+</svg>

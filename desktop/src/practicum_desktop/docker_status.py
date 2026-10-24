@@ -4,6 +4,7 @@ import subprocess
 from dataclasses import dataclass
 
 DOCKER_CHECK_TIMEOUT_SECONDS = 5.0
+_NO_CONSOLE_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 @dataclass
@@ -20,6 +21,7 @@ def check_docker() -> DockerStatus:
             check=False,
             text=True,
             timeout=DOCKER_CHECK_TIMEOUT_SECONDS,
+            creationflags=_NO_CONSOLE_WINDOW,
         )
     except FileNotFoundError:
         return DockerStatus(available=False, detail="Docker is not installed or not on PATH.")

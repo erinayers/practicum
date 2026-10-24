@@ -33,6 +33,7 @@ _LAYER_FINISHED = {"Pull complete", "Already exists"}
 # quick-start install script); GET /status surfaces it as the container's `note`.
 CONTAINER_NOTE_FILE = "/run/practicum-packages.status"
 _SIZE_UNITS = {"B": 1, "kB": 1e3, "MB": 1e6, "GB": 1e9}
+_NO_CONSOLE_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _docker_cli_error(exc: OSError) -> str:
@@ -162,7 +163,13 @@ class DockerRuntime:
         """True when `image` is already in the local Docker image store."""
         command = ["docker", "image", "inspect", "--format", "{{.Id}}", image]
         try:
-            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
+            )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), command) from exc
         if completed.returncode == 0:
@@ -187,6 +194,7 @@ class DockerRuntime:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                creationflags=_NO_CONSOLE_WINDOW,
             )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), command) from exc
@@ -234,7 +242,13 @@ class DockerRuntime:
         """The container's Docker state ("running", "exited", ...); None when it does not exist."""
         command = ["docker", "inspect", "--format", "{{.State.Status}}", name]
         try:
-            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
+            )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), command) from exc
         if completed.returncode != 0:
@@ -302,7 +316,12 @@ class DockerRuntime:
         command = ["docker", "exec", name, "cat", CONTAINER_NOTE_FILE]
         try:
             completed = subprocess.run(
-                command, capture_output=True, check=False, text=True, timeout=5
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=5,
+                creationflags=_NO_CONSOLE_WINDOW,
             )
         except (OSError, subprocess.TimeoutExpired):
             return None
@@ -404,7 +423,13 @@ class DockerRuntime:
     def _query(self, command: list[str]) -> str:
         """Runs a read-only docker command and returns stdout; failures become RuntimeFailure."""
         try:
-            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
+            )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), command) from exc
         if completed.returncode != 0:
@@ -460,6 +485,7 @@ class DockerRuntime:
                 capture_output=True,
                 check=False,
                 text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
             )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), ["docker", "network", "ls"]) from exc
@@ -528,7 +554,13 @@ class DockerRuntime:
 
     def _run(self, command: list[str]) -> None:
         try:
-            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
+            )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), command) from exc
 
@@ -545,7 +577,13 @@ class DockerRuntime:
         status: str | None = None,
     ) -> RuntimeResourceStatus:
         try:
-            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
+            )
         except OSError as exc:
             return RuntimeResourceStatus(
                 kind=kind,
@@ -583,6 +621,7 @@ class DockerRuntime:
                 capture_output=True,
                 check=False,
                 text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
             )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), ["docker", "network", "inspect"]) from exc
@@ -617,6 +656,7 @@ class DockerRuntime:
                 capture_output=True,
                 check=False,
                 text=True,
+                creationflags=_NO_CONSOLE_WINDOW,
             )
         except OSError as exc:
             raise RuntimeFailure(_docker_cli_error(exc), ["docker", "network", "ls"]) from exc
