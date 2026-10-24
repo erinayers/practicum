@@ -47,3 +47,13 @@ The current Designer Mode (`designer-add-nodes.md`, `designer-add-networks.md`, 
 - No API or data-model changes; this reuses the existing node/network/interface endpoints and validation exactly as implemented today.
 - Reference design: `screen-custom` in the clickable mockup (`practicum-mockups.html`) — the Machines / Network Topology / Networks three-panel layout, including the node-card and connector-pill visual style.
 - Explicitly out of scope: drag-and-drop canvas placement, auto-layout, and any other item listed under the paid "Advanced Visual Topology Designer" roadmap entry.
+
+## Implementation Status
+
+Done 2026-10-24 (Session 5): `DesignerDialog` became the `DesignerView` screen in `desktop/src/practicum_desktop/designer.py`, laid out like `screen-custom`.
+
+- **Machines** panel: one card per machine (icon, id, image in monospace, derived role, ✕ remove) with the add form (id, image) at the bottom; **Network topology** panel: the schematic `TopologyView` (`widgets.py`) — cards in spec order, connectors with `network · subnet` pills between adjacent machines that share a network, every interface listed under its machine as `network · address`, networks without machines at the right — over the interfaces table and the connect form; **Networks** panel: rows (id, subnet, attached machines, ✕) with the add form.
+- Removing a machine, network or connection updates all three panels and the status pill immediately. Role is derived from the interface count (1 → host, ≥2 → gateway; D-27, Tigre/11 C12).
+- Validation rules and messages are unchanged and still shown inline next to the form that caused them; two client-side checks were added to mirror the server (overlapping subnets within the lab; network/broadcast address as an interface address). Validate → `POST /labs/validate`, **Save Lab** → `POST /labs` then back to the dashboard, **Save & Start** → save then the pre-start gate (D-29, Tigre/11 C2).
+- No drag-and-drop or auto-layout (D-6). Editing an existing machine/network in place is still not offered (Tigre/11 S-7).
+- Tests: `desktop/tests/test_designer.py` (14), `desktop/tests/test_widgets.py` (topology view). Verified end-to-end with the fake `docker` CLI (Save & Start → gate → running view with 3 nodes).

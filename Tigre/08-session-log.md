@@ -4,6 +4,151 @@ Newest entry first. Each entry: date, goal, what was done, what was verified, wh
 
 ---
 
+## 2026-10-24 — Session 5: Phase 7 completed — lifecycle controls, dashboard, embedded view, designer re-skin, pull progress, full mockup UI
+
+**Goal (user):** "complete the UI outlined in the mockup and all of the remaining functionality in
+the outlined user stories; create any other stories needed; document everything. Start with
+`windows-desktop-lab-lifecycle-controls`."
+
+**Order actually followed** (Tigre/05's recommendation: backend enablers first, restructure the
+window once): core enablers → pull progress → `ApiClient` → theme + widgets → running view →
+screen-stack `MainWindow` (welcome / dashboard / create / quick start / designer / running) →
+gate re-skin → tests → two real-app e2e runs → docs.
+
+**Done (core, `src/practicum`)** — 159 tests (was 132)
+- `runtime.py`: `start(lab, on_progress)` — `docker image inspect` → streamed `docker pull`
+  (`Popen`, per-layer parsing → percent + "n of m layers") only when missing → `docker start` for
+  containers left by Stop (**Tigre/06 #2 fixed**) else `docker run` + connects; per-node steps
+  reported through a callback; failures attributed to the node; `_is_missing_error` tolerates
+  Docker's `network X not found` (**#16**, latent since Phase 3, found by the e2e run).
+- `service.py`: `create(origin, source_file)`, `delete` (reset first, 409 on failure — D-25),
+  `restart`, action lock (`LabBusyError` → 409 while starting/stopping), start-time port
+  re-check (structured `host port conflict` failure), per-lab progress store, `start(wait=False)`
+  on a background thread (`pending=True`), `last_error` / `last_started_at` bookkeeping,
+  `_with_definition` keeps bookkeeping across port/subnet rewrites, `from __future__ import
+  annotations` (the `list` method shadowed the builtin in an annotation).
+- `models.py`: `Lab.origin/source_file/created_at/last_started_at/last_error`,
+  `LAB_RUNTIME_FIELDS` (stripped from export), `NodeStartProgress`, `RuntimeStatusResult.progress`,
+  `RuntimeActionResult.pending`. `main.py`: `DELETE /labs/{id}`, `POST …/restart`,
+  `POST /labs?origin=`, `POST /labs/import?source_file=`, `POST …/start?wait=`, 409 mappings.
+  `ports.py`: UDP probed with UDP (**#4**), `describe_conflict`.
+- Tests: `conftest.py` now makes every port free by default (`real_port_probe` fixture for the
+  two real-socket tests) because start re-checks ports and the sandbox cannot bind 22.
+
+**Done (desktop, `desktop/src/practicum_desktop`)** — 270 tests (was 134), 11 new modules
+- `theme.py` (mockup tokens → one QSS keyed on role properties; `badge_for_status`, D-26),
+  `widgets.py` (Panel, Badge, Chip, RemovableChip, StatTile, StatusPill, BackLink, FlowLayout,
+  AutoSizeStack, `TopologyView`/`TopologyCanvas` schematic, `bind`/`payload_of`,
+  `style_frame`/`edge_frame`, `discard`), `labels.py`, `dashboard.py`, `create_lab.py`,
+  `quickstart.py` (rewritten: templates, packages → command, steps → manual, free /24 — **#1**
+  fixed), `designer.py` (rewritten as `DesignerView` screen), `running_view.py`,
+  `embedded_view.py` (QWebEngineView, probe, waiting, port picker, fallback), `manual.py`
+  (rewritten as the instructions flyout panel; `markdown_to_html` wraps code blocks),
+  `progress_panel.py`, `prestart_gate.py` (re-skin + `wait=false` polling), `import_lab.py`
+  (`source_file`, real start progress), `api_client.py` (`stop/restart/delete`, `start(wait)`,
+  progress/last_error/origin parsing, `_lifecycle_call` with 409 → `busy`), `startup.py`
+  (health retries — **#11**), `app_status.py` (timeout wording), `main.py`
+  (`AA_ShareOpenGLContexts`, `apply_theme`), `main_window.py` (rewritten: title bar + status chip
+  + connection panel + `QStackedWidget`; owns all API calls; `_pending_selection` lands on the
+  running view; `_notify` to both home screens).
+- **Tigre/06 #15** — the expensive find: after all tests passed, the process aborted on exit
+  (`malloc_consolidate(): unaligned fastbin chunk detected`). Bisected to lambdas capturing
+  `self` connected to child-widget signals (repro: a `ManualFlyout` with two sections). Replaced
+  every such connection app-wide with `widgets.bind()` / bound methods; per-file and full-suite
+  runs now exit 0 repeatedly. Rule recorded in Tigre/03, 07, 09 (D-34).
+- Hygiene: all desktop `.py` files CRLF (new ones converted); new modules `ruff format`ed; ruff
+  check clean for `src` + `tests` in both packages; no line > 100 in new/modified code
+  (pre-existing long lines in `api_client.py`/`runtime.py` left alone).
+
+**Verified**
+- Unit suites: core 159, desktop 270, `-s` grep shows no swallowed tracebacks; the desktop
+  suite exits 0 in 5 consecutive runs and per file.
+- Offscreen screenshots of every screen compared with the mockup (dashboard, welcome, create,
+  quick start, designer, running, gate); several layout fixes came from that (QFrame selector
+  leaking to labels, ghost rows without `discard()`, mnemonic `&` in "Save & Start", clipped
+  table buttons, elided topology pills, non-wrapping code blocks).
+- Live API + stateful fake `docker` (extended with `image inspect`, `pull`, `start`): import →
+  async start with 18 %→100 % pull progress → stop → start (docker start path) → restart → reset
+  (idempotent) → start → delete; busy 409s; missing-image failure attributed to the node; port
+  re-check blocks start (sandbox cannot bind 22 — expected).
+- Two scripted runs of the **real `MainWindow`** (real QThreads, real dialogs) against that API:
+  (1) welcome → import sample → running view → Stop → Start via gate → Reset (confirm) → back →
+  dashboard → Delete → welcome; (2) Quick start form (packages + step) → Create → gate with live
+  pull progress → running view with the step in the flyout; designer (3 machines, 2 networks,
+  4 connections) → Validate → Save & Start → gate → running view with 3 nodes. All screenshots
+  reviewed.
+- **Nothing from this session has run on Windows.** Checklist in Tigre/05.
+
+**Docs**: 7 new story files (`runtime-lab-restart`, `runtime-delete-lab`,
+`lab-origin-and-timestamps`, `windows-desktop-visual-theme`, `windows-desktop-create-lab-screen`,
+`designer-quick-start-lab`, `windows-desktop-status-polling`) + addenda on 11 existing stories;
+epic READMEs and `user-stories.md` (items 30–38); `user-story-status.json` (47 stories, all done,
+phase 7 done, checkpoint, next = Windows verification); README (API list, desktop description);
+Postman (+5 requests, query params, status assertions); HANDOFF refreshed; Tigre 00, 02, 03
+(rewritten), 05 (rewritten), 06, 07, 09 (D-25…D-34, Q-2/4/6 closed, Q-7/Q-8 opened), 11.
+
+**Addendum (same day, user request):** "I would like a UI ubuntu desktop as part of the quick
+start … a simple image for simple or non-IT related labs." Added the **Ubuntu Desktop** quick
+start template (`quickstart.py`: `QuickStartTemplate.kind` desktop|terminal, webtop image on
+3000/3001, `command: null`, `TITLE`, packages via `DOCKER_MODS=linuxserver/mods:universal-package-install`
++ `INSTALL_PACKAGES=a|b|c`; made it the default — D-35), the Create screen now shows three
+template radios in a `QButtonGroup` (they sit in separate frames, so Qt would not have made them
+exclusive) with per-template icon/description/hint, the Quick start screen adapts its name,
+base chip and package caption per template, `TopologyView(compact=True)` uses narrower
+connectors so the Create card's illustration fits. Tests 273 (+3). E2E with the fake docker +
+a local HTTP server on 3000: desktop quick start with `libreoffice` → gate → running view shows
+`http://localhost:3000` in the embedded view and the step in the flyout. Docs: story addendum,
+status JSON (new AC), Tigre 05/06/09/10, README.
+
+**Second feedback round (same day, after the user's first Windows run):**
+1. *Emoji indicators* → removed app-wide (words + colour, geometric glyphs; D-38).
+2. *Connect-form dropdown black/unreadable* → Windows dark mode + `selection-background-color`
+   leaking into the popup; fixed with Fusion style + fixed light palette + explicit popup rules
+   (Tigre/06 #20).
+3. *Pre-selectable machine images, daisy-chaining* → `node_catalog.py` presets incl. a Router that
+   really forwards (`resources.sysctls` → `docker run --sysctl net.ipv4.ip_forward=1`, new spec
+   field), id + address suggestions, per-network address reference (`designer-node-catalog`).
+4. *Edit a lab, even a quick start* → `PUT /labs/{id}` (`LabService.replace`, D-37), designer
+   `load_lab` edit mode, dashboard **Edit** (`designer-edit-existing-lab`).
+5. *Export* → dashboard **Export** → system save picker (D-39), `ApiClient.export_lab`.
+6. *Instructions panel clipped / sideways scroll / not resizable* → Ignored size policies,
+   `TaskRow`, QSplitter (Tigre/06 #21).
+7. *100 % packet loss between hosts* → diagnosed as stale manual addresses after the gate moved
+   the subnet; `move_subnet` now rewrites the manual and the Lab nodes table shows real
+   addresses (Tigre/06 #19). Could not reproduce real Docker networking in the sandbox.
+8. *Reference for host IPs in the designer* → covered by 3.
+Tests: core 167, desktop 285; e2e re-run (import → running view with addresses; dropdown
+screenshot readable). Docs: 2 new stories + 7 addenda, status JSON, README, HANDOFF, Postman
+(PUT), Tigre 02/03/05/06/09/10.
+
+**Third feedback round:** the desktop quick start now shows a display on Windows (first real
+confirmation that QtWebEngine + webtop work there), but with nginx's "400 … plain HTTP request
+was sent to HTTPS port" — the view had loaded `http://localhost:3001`. Fixed the probe (400 +
+that sentence ⇒ https) and the default-port choice (plain-web before TLS-only ports regardless
+of mapping order) — Tigre/06 #22.
+
+**Fourth feedback round (Windows log attached):** (1) "window randomly shutting down" = Qt abort
+`QThread: Destroyed while thread '' is still running` — the gate's single worker attributes
+(second "Use <port>" click; 1 s poll while `docker inspect` was slow) garbage-collected a running
+thread. Root fix: `ManagedThread` self-registry (D-41), poll ticks skip while busy, closeEvent
+waits; Tigre/06 #6 closed. (2) "containers need to be removed when a lab is deleted" → `delete`
+always resets + startup leftover sweep + `POST /docker/sweep-leftovers` (D-40, Tigre/06 #23).
+Core 173 / desktop 289 tests; fake-docker e2e: seeded leftover removed at API start, delete
+leaves nothing.
+
+**Fifth feedback round:** (1) welcome/dashboard notes → dismissible `NoteBanner`, readable
+width, and a delete message that says what happened (containers removed, files untouched, no
+labs left → create/import) — Tigre/06 #24. (2) "git not recognised" → the install simply had
+not finished (and failures were silent): status marker written by the quick-start script,
+`RuntimeResourceStatus.note` via `docker exec cat`, shown in the Lab nodes table
+("running · installing…"), printed by login shells (`bash -l`) — Tigre/06 #18.
+(3) Curated "Popular software" picker per template kind (`PACKAGE_CATALOG`, `ToggleChip`,
+`FlowHost` so chip rows never clip) with an "Other packages" fallback. Core 173 / desktop 291.
+
+**Next**: Windows smoke run per Tigre/05 checklist; then S-1 persistence.
+
+---
+
 ## 2026-10-23 — Session 4: Story `windows-desktop-import-lab-file` implemented
 
 **Goal:** Build the desktop "Open Lab File" import-and-launch flow (user's pick; taken ahead of the

@@ -1,4 +1,8 @@
-from fastapi import FastAPI, HTTPException, status
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from pydantic import ValidationError
 
 from practicum.models import (
@@ -7,7 +11,9 @@ from practicum.models import (
     ImportResult,
     Lab,
     LabDefinition,
+    LabOrigin,
     LabPreview,
+    LeftoverSweepResult,
     NetworkCheckResult,
     PortCheckResult,
     RemoveLeftoverNetworkRequest,
@@ -17,19 +23,50 @@ from practicum.models import (
     ValidationResult,
 )
 from practicum.service import (
+    LabBusyError,
+    LabDeleteError,
     LabNotFoundError,
+    LabRunningError,
     LabService,
     LeftoverNetworkNotRemovableError,
     PortRecommendationUnavailableError,
     SubnetRecommendationUnavailableError,
 )
 
+logger = logging.getLogger("uvicorn.error")  # shows up in the API window
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Labs are in memory only: whatever Practicum containers/networks exist when the API
+    # starts belong to a previous session and can never be used again. Remove them (D-40).
+    result = service.sweep_leftovers()
+    if result.error:
+        logger.info("leftover sweep skipped: %s", result.error)
+    elif result.removed_containers or result.removed_networks or result.errors:
+        logger.info(
+            "leftover sweep: removed %d container(s), %d network(s); %d error(s)",
+            len(result.removed_containers),
+            len(result.removed_networks),
+            len(result.errors),
+        )
+    yield
+
+
 app = FastAPI(
     title="Practicum API",
     description="Local orchestration for reproducible academic network labs.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 service = LabService()
+
+
+@app.post("/docker/sweep-leftovers", response_model=LeftoverSweepResult)
+def sweep_leftovers() -> LeftoverSweepResult:
+    """Removes Practicum containers/networks whose lab this API does not know (also run at
+    startup). `error` is set when Docker could not be queried."""
+    return service.sweep_leftovers()
 
 
 def validation_issues(exc: ValidationError) -> list[ValidationIssue]:
@@ -59,18 +96,36 @@ def validate_lab(definition: dict[str, object]) -> ValidationResult:
 
 
 @app.post("/labs", response_model=Lab, status_code=status.HTTP_201_CREATED)
-def create_lab(definition: LabDefinition) -> Lab:
-    return service.create(definition)
+def create_lab(
+    definition: LabDefinition,
+    origin: Annotated[
+        LabOrigin,
+        Query(description="How this lab was authored on this machine (dashboard bookkeeping)."),
+    ] = "designer",
+) -> Lab:
+    return service.create(definition, origin=origin)
 
 
 @app.post("/labs/import")
-def import_lab(definition: dict[str, object]) -> ImportResult:
+def import_lab(
+    definition: dict[str, object],
+    source_file: Annotated[
+        str | None,
+        Query(
+            max_length=260,
+            description="Name of the file the lab was imported from, shown on the dashboard.",
+        ),
+    ] = None,
+) -> ImportResult:
     try:
         lab_definition = LabDefinition.model_validate(definition)
     except ValidationError as exc:
         return ImportResult(imported=False, errors=validation_issues(exc))
 
-    return ImportResult(imported=True, lab=service.create(lab_definition))
+    return ImportResult(
+        imported=True,
+        lab=service.create(lab_definition, origin="imported", source_file=source_file),
+    )
 
 
 @app.get("/labs", response_model=list[Lab])
@@ -84,6 +139,32 @@ def get_lab(lab_id: str) -> Lab:
         return service.get(lab_id)
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
+
+
+@app.put("/labs/{lab_id}", response_model=Lab)
+def replace_lab(lab_id: str, definition: LabDefinition) -> Lab:
+    """Edits a lab: the whole definition is replaced (validated like POST /labs); id, origin and
+    timestamps are kept. 409 while the lab is running or busy, or when its old Docker resources
+    cannot be removed."""
+    try:
+        return service.replace(lab_id, definition)
+    except LabNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except (LabRunningError, LabBusyError, LabDeleteError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/labs/{lab_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_lab(lab_id: str) -> Response:
+    try:
+        service.delete(lab_id)
+    except LabNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except LabBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LabDeleteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/labs/{lab_id}/export", response_model=LabDefinition)
@@ -103,11 +184,28 @@ def preview_lab(lab_id: str) -> LabPreview:
 
 
 @app.post("/labs/{lab_id}/start", response_model=RuntimeActionResult)
-def start_lab(lab_id: str) -> RuntimeActionResult:
+def start_lab(
+    lab_id: str,
+    response: Response,
+    wait: Annotated[
+        bool,
+        Query(
+            description=(
+                "true: block until the lab is running or failed (default). false: return at "
+                "once with status 'starting' (HTTP 202) and poll GET /labs/{lab_id}/status."
+            )
+        ),
+    ] = True,
+) -> RuntimeActionResult:
     try:
-        return service.start(lab_id)
+        result = service.start(lab_id, wait=wait)
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except LabBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result.pending:
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result
 
 
 @app.post("/labs/{lab_id}/stop", response_model=RuntimeActionResult)
@@ -116,6 +214,19 @@ def stop_lab(lab_id: str) -> RuntimeActionResult:
         return service.stop(lab_id)
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except LabBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/labs/{lab_id}/restart", response_model=RuntimeActionResult)
+def restart_lab(lab_id: str) -> RuntimeActionResult:
+    """Stop then Start as one action; a lab that is not running is simply started."""
+    try:
+        return service.restart(lab_id)
+    except LabNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except LabBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/labs/{lab_id}/reset", response_model=RuntimeActionResult)
@@ -124,6 +235,8 @@ def reset_lab(lab_id: str) -> RuntimeActionResult:
         return service.reset(lab_id)
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
+    except LabBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/labs/{lab_id}/status", response_model=RuntimeStatusResult)

@@ -19,3 +19,5 @@ Add backend API capabilities for starting, stopping, resetting, and reporting th
 - [Host Port Recommendations](runtime-host-port-recommendations.md)
 - [Subnet Conflict Detection and Resolution](runtime-subnet-conflicts.md)
 - [Image Pull and Start Progress](runtime-image-pull-progress.md)
+- [Restart a Lab and Start After Stop](runtime-lab-restart.md)
+- [Delete a Lab Through the API](runtime-delete-lab.md)

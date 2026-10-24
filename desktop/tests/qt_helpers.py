@@ -21,6 +21,9 @@ class ImmediateWorker(QObject):
     def start(self) -> None:
         self.finished_call.emit(self._func(*self._args, **self._kwargs))
 
+    def isRunning(self) -> bool:
+        return False
+
 
 class StalledWorker(QObject):
     """A worker that never finishes on its own; call `finish()` to emit the result. Lets a
@@ -37,7 +40,11 @@ class StalledWorker(QObject):
         StalledWorker.instances.append(self)
 
     def start(self) -> None:
-        pass
+        self.running = True
+
+    def isRunning(self) -> bool:
+        return getattr(self, "running", False)
 
     def finish(self) -> None:
+        self.running = False
         self.finished_call.emit(self._func(*self._args, **self._kwargs))

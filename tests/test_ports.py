@@ -7,7 +7,7 @@ from practicum.models import Lab, LabDefinition
 def test_check_lab_ports_reports_no_conflicts_when_everything_is_free(
     monkeypatch, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: True)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
     definition = LabDefinition.model_validate(lab_definition)
     lab = Lab(id="lab-1", **definition.model_dump())
 
@@ -19,7 +19,7 @@ def test_check_lab_ports_reports_no_conflicts_when_everything_is_free(
 def test_check_lab_ports_flags_port_already_in_use_on_host(
     monkeypatch, lab_definition: dict
 ) -> None:
-    def fake_is_free(port: int) -> bool:
+    def fake_is_free(port: int, protocol: str = "tcp") -> bool:
         return port != 2222
 
     monkeypatch.setattr(ports, "is_local_port_free", fake_is_free)
@@ -40,7 +40,7 @@ def test_check_lab_ports_flags_port_already_in_use_on_host(
 def test_check_lab_ports_flags_port_reserved_by_practicum_api(
     monkeypatch, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: True)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
     monkeypatch.setenv("PRACTICUM_API_PORT", "2222")
     definition = LabDefinition.model_validate(lab_definition)
     lab = Lab(id="lab-1", **definition.model_dump())
@@ -56,7 +56,7 @@ def test_check_lab_ports_flags_port_reserved_by_practicum_api(
 def test_check_lab_ports_flags_duplicate_host_ports_across_nodes(
     monkeypatch, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: True)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
     lab_definition["nodes"][0]["resources"] = {"port_mappings": [{"host": 5000, "container": 80}]}
     lab_definition["nodes"][2]["resources"] = {"port_mappings": [{"host": 5000, "container": 81}]}
     definition = LabDefinition.model_validate(lab_definition)
@@ -72,7 +72,7 @@ def test_check_lab_ports_flags_duplicate_host_ports_across_nodes(
 def test_check_lab_ports_recommendation_avoids_ports_already_in_use(
     monkeypatch, lab_definition: dict
 ) -> None:
-    def fake_is_free(port: int) -> bool:
+    def fake_is_free(port: int, protocol: str = "tcp") -> bool:
         return port not in {2222, 2223}
 
     monkeypatch.setattr(ports, "is_local_port_free", fake_is_free)
@@ -85,7 +85,7 @@ def test_check_lab_ports_recommendation_avoids_ports_already_in_use(
 
 
 def test_find_available_port_skips_unavailable_ports(monkeypatch) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: True)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
 
     result = ports.find_available_port(2000, unavailable={2001, 2002})
 
@@ -93,20 +93,30 @@ def test_find_available_port_skips_unavailable_ports(monkeypatch) -> None:
 
 
 def test_find_available_port_returns_none_when_range_exhausted(monkeypatch) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: False)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": False)
 
     result = ports.find_available_port(65533, unavailable=set())
 
     assert result is None
 
 
-def test_is_local_port_free_reports_false_for_bound_port() -> None:
+def test_is_local_port_free_reports_false_for_bound_port(real_port_probe) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         sock.listen(1)
         bound_port = sock.getsockname()[1]
 
-        assert ports.is_local_port_free(bound_port) is False
+        assert real_port_probe(bound_port) is False
+
+
+def test_is_local_port_free_probes_udp_ports_with_udp(real_port_probe) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        bound_port = sock.getsockname()[1]
+
+        assert real_port_probe(bound_port, "udp") is False
+        # A TCP probe of the same number says nothing about UDP: it must not be reused.
+        assert real_port_probe(bound_port, "tcp") is True
 
 
 def test_api_reserved_port_defaults_to_8000(monkeypatch) -> None:

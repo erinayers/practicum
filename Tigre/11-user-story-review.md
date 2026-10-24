@@ -16,12 +16,12 @@ quality/robustness; **P3** = nice to have.
 | 2 | ~~**Students have no way to use a CLI lab node.**~~ *Closed 2026-10-23 (MVP: Open shell button → console window).* The core use case is *networking* labs (routers, `ping`), yet the only documented way to reach a container is `docker exec` in a terminal — contradicting the "no Docker commands" promise. No story covers an in-app terminal / "Open shell" per node. | Missing story | P0 |
 | 3 | **Students must start the API themselves** (`uvicorn …` is the literal "next action" text). No story covers launching/bundling the API with the desktop app or installing the product. | Missing story | P0 |
 | 4 | **Labs vanish on API restart**, but the Labs Dashboard story is written for "returning users". No persistence story exists. | Missing story / contradiction | P0 |
-| 5 | **Labs Dashboard claims "backed entirely by existing endpoints"** — but needs `DELETE /labs/{id}` (doesn't exist), a Draft/origin/last-run concept (not in the model), and an `error` status mapping (undefined). | Story inaccuracy | P0 |
-| 6 | **Restart is undefined** and stop→start is (likely) broken in the runtime (Tigre/06 #2). `lab-lifecycle-controls` lists Restart with no backend semantics. | Ambiguity + bug | P1 |
+| 5 | ~~**Labs Dashboard claims "backed entirely by existing endpoints"**~~ *Closed 2026-10-24: `runtime-delete-lab`, `lab-origin-and-timestamps`, status mapping D-26.* | Story inaccuracy | P0 |
+| 6 | ~~**Restart is undefined** and stop→start is (likely) broken in the runtime (Tigre/06 #2).~~ *Closed 2026-10-24: `runtime-lab-restart` (docker start reuse, POST /restart, action lock).* | Ambiguity + bug | P1 |
 | 7 | **Import auto-start skips the "see what will run on my machine" gate.** `prestart-lab-gate` says it gates *every* Start; `import-lab-file` bypasses it for conflict-free labs. A student opening a file from anywhere gets arbitrary containers started with no review. | Contradiction / trust | P1 |
-| 8 | **Six stories' ACs differ between the markdown and the JSON tracker**; several "done" ACs describe desktop behaviour that doesn't exist (e.g. "Desktop UI refreshes status" — the desktop never calls `/status`). | Process | P1 |
+| 8 | **Six stories' ACs differ between the markdown and the JSON tracker**; several "done" ACs describe desktop behaviour that doesn't exist. *2026-10-24: the missing ACs were added to the JSON for lifecycle-controls, labs-dashboard, visual-topology-builder and image-pull-progress; "Desktop UI refreshes status" is now true (`windows-desktop-status-polling`).* | Process | P1 |
 | 9 | **Port checks miss three cases that stories list as requirements**: other *defined* labs' ports (FR, untracked), UDP (probed with TCP), and re-verification immediately before Start (edge case in 3 stories, never an AC). | AC debt | P1 |
-| 10 | **Mockup screens with no story**: `screen-create` / `screen-quickstart` (OS templates, package picker, step editor) and the existing Quick Start button (`quickstart.py`) have no backing story at all. | Missing story | P2 |
+| 10 | ~~**Mockup screens with no story**~~ *Closed 2026-10-24: `windows-desktop-create-lab-screen`, `designer-quick-start-lab`, `windows-desktop-visual-theme`.* | Missing story | P2 |
 
 ---
 
@@ -91,17 +91,17 @@ exactly these ACs.
 | # | Stories | Conflict | Suggested resolution |
 |---|---|---|---|
 | C1 | `prestart-lab-gate` ("single mandatory screen that gates every Start action, regardless of where triggered") vs `import-lab-file` ("conflict-free import proceeds straight to the running view") | Import bypasses the review of images/resources/topology. Product decision D-2 was taken for convenience, but the gate's own "Why" is "never start a lab blind". | Keep auto-start but show the gate's summary *inside* the import progress overlay (name, images, CPU/mem) with a 1-click "Review first" escape, **or** auto-start only for labs imported from a trusted/recent list. Record the outcome in Tigre/09. **Status 2026-10-23: implemented per D-2 (auto-start) with D-21 (gate whenever the port check fails or finds conflicts). "Review first" escape not built — raise with the user if wanted.** |
-| C2 | `prestart-lab-gate` user flow lists "the Designer's **Save Lab** action" as a Start entry point; `designer-create-new-lab` says Save stores a draft | Does saving a lab start it? Mockup `screen-custom` "Save Lab" → `screen-preview` suggests yes. | Decide: Save = store + go to dashboard (recommended), with an explicit "Save & Start" secondary action. |
-| C3 | `labs-dashboard` defines **Draft** = "saved but never successfully started/validated", and "only Edit/Delete until it validates" | `POST /labs` rejects invalid specs, so every stored lab is validated; "unvalidated draft" cannot exist. The API statuses are `defined/starting/running/stopping/stopped/error`; the story uses Running/Stopped/Draft. `error` has no UI mapping anywhere. | Define the mapping explicitly: `defined`→"Ready" (or "Draft" if never started), `stopped`→Stopped, `running`→Running, `starting/stopping`→busy, `error`→Error with "Reset" CTA. Drop "not yet validated" unless invalid drafts become storable (see S-7). |
-| C4 | `labs-dashboard` cards show origin ("Imported from x.zip", "Quick start", "Custom lab") and "Last run yesterday" | Neither origin nor timestamps exist in `Lab`/`LabDefinition`; the story says "no backend changes". | Add `origin` + `created_at/last_started_at` to the stored `Lab` (not the portable spec) — see S-5. |
-| C5 | `labs-dashboard` "Deleting a lab … removes it" | No `DELETE /labs/{id}`; story says desktop-only. | Add S-4 backend enabler. |
-| C6 | `lab-lifecycle-controls` offers **Restart** | No API semantics for restart; `runtime-api-stop-lab` says stop may keep containers; stop→start likely fails (Tigre/06 #2). | Define Restart = `stop` + `start` at the service level (`POST /labs/{id}/restart`) and fix start-after-stop to `docker start` existing containers. See S-6. |
-| C7 | `student-stop-lab` impl note: "Decide later whether networks remain after stop" | Never decided; runtime keeps networks on stop, removes on reset. | Record as decision (current behaviour is fine). |
+| C2 | `prestart-lab-gate` user flow lists "the Designer's **Save Lab** action" as a Start entry point; `designer-create-new-lab` says Save stores a draft | Does saving a lab start it? Mockup `screen-custom` "Save Lab" → `screen-preview` suggests yes. | **Resolved 2026-10-24 (D-29):** Save Lab = store + dashboard; Save & Start = store + gate. |
+| C3 | `labs-dashboard` defines **Draft** = "saved but never successfully started/validated" | Every stored lab is validated; `error` had no UI mapping. | **Resolved 2026-10-24 (D-26):** `defined`→Ready, `stopped`→Stopped, `running`→Running, `starting/stopping`→busy, `error`→Error + Reset. No "Draft". |
+| C4 | `labs-dashboard` cards show origin and "Last run yesterday" | Neither existed in the model. | **Resolved 2026-10-24:** `lab-origin-and-timestamps` (D-33). |
+| C5 | `labs-dashboard` "Deleting a lab … removes it" | No `DELETE /labs/{id}`. | **Resolved 2026-10-24:** `runtime-delete-lab` (D-25). |
+| C6 | `lab-lifecycle-controls` offers **Restart** | No API semantics; stop→start failed. | **Resolved 2026-10-24:** `runtime-lab-restart`. |
+| C7 | `student-stop-lab` impl note: "Decide later whether networks remain after stop" | Never decided; runtime keeps networks on stop, removes on reset. | **Recorded 2026-10-24:** Stop keeps containers *and* networks (so `docker start` restores addresses); only Reset removes them. |
 | C8 | `import-lab-file` accepts `.json` **or `.zip`** | Nothing defines a zip format; the API only accepts JSON. | Either drop `.zip` from the story or add S-13 defining a bundle format. **Resolved 2026-10-23: D-18 — `.zip` rejected with a specific message; S-13 remains optional.** |
 | C9 | `windows-desktop-launch` next action = "Start the Practicum API with `uvicorn practicum.main:app --reload`" vs product vision "no command-line tooling required" | Students cannot be expected to run uvicorn. | S-2 (API lifecycle). |
 | C10 | `manual-track-progress` edge cases "instructor provides a new version of the same lab / sections reordered" | Progress key is `lab_id` (a per-import uuid) — re-importing the same lab **always** loses progress, regardless of versioning. | Key progress by a stable spec identity (e.g. hash of name+author+version, or a new `lab_key` in the spec) — see S-14. |
-| C11 | `runtime-host-port-availability` user flow "blocks validation/**export**/start" | Export is portable; host ports are machine-specific. Blocking export on a local conflict is wrong. | Change the last AC to "start" only, mark the story done (Q-2 in Tigre/09). |
-| C12 | `designer-visual-topology-builder` — "no changes to validation or the underlying data model" | Fine, but the mockup's cards show a *role* (host/gateway) per machine that the model doesn't have. | Note in story: role is derived (≥2 interfaces ⇒ "gateway") or out of scope. |
+| C11 | `runtime-host-port-availability` user flow "blocks validation/**export**/start" | Export is portable; host ports are machine-specific. | **Resolved 2026-10-24 (D-30):** AC narrowed to Start; start re-checks ports server-side; story done. |
+| C12 | `designer-visual-topology-builder` — role per machine not in the model | — | **Resolved 2026-10-24 (D-27):** derived from the interface count. |
 
 ---
 
@@ -203,17 +203,17 @@ first-run screen detects Docker Desktop and links to install guidance; app versi
 the UI; uninstall leaves labs/progress unless asked. (Without S-2/S-3 every "student" story is
 hypothetical.)
 
-### S-4 · Delete a lab through the API — [Docker Runtime API] · **P0** (dashboard enabler)
+### S-4 · Delete a lab through the API — [Docker Runtime API] · **P0** — *DONE 2026-10-24 as `runtime-delete-lab`*
 ACs: `DELETE /labs/{id}` removes the lab (404 if missing); if the lab has runtime resources,
 the API resets them first or returns 409 with a clear message (decide); deleting clears nothing
 outside Practicum; `ApiClient.delete_lab` exists with tests.
 
-### S-5 · Lab origin and activity timestamps — [Lab Spec Format] · **P1** (dashboard enabler)
+### S-5 · Lab origin and activity timestamps — [Lab Spec Format] · **P1** — *DONE 2026-10-24 as `lab-origin-and-timestamps`*
 ACs: stored `Lab` carries `origin` (`imported` | `quick_start` | `designer`), `source_file`
 (optional), `created_at`, `last_started_at`; these are **not** part of the exported spec;
 `GET /labs` returns them; dashboard cards render them.
 
-### S-6 · Restart lab and start-after-stop — [Docker Runtime API] · **P1**
+### S-6 · Restart lab and start-after-stop — [Docker Runtime API] · **P1** — *DONE 2026-10-24 as `runtime-lab-restart`*
 ACs: starting a `stopped` lab reuses its existing containers (`docker start`) rather than
 failing on name conflict; `POST /labs/{id}/restart` = stop + start with a single structured
 result; lifecycle calls on a lab already `starting`/`stopping` are rejected with 409 (action
@@ -253,7 +253,7 @@ in-app terminal widget (or, MVP, in Windows Terminal/conhost via `subprocess`), 
 and this share one "node" concept. This is the CLI counterpart of `embedded-lab-view` and is
 essential for the stated core use case.
 
-### S-12 · Status polling and reconciliation in the desktop — [Windows Desktop Application] · **P1**
+### S-12 · Status polling and reconciliation in the desktop — [Windows Desktop Application] · **P1** — *DONE 2026-10-24 as `windows-desktop-status-polling`*
 ACs: running view polls `GET /labs/{id}/status` (e.g. every 3–5 s) and shows per-container
 state; containers that died outside Practicum flip the badge and offer Reset; polling pauses
 when the view is hidden. Prerequisite for `image-pull-progress` UI and the dashboard's
@@ -270,8 +270,7 @@ export/import); manual progress keys use `lab_key` when present; importing a fil
 same `lab_key` offers "resume existing" vs "import as copy" (closes Q-1); different `version`
 with same key keeps progress for unchanged task ids.
 
-### S-15 · Bundled sample labs and Quick Start templates — [Student Import Mode] · **P2**
-*First half delivered 2026-10-23 with the import story: `practicum_desktop/samples/` + picker list.*
+### S-15 · Bundled sample labs and Quick Start templates — [Student Import Mode] · **P2** — *DONE (both halves): samples 2026-10-23; templates + free subnet 2026-10-24 as `designer-quick-start-lab` (Windows template listed but disabled; package list = node command, D-32)*
 ACs: ~~the examples ship inside the desktop package and appear in the import picker's "sample"
 list~~ (done); Quick Start offers the templates from the mockup (Ubuntu now; Windows marked "coming
 soon"), picks a free subnet from `10.90.0.0/16` (fixes Tigre/06 #1); optional package
@@ -318,6 +317,10 @@ dialogs).
 ---
 
 ## 6. Suggested Phase 7 re-sequencing (with the gaps folded in)
+
+*2026-10-24: Phase 7 is complete; items 1, 3, 4, 6, 7 and 8 below are done (see Tigre/05). The
+order that remains relevant is: Windows verification → S-1 persistence → S-7 edit + S-10 export →
+S-8/S-9 → S-2/S-3 → quality tail (S-13, S-14, S-17, S-18, S-19, S-20, S-21, S-22).*
 
 The current Phase 7 order is UI-first; several items will stall on missing backend pieces.
 Proposed order:

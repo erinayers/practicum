@@ -173,7 +173,7 @@ def test_check_ports_reports_failure_on_missing_lab(monkeypatch) -> None:
 
 
 def test_apply_port_recommendation_returns_updated_result(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             200,
             json={"lab_id": "abc", "has_conflicts": False, "conflicts": []},
@@ -190,7 +190,7 @@ def test_apply_port_recommendation_returns_updated_result(monkeypatch) -> None:
 
 
 def test_apply_port_recommendation_surfaces_detail_on_conflict_error(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             409,
             json={"detail": "No recommended port is available"},
@@ -207,7 +207,7 @@ def test_apply_port_recommendation_surfaces_detail_on_conflict_error(monkeypatch
 
 
 def test_start_lab_reports_success(monkeypatch) -> None:
-    def fake_post(url, timeout):
+    def fake_post(url, timeout, **kwargs):
         return httpx.Response(
             200,
             json={"success": True, "lab": {"id": "abc", "status": "running"}, "errors": []},
@@ -223,7 +223,7 @@ def test_start_lab_reports_success(monkeypatch) -> None:
 
 
 def test_start_lab_reports_runtime_error(monkeypatch) -> None:
-    def fake_post(url, timeout):
+    def fake_post(url, timeout, **kwargs):
         return httpx.Response(
             200,
             json={
@@ -244,7 +244,7 @@ def test_start_lab_reports_runtime_error(monkeypatch) -> None:
 
 
 def test_start_lab_reports_connection_failure(monkeypatch) -> None:
-    def fake_post(url, timeout):
+    def fake_post(url, timeout, **kwargs):
         raise httpx.ConnectError("refused", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -256,7 +256,7 @@ def test_start_lab_reports_connection_failure(monkeypatch) -> None:
 
 
 def test_validate_lab_reports_valid(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             200,
             json={"valid": True, "lab": json, "errors": []},
@@ -274,7 +274,7 @@ def test_validate_lab_reports_valid(monkeypatch) -> None:
 
 
 def test_validate_lab_reports_field_errors(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             200,
             json={
@@ -298,7 +298,7 @@ def test_validate_lab_reports_field_errors(monkeypatch) -> None:
 
 
 def test_validate_lab_reports_connection_failure(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         raise httpx.ConnectError("refused", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -310,7 +310,7 @@ def test_validate_lab_reports_connection_failure(monkeypatch) -> None:
 
 
 def test_create_lab_reports_success(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             201,
             json={"id": "abc", "name": "Test Lab", "status": "defined"},
@@ -327,7 +327,7 @@ def test_create_lab_reports_success(monkeypatch) -> None:
 
 
 def test_create_lab_reports_validation_errors(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             422,
             json={"detail": [{"loc": ["body", "nodes"], "msg": "Field required", "type": "missing"}]},
@@ -345,7 +345,7 @@ def test_create_lab_reports_validation_errors(monkeypatch) -> None:
 
 
 def test_create_lab_reports_connection_failure(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         raise httpx.ConnectError("refused", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -478,7 +478,7 @@ def test_get_preview_reports_connection_failure(monkeypatch) -> None:
 def test_start_lab_uses_the_long_lifecycle_timeout(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_post(url, timeout):
+    def fake_post(url, timeout, **kwargs):
         seen["timeout"] = timeout
         return httpx.Response(
             200,
@@ -495,7 +495,7 @@ def test_start_lab_uses_the_long_lifecycle_timeout(monkeypatch) -> None:
 
 
 def test_start_lab_explains_timeout_instead_of_raw_exception(monkeypatch) -> None:
-    def fake_post(url, timeout):
+    def fake_post(url, timeout, **kwargs):
         raise httpx.ReadTimeout("timed out", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -510,7 +510,7 @@ def test_start_lab_explains_timeout_instead_of_raw_exception(monkeypatch) -> Non
 def test_import_lab_reports_success_with_lab_identity(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         seen["url"] = url
         seen["json"] = json
         return httpx.Response(
@@ -537,7 +537,7 @@ def test_import_lab_reports_success_with_lab_identity(monkeypatch) -> None:
 
 
 def test_import_lab_reports_structured_validation_errors(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             200,
             json={
@@ -568,7 +568,7 @@ def test_import_lab_reports_structured_validation_errors(monkeypatch) -> None:
 
 
 def test_import_lab_reports_connection_failure_without_errors(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         raise httpx.ConnectError("refused", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -582,7 +582,7 @@ def test_import_lab_reports_connection_failure_without_errors(monkeypatch) -> No
 
 
 def test_import_lab_reports_timeout(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         raise httpx.ReadTimeout("slow", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -595,7 +595,7 @@ def test_import_lab_reports_timeout(monkeypatch) -> None:
 
 
 def test_import_lab_handles_non_object_body_rejection(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             422, json={"detail": [{"loc": ["body"]}]}, request=httpx.Request("POST", url)
         )
@@ -610,7 +610,7 @@ def test_import_lab_handles_non_object_body_rejection(monkeypatch) -> None:
 
 
 def test_import_lab_handles_unexpected_response(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(200, content=b"not json", request=httpx.Request("POST", url))
 
     monkeypatch.setattr(httpx, "post", fake_post)
@@ -691,7 +691,7 @@ def test_check_networks_reports_connection_failure(monkeypatch) -> None:
 def test_apply_subnet_recommendation_posts_network_id(monkeypatch) -> None:
     seen = {}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         seen["url"], seen["json"] = url, json
         return httpx.Response(
             200, json=_network_body(has_conflicts=False, conflicts=[]),
@@ -709,7 +709,7 @@ def test_apply_subnet_recommendation_posts_network_id(monkeypatch) -> None:
 
 
 def test_apply_subnet_recommendation_surfaces_409_detail(monkeypatch) -> None:
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         return httpx.Response(
             409, json={"detail": "No recommended subnet is available for network 'lab-net'"},
             request=httpx.Request("POST", url),
@@ -726,7 +726,7 @@ def test_apply_subnet_recommendation_surfaces_409_detail(monkeypatch) -> None:
 def test_remove_leftover_network_posts_name_with_lifecycle_timeout(monkeypatch) -> None:
     seen = {}
 
-    def fake_post(url, json, timeout):
+    def fake_post(url, json, timeout, **kwargs):
         seen["url"], seen["json"], seen["timeout"] = url, json, timeout
         return httpx.Response(
             200, json=_network_body(has_conflicts=False, conflicts=[]),
@@ -751,7 +751,7 @@ def test_reset_lab_reports_success_and_runtime_error(monkeypatch) -> None:
          "errors": [{"message": "Docker is unavailable", "command": ["docker", "rm"]}]},
     ])
 
-    def fake_post(url, timeout):
+    def fake_post(url, timeout, **kwargs):
         assert url.endswith("/labs/abc/reset")
         return httpx.Response(200, json=next(responses), request=httpx.Request("POST", url))
 
@@ -824,3 +824,326 @@ def test_get_status_reports_connection_failure(monkeypatch) -> None:
 
     assert result.success is False
     assert "Could not load the lab status" in result.detail
+
+
+# ----- lifecycle enablers: stop / restart / delete / async start / progress -----------------
+
+
+def _action_body(
+    status: str = "running", success: bool = True, pending: bool = False, errors=None
+):
+    return {
+        "success": success,
+        "pending": pending,
+        "lab": {"id": "abc", "status": status},
+        "errors": errors or [],
+    }
+
+
+def test_stop_restart_reset_post_to_their_endpoints_with_lifecycle_timeout(monkeypatch) -> None:
+    seen: list[tuple[str, float]] = []
+
+    def fake_post(url, timeout, **kwargs):
+        seen.append((url, timeout))
+        return httpx.Response(
+            200, json=_action_body("stopped"), request=httpx.Request("POST", url)
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ApiClient(base_url="http://api", lifecycle_timeout=123.0)
+
+    assert client.stop_lab("abc").success is True
+    assert client.restart_lab("abc").detail == "Lab restarted."
+    assert client.reset_lab("abc").detail == "Lab reset."
+    assert seen == [
+        ("http://api/labs/abc/stop", 123.0),
+        ("http://api/labs/abc/restart", 123.0),
+        ("http://api/labs/abc/reset", 123.0),
+    ]
+
+
+def test_lifecycle_call_reports_busy_on_409(monkeypatch) -> None:
+    def fake_post(url, timeout, **kwargs):
+        return httpx.Response(
+            409,
+            json={"detail": "Lab 'X' is already starting; wait for that to finish"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = ApiClient().stop_lab("abc")
+
+    assert result.success is False
+    assert result.busy is True
+    assert result.detail == "Lab 'X' is already starting; wait for that to finish"
+
+
+def test_stop_lab_reports_runtime_error_and_status(monkeypatch) -> None:
+    def fake_post(url, timeout, **kwargs):
+        return httpx.Response(
+            200,
+            json=_action_body(
+                "error", success=False, errors=[{"message": "Container could not stop"}]
+            ),
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = ApiClient().stop_lab("abc")
+
+    assert result.success is False
+    assert result.detail == "Container could not stop"
+    assert result.lab_status == "error"
+
+
+def test_start_lab_without_wait_sends_flag_and_reports_pending(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_post(url, timeout, **kwargs):
+        seen["params"] = kwargs.get("params")
+        return httpx.Response(
+            202, json=_action_body("starting", pending=True), request=httpx.Request("POST", url)
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = ApiClient().start_lab("abc", wait=False)
+
+    assert seen["params"] == {"wait": "false"}
+    assert result.success is True
+    assert result.pending is True
+    assert result.lab_status == "starting"
+    assert result.detail == "Start requested."
+
+
+def test_start_lab_with_wait_sends_no_params(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_post(url, timeout, **kwargs):
+        seen["params"] = kwargs.get("params")
+        return httpx.Response(200, json=_action_body(), request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = ApiClient().start_lab("abc")
+
+    assert seen["params"] is None
+    assert result.pending is False
+
+
+def test_delete_lab_reports_success_on_204_and_already_gone_on_404(monkeypatch) -> None:
+    codes = iter([204, 404])
+    seen: list[str] = []
+
+    def fake_delete(url, timeout):
+        seen.append(url)
+        return httpx.Response(next(codes), request=httpx.Request("DELETE", url))
+
+    monkeypatch.setattr(httpx, "delete", fake_delete)
+    client = ApiClient(base_url="http://api")
+
+    first = client.delete_lab("abc")
+    second = client.delete_lab("abc")
+
+    assert seen == ["http://api/labs/abc", "http://api/labs/abc"]
+    assert first.success is True
+    assert second.success is True
+    assert second.detail == "The lab was already gone."
+
+
+def test_delete_lab_surfaces_409_detail_and_connection_failure(monkeypatch) -> None:
+    def fake_delete(url, timeout):
+        return httpx.Response(
+            409,
+            json={"detail": "Could not remove the lab's Docker resources: boom"},
+            request=httpx.Request("DELETE", url),
+        )
+
+    monkeypatch.setattr(httpx, "delete", fake_delete)
+    kept = ApiClient().delete_lab("abc")
+    assert kept.success is False
+    assert kept.detail == "Could not remove the lab's Docker resources: boom"
+
+    def failing_delete(url, timeout):
+        raise httpx.ConnectError("refused", request=httpx.Request("DELETE", url))
+
+    monkeypatch.setattr(httpx, "delete", failing_delete)
+    failed = ApiClient().delete_lab("abc")
+    assert failed.success is False
+    assert failed.detail.startswith("Could not delete the lab")
+
+
+def test_create_lab_sends_origin_and_import_sends_source_file(monkeypatch) -> None:
+    seen: list[dict] = []
+
+    def fake_post(url, json, timeout, **kwargs):
+        seen.append({"url": url, "params": kwargs.get("params")})
+        if url.endswith("/import"):
+            return httpx.Response(
+                200,
+                json={"imported": True, "lab": {"id": "i1", "name": "N"}, "errors": []},
+                request=httpx.Request("POST", url),
+            )
+        return httpx.Response(201, json={"id": "c1"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ApiClient(base_url="http://api")
+
+    client.create_lab({"name": "N"})
+    client.create_lab({"name": "N"}, origin="quick_start")
+    client.import_lab({"name": "N"})
+    client.import_lab({"name": "N"}, source_file="static-routing.json")
+
+    assert [s["params"] for s in seen] == [
+        {"origin": "designer"},
+        {"origin": "quick_start"},
+        None,
+        {"source_file": "static-routing.json"},
+    ]
+
+
+def test_list_labs_parses_origin_timestamps_and_counts(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "a",
+                    "name": "Imported One",
+                    "status": "stopped",
+                    "origin": "imported",
+                    "source_file": "one.json",
+                    "created_at": "2026-10-23T10:00:00Z",
+                    "last_started_at": "2026-10-23T11:30:00+00:00",
+                    "last_error": None,
+                    "nodes": [{"id": "x"}, {"id": "y"}],
+                    "networks": [{"id": "n"}],
+                    "description": "Two hosts.",
+                },
+                {"id": "b", "name": "Old Server", "status": "defined"},
+            ],
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    labs = ApiClient().list_labs().labs
+
+    assert labs[0].origin == "imported"
+    assert labs[0].source_file == "one.json"
+    assert labs[0].created_at.isoformat() == "2026-10-23T10:00:00+00:00"
+    assert labs[0].last_started_at.hour == 11
+    assert labs[0].node_count == 2
+    assert labs[0].network_count == 1
+    assert labs[0].description == "Two hosts."
+    # An older API without the bookkeeping fields still parses.
+    assert labs[1].origin == "designer"
+    assert labs[1].created_at is None
+    assert labs[1].node_count == 0
+
+
+def test_get_status_parses_progress_and_last_error(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json={
+                "lab": {"id": "abc", "status": "starting", "last_error": None},
+                "resources": [],
+                "errors": [],
+                "progress": [
+                    {"node_id": "a", "image": "alpine", "step": "ready"},
+                    {
+                        "node_id": "b",
+                        "image": "ubuntu",
+                        "step": "pulling_image",
+                        "percent": 42,
+                        "detail": "3 of 7 layers",
+                    },
+                ],
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ApiClient().get_status("abc")
+
+    assert result.lab_status == "starting"
+    assert [(p.node_id, p.step, p.percent, p.detail) for p in result.progress] == [
+        ("a", "ready", None, None),
+        ("b", "pulling_image", 42, "3 of 7 layers"),
+    ]
+    assert result.last_error is None
+    assert result.running_container_count == 0
+
+
+# ----- edit / export -----------------------------------------------------------------------------
+
+
+def test_get_lab_and_export_lab_return_the_definition(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def fake_get(url, timeout):
+        seen.append(url)
+        body = {"name": "Routing", "nodes": [{"id": "a"}]}
+        if not url.endswith("/export"):
+            body |= {"id": "abc", "status": "stopped"}
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    client = ApiClient(base_url="http://api")
+
+    lab = client.get_lab("abc")
+    exported = client.export_lab("abc")
+
+    assert seen == ["http://api/labs/abc", "http://api/labs/abc/export"]
+    assert lab.success and lab.name == "Routing" and lab.status == "stopped"
+    assert lab.definition["id"] == "abc"
+    assert exported.success and "id" not in exported.definition
+
+
+def test_get_lab_reports_missing_and_connection_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        httpx, "get", lambda url, timeout: httpx.Response(404, request=httpx.Request("GET", url))
+    )
+    assert ApiClient().get_lab("x").detail == "That lab is no longer in the list."
+
+    def failing(url, timeout):
+        raise httpx.ConnectError("refused", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", failing)
+    result = ApiClient().export_lab("x")
+    assert result.success is False and "Could not export the lab" in result.detail
+
+
+def test_update_lab_puts_and_parses_success_validation_and_conflict(monkeypatch) -> None:
+    responses = iter(
+        [
+            httpx.Response(200, json={"id": "abc", "name": "N"}),
+            httpx.Response(
+                422, json={"detail": [{"loc": ["body", "name"], "msg": "too short", "type": "x"}]}
+            ),
+            httpx.Response(409, json={"detail": "Lab 'N' is running; stop it before editing"}),
+        ]
+    )
+    seen: list[tuple[str, float]] = []
+
+    def fake_put(url, json, timeout):
+        seen.append((url, timeout))
+        response = next(responses)
+        response._request = httpx.Request("PUT", url)
+        return response
+
+    monkeypatch.setattr(httpx, "put", fake_put)
+    client = ApiClient(base_url="http://api", lifecycle_timeout=77.0)
+
+    ok = client.update_lab("abc", {"name": "N"})
+    invalid = client.update_lab("abc", {"name": ""})
+    running = client.update_lab("abc", {"name": "N"})
+
+    assert seen[0] == ("http://api/labs/abc", 77.0)
+    assert ok.success and ok.lab_id == "abc"
+    assert invalid.success is False and invalid.errors[0].message == "too short"
+    assert running.success is False and "stop it before editing" in running.detail

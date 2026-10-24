@@ -21,7 +21,7 @@ read order below.
 | 8 | [07-dev-workflow.md](07-dev-workflow.md) | How to run, test, and the conventions to keep | Before writing code |
 | 9 | [09-decisions.md](09-decisions.md) | Product + technical decisions already made (don't re-litigate) | Before designing anything |
 | 10 | [10-glossary.md](10-glossary.md) | Terms, names, naming conventions | As needed |
-| 11 | [11-user-story-review.md](11-user-story-review.md) | Gap analysis of the original 38 stories (40 now): AC drift, contradictions, 22 proposed new stories, re-sequencing | Planning / before writing new stories |
+| 11 | [11-user-story-review.md](11-user-story-review.md) | Gap analysis of the original 38 stories (47 now): AC drift, contradictions (mostly resolved), 22 proposed stories (S-4/5/6/11/12/15/16 done), re-sequencing | Planning / before writing new stories |
 
 ## Rules for maintaining this folder
 
@@ -35,50 +35,52 @@ read order below.
 - `HANDOFF.md` at the repo root is the human-facing handoff; it is **stale** (see 06). This
   folder is more current. If you update HANDOFF.md, note it in the session log.
 
-## Resume here (state at close of 2026-10-23, Session 4 — long session, 3 stories)
+## Resume here (state at close of 2026-10-24, Session 5 — Phase 7 completed)
 
-**Everything from Session 4 is uncommitted** on top of the single `baseline` commit
-(`git status` ≈ 49 entries). Suggest the user commits before anything else. Nothing outside
-the repo matters (screenshots in `/workspace/*.png` and `/tmp/fakedocker` were sandbox-only).
+**Everything from Session 5 is uncommitted** on top of the `baseline` commit (`git status` ≈ 60
+entries, 11 new desktop modules, 12 new test modules, 7 new story files). Suggest the user commits
+before anything else. Nothing outside the repo matters (`/tmp/fakedocker`, `/tmp/e2e_*.py`,
+screenshots in `/tmp` were sandbox-only — recipes in Tigre/07).
 
-**Delivered this session** (all `done` in `src/user-story-status.json`, 40 stories now):
-1. `windows-desktop-import-lab-file` — `import_lab.py` + `lab_file.py` + bundled `samples/`,
-   **Import Lab File…** button. **Verified on Windows by the user** (flow reached Start).
-2. `runtime-subnet-conflicts` (was Tigre/11 S-16) — `GET/POST /labs/{id}/networks…`, gate
-   "Network Conflicts" with Remove leftover / Reset '<lab>' / Use <subnet>. **Verified on Windows
-   by the user: "That worked great!"** (leftover Quick Start network removed from the gate, lab
-   started — so Docker Desktop is working on the user's machine now).
-3. `windows-desktop-open-node-shell` (was Tigre/11 S-11, P0) — Lab Nodes table + **Open shell**
-   (docker exec in a new console). **NOT yet verified on Windows** — built at the very end.
+**Delivered this session** (all `done` in `src/user-story-status.json`, 49 stories now incl. the
+feedback-round `designer-node-catalog` and `designer-edit-existing-lab`, Phase 7
+`done`): `windows-desktop-lab-lifecycle-controls`, `windows-desktop-labs-dashboard`,
+`windows-desktop-embedded-lab-view`, `windows-desktop-in-app-dialogs`,
+`designer-visual-topology-builder`, `runtime-image-pull-progress`, `runtime-host-port-availability`
+(closed, D-30) + seven new stories (`runtime-lab-restart`, `runtime-delete-lab`,
+`lab-origin-and-timestamps`, `windows-desktop-visual-theme`, `windows-desktop-create-lab-screen`,
+`designer-quick-start-lab`, `windows-desktop-status-polling`). The desktop is now the mockup:
+welcome → dashboard cards → create (quick start / custom) → gate → running view (Restart / Stop /
+Reset, embedded QWebEngineView, instructions flyout, Lab nodes + Open shell, status bar).
 
-**Windows verification checklist for the next session (ask the user):**
-- [ ] Probe 1 (`examples/import-probes/1-valid-auto-start.json`): after start, does the Lab Nodes
-      table show host-a/host-b as `running`? Does **Open shell** open a console with a `/ #`
-      prompt? Does `ping -c 3 10.93.1.20` reply? (Risk: `cmd.exe /k` + `CREATE_NEW_CONSOLE` with
-      Docker Desktop's `docker.exe` — if the window flashes/closes or shows no prompt, capture it.)
-- [ ] Probe 2 (port 8000 conflict) stops at the gate with a "Use <port>" button.
-- [ ] Recent-files list persists across app restarts; greyed row after moving a file.
-- [ ] Importing the same sample twice → second one stops at the gate with "Used by lab '…'
-      (running)" and offers Reset / Use 10.90.0.0/24.
+**NOT verified on Windows — first thing next session**: run `start-practicum.bat` with Docker
+Desktop and walk the checklist in Tigre/05 ("What is NOT verified on Windows"). Highest-risk
+items: QtWebEngine present in the venv (`PySide6-Addons`), webtop in the embedded view
+(http 3000 / https 3001) — also the default **Ubuntu Desktop** quick start template (D-35), `docker pull` progress lines on Windows Docker Desktop (non-TTY →
+layer-based percent expected), Open shell (`cmd /k`, Tigre/06 #14), apt-get inside the quick
+start container (needs internet).
 
-**Known rough edges left open** (Tigre/06): #11 health-check false "Blocked" on a loaded machine
-(user hit it in Session 3); #2 stop→start name conflict (blocks lifecycle story); #1 quick-start
-subnet fixed at 10.50.0.0/24 (mitigated by the gate now, not fixed); S-1 persistence (leftovers
-exist *because* labs vanish on API restart). Root causes of the subnet collision are still these.
+**Known rough edges left open** (Tigre/06): #6 single worker attributes in gate/designer
+(mitigated), #14 Open shell unverified, #17 no cancel for a hung background start, #18 quick
+start package install needs internet. S-1 persistence is the biggest product gap (dashboard is
+empty after every API restart).
 
-**Decisions still awaiting the user** (unchanged): Tigre/11 §3 C2, C3; Q-1 duplicate import
-(interim D-19 = duplicate lab); Q-2…Q-6 in Tigre/09; which of S-1…S-22 to adopt next. C1 and C8
-were settled by implementation (D-2+D-21, D-18).
+**Decisions awaiting the user** (Tigre/09): Q-3 persistence location, Q-5 naming, Q-7 what the
+"Instructor setup" toggle should hide for students, Q-8 Edit lab (S-7) before/after persistence.
 
-**Next story**: `windows-desktop-labs-dashboard`, after the backend enablers (`DELETE /labs/{id}`,
-Tigre/06 #2). It should reuse `ImportLabDialog`, `PreStartGateDialog`, and absorb the Lab Nodes
-table into the running view. Suggested order in Tigre/05.
+**Engineering rules added this session** (Tigre/07): no lambdas capturing `self` on child-widget
+signals (`widgets.bind()`), no bare `QFrame {}` selectors (`style_frame`), `discard()` when
+rebuilding rows, patch `CallableWorker` in every module the widget imports, fixtures must stop
+pollers on teardown, always check the pytest **exit code** (teardown crashes hide behind
+"passed").
 
 **Sandbox facts that save time**: `pip install --break-system-packages pytest PySide6 ruff`
-works; full Qt suite runs with `QT_QPA_PLATFORM=offscreen` (desktop 134, core 132 at close);
-screenshots via `widget.grab().save()` after `app.processEvents()`; the stateful fake `docker`
-recipe is in Tigre/07; **Qt swallows slot exceptions** (run `pytest -s | grep Traceback`);
-**files have mixed CRLF/LF** — preserve per file (Tigre/07).
+(PySide6 6.12 incl. WebEngine); full Qt suite with `QT_QPA_PLATFORM=offscreen` (desktop 270,
+core 159 at close); QtWebEngine works offscreen; screenshots via `widget.grab().save()` after
+`processEvents()` + `sendPostedEvents(None, DeferredDelete)`; the stateful fake `docker` recipe
+(now with `image inspect`/`pull`/`start`) and the real-app e2e driver pattern are in Tigre/07;
+**files have mixed CRLF/LF** — preserve per file; git root is `/workspace` (repo folder
+`Practicum/`).
 
 **User's environment**: Windows, Python 3.14 in `.venv`, launches with `start-practicum.bat`,
 Docker Desktop working as of the end of Session 4.
@@ -87,10 +89,12 @@ Docker Desktop working as of the end of Session 4.
 
 Practicum is a local-first Windows tool for reproducible Docker-based networking labs. A
 FastAPI service (`src/practicum`, in-memory, shells out to the `docker` CLI) validates lab
-JSON specs (nodes / networks / interfaces / manual), stores them, and starts/stops/resets
-containers and bridge networks. A PySide6 desktop app (`desktop/src/practicum_desktop`) is a
-pure HTTP client of that API: instructor "Designer" dialog, student lab list + import-and-launch
-dialog + pre-start gate + manual flyout with local progress. Phases 1–6 of the backlog are done
-(132 core tests + 134 desktop tests pass). **Phase 7 — closing the mockup-driven desktop UI gap —
-is in progress (gate ✅, import ✅, subnet conflicts ✅, open shell ✅); next recommended story is `windows-desktop-labs-dashboard`.**
+JSON specs (nodes / networks / interfaces / manual), stores them, and starts (with real image
+pull progress) / stops / restarts / resets / deletes containers and bridge networks. A PySide6
+desktop app (`desktop/src/practicum_desktop`) is a pure HTTP client of that API, built
+screen-for-screen from `design/practicum-mockups.html`: welcome, labs dashboard, create (quick
+start template or custom designer with a schematic topology), pre-start gate, import-and-launch,
+and a running view with lifecycle controls, an embedded web view, the instructions flyout and
+Open shell. **Phases 1–7 are done (159 core + 270 desktop tests); Session 5's UI has not yet
+been run on Windows — that smoke run is the next step, then persistence (S-1).**
 Everything is tracked in `src/user-story-status.json`.

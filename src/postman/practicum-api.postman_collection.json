@@ -58,6 +58,42 @@
       ]
     },
     {
+      "name": "Sweep Docker Leftovers",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/docker/sweep-leftovers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "docker",
+            "sweep-leftovers"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Sweep reports what it removed', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.removed_containers).to.be.an('array');",
+              "  pm.expect(body.removed_networks).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Validate Lab Definition",
       "request": {
         "method": "POST",
@@ -117,12 +153,19 @@
           "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Static Routing Fundamentals\",\n  \"description\": \"Practice configuring static routes across two routed subnets.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"router\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"host-b\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    },\n    {\n      \"id\": \"right\",\n      \"subnet\": \"10.0.2.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.10/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.1/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.1/24\"\n    },\n    {\n      \"node\": \"host-b\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.10/24\"\n    }\n  ]\n}"
         },
         "url": {
-          "raw": "{{baseUrl}}/labs",
+          "raw": "{{baseUrl}}/labs?origin=designer",
           "host": [
             "{{baseUrl}}"
           ],
           "path": [
             "labs"
+          ],
+          "query": [
+            {
+              "key": "origin",
+              "value": "designer",
+              "description": "designer | imported | quick_start (dashboard bookkeeping only)"
+            }
           ]
         }
       },
@@ -234,13 +277,20 @@
           "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Imported Static Routing Lab\",\n  \"description\": \"Imported lab spec example.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"router\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.10/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.1/24\"\n    }\n  ]\n}"
         },
         "url": {
-          "raw": "{{baseUrl}}/labs/import",
+          "raw": "{{baseUrl}}/labs/import?source_file=static-routing.json",
           "host": [
             "{{baseUrl}}"
           ],
           "path": [
             "labs",
             "import"
+          ],
+          "query": [
+            {
+              "key": "source_file",
+              "value": "static-routing.json",
+              "description": "File name shown on the dashboard card"
+            }
           ]
         }
       },
@@ -351,6 +401,61 @@
               "pm.test('Fetched lab matches saved labId', function () {",
               "  const body = pm.response.json();",
               "  pm.expect(body.id).to.eql(pm.collectionVariables.get('labId'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Update Created Lab (PUT)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Static Routing Fundamentals\",\n  \"description\": \"Practice configuring static routes across two routed subnets.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"nodes\": [\n    {\n      \"id\": \"host-a\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"router\",\n      \"image\": \"alpine:3.21\"\n    },\n    {\n      \"id\": \"host-b\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"left\",\n      \"subnet\": \"10.0.1.0/24\"\n    },\n    {\n      \"id\": \"right\",\n      \"subnet\": \"10.0.2.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host-a\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.10/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"left\",\n      \"address\": \"10.0.1.1/24\"\n    },\n    {\n      \"node\": \"router\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.1/24\"\n    },\n    {\n      \"node\": \"host-b\",\n      \"network\": \"right\",\n      \"address\": \"10.0.2.10/24\"\n    }\n  ]\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200 (replaced) or 409 (running/busy)', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+              "});",
+              "",
+              "pm.test('Replaced lab keeps its id', function () {",
+              "  if (pm.response.code !== 200) return;",
+              "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('labId'));",
               "});"
             ]
           }
@@ -634,6 +739,61 @@
       ]
     },
     {
+      "name": "Start Created Lab Without Waiting (202 + progress)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/start?wait=false",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "start"
+          ],
+          "query": [
+            {
+              "key": "wait",
+              "value": "false",
+              "description": "Return at once; poll GET /labs/{labId}/status for per-node progress"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 202 (accepted) or 200 (already running)', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+              "});",
+              "",
+              "pm.test('Pending start can be followed through GET /status progress', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body).to.have.property('pending');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Get Created Lab Runtime Status",
       "request": {
         "method": "GET",
@@ -676,6 +836,13 @@
               "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
               "  pm.expect(body.resources).to.be.an('array');",
               "  pm.expect(body.errors).to.be.an('array');",
+              "});",
+              "",
+              "pm.test('Status carries per-node start progress and the lab bookkeeping fields', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.progress).to.be.an('array');",
+              "  pm.expect(body.lab).to.have.property('origin');",
+              "  pm.expect(body.lab).to.have.property('last_error');",
               "});"
             ]
           }
@@ -756,6 +923,85 @@
               "  pm.expect(body.success).to.be.a('boolean');",
               "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
               "  pm.expect(body.errors).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Restart Created Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/restart",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "restart"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Restart returns a structured runtime result', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.be.a('boolean');",
+              "  pm.expect(body.lab.id).to.eql(pm.collectionVariables.get('labId'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Restart Missing Lab",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id/restart",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id",
+            "restart"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
               "});"
             ]
           }
@@ -1225,6 +1471,77 @@
             "exec": [
               "pm.test('Status code is 409 when that network does not conflict with this lab', function () {",
               "  pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete Created Lab",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 204 (deleted) or 409 (Docker resources could not be removed)', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([204, 409]);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete Missing Lab",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/labs/not-a-real-id",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "not-a-real-id"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.response.to.have.status(404);",
               "});"
             ]
           }

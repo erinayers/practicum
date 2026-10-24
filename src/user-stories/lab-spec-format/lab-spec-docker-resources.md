@@ -60,3 +60,7 @@ Labs should be predictable and respectful of student hardware. Resource settings
 - The current `Node` model already requires `image`.
 - Resource fields should be optional at first.
 - Runtime enforcement may vary by Docker platform.
+
+## Update 2026-10-24
+
+`resources` gained `sysctls` (a map of namespaced kernel parameters, `net.*` / `kernel.*` / `fs.*`), passed to Docker as `--sysctl k=v` without privileged mode. Its first use is the designer's Router preset (`net.ipv4.ip_forward=1`). Schema stays 1.x (additive, optional).

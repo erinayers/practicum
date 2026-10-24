@@ -44,3 +44,7 @@ Reliable status keeps users oriented. It also lets the app decide which actions 
 
 - Current lab persistence is in-memory, so durable runtime state is a future concern.
 - Status reporting should evolve before more advanced orchestration features are added.
+
+## Update 2026-10-24
+
+`RuntimeResourceStatus` gained `note`: for a running container, the first line of `/run/practicum-packages.status` if the container keeps one (the quick start's package-install marker), read with `docker exec <name> cat …` (5 s timeout, absent file → `null`). Lets the desktop show "installing packages…" / "packages ready" / "install FAILED" in the Lab nodes table.

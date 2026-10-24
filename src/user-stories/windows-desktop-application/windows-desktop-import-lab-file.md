@@ -63,3 +63,7 @@ Implemented in `desktop/src/practicum_desktop/import_lab.py` (`ImportLabDialog`)
 - **Port check cannot be answered** (API error mid-flow): treated like a conflict — the pre-start gate opens rather than starting blind.
 - **API unreachable**: the dialog shows a blocked banner pointing at the main window's status/Retry; Open/Browse are disabled.
 - **Image pulls**: the "Starting containers…" stage explains the first start may take minutes; `start_lab` now uses a 15-minute timeout. Real per-image progress remains `runtime-image-pull-progress.md`.
+
+## Implementation Status (update 2026-10-24)
+
+The import now passes the file name to `POST /labs/import?source_file=` so the dashboard card reads "Imported from <file>", and the start stage uses `wait=false` + status polling to show the real per-node progress (image downloads) instead of a fixed "Starting containers…" text. After the dialog, the main window lands on the running view when the lab started, or on the dashboard with a note otherwise.

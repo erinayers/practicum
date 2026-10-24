@@ -44,3 +44,7 @@ Export is the bridge between Designer Mode and Student Import Mode. The exported
 
 - JSON is already the natural format for the current API.
 - Consider including a top-level schema version to support future migrations.
+
+## Implementation Status (update 2026-10-24)
+
+Export is now available from the desktop: every dashboard card has **Export**, which calls `GET /labs/{id}/export` and writes the portable spec (no id/status/bookkeeping) to a file chosen in the system save picker (`<lab-name-slug>.json`, Documents folder by default). The save picker is, with the open picker, the only native dialog (`windows-desktop-in-app-dialogs` updated). Host-port conflicts do not block export (D-30). `ApiClient.export_lab`, `MainWindow._on_export_requested` / `ask_save_path`; tests in `desktop/tests/test_main_window.py` and `test_api_client.py`.

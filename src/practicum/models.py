@@ -1,3 +1,4 @@
+from datetime import datetime
 from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from typing import Annotated, Literal
 
@@ -10,6 +11,9 @@ SUPPORTED_SCHEMA_MAJOR_VERSIONS = (1,)
 
 PortNumber = Annotated[int, Field(ge=1, le=65535)]
 EnvironmentName = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+# Kernel parameters Docker lets an unprivileged container set (`docker run --sysctl`), e.g.
+# net.ipv4.ip_forward=1 for a router node.
+SysctlName = Annotated[str, Field(pattern=r"^(net|kernel|fs)\.[A-Za-z0-9_.\-]+$")]
 
 
 class PortMapping(BaseModel):
@@ -28,6 +32,7 @@ class ResourceRequirements(BaseModel):
     shm_size_mb: int | None = Field(default=None, gt=0)
     exposed_ports: list[PortNumber] = Field(default_factory=list)
     port_mappings: list[PortMapping] = Field(default_factory=list)
+    sysctls: dict[SysctlName, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_ports(self) -> "ResourceRequirements":
@@ -182,9 +187,27 @@ class LabDefinition(BaseModel):
         return self
 
 
+# How a stored lab came to exist on this machine. Bookkeeping only: it is never part of the
+# portable spec (see LAB_RUNTIME_FIELDS / LabService.export).
+LabOrigin = Literal["designer", "imported", "quick_start"]
+
+# Fields of `Lab` that describe local state rather than the lab itself. Excluded from export
+# and preserved when the definition is rewritten (port/subnet recommendations).
+LAB_RUNTIME_FIELDS = frozenset(
+    {"id", "status", "origin", "source_file", "created_at", "last_started_at", "last_error"}
+)
+
+
 class Lab(LabDefinition):
     id: str
     status: str = "defined"
+    origin: LabOrigin = "designer"
+    source_file: str | None = None  # file name the lab was imported from, when known
+    created_at: datetime | None = None
+    last_started_at: datetime | None = None
+    # Message of the most recent failed lifecycle action (start/stop/reset); cleared by the
+    # next successful one. Lets a UI explain an `error` status without replaying the call.
+    last_error: str | None = None
 
 
 class ResourceEstimate(BaseModel):
@@ -241,6 +264,9 @@ class RuntimeActionResult(BaseModel):
     success: bool
     lab: Lab
     errors: list[RuntimeIssue] = Field(default_factory=list)
+    # True when the action was accepted and continues in the background (POST /start with
+    # wait=false): `success` then only means "started working"; poll GET /status for the end.
+    pending: bool = False
 
 
 class RuntimeResourceStatus(BaseModel):
@@ -250,12 +276,42 @@ class RuntimeResourceStatus(BaseModel):
     exists: bool
     status: str | None = None
     error: str | None = None
+    # Free-text progress a running container reports about itself, e.g. the quick start's
+    # "Practicum: installing packages (git curl) …" marker (see desktop quickstart.py).
+    note: str | None = None
+
+
+NodeStartStep = Literal[
+    "waiting",  # start requested, this node's turn has not come yet
+    "checking_image",  # `docker image inspect`
+    "pulling_image",  # `docker pull`, percent/detail updated as layers complete
+    "creating_container",  # `docker run` / `docker start`
+    "connecting_networks",  # extra `docker network connect`s
+    "ready",
+    "failed",
+]
+
+
+class NodeStartProgress(BaseModel):
+    """Where one node is in the start sequence. `percent` is only meaningful while pulling
+    (share of image layers already pulled, 0-100); `detail` is a short human-readable line
+    (e.g. "3 of 7 layers", or the failure message)."""
+
+    node_id: str
+    image: str
+    step: NodeStartStep = "waiting"
+    percent: int | None = None
+    detail: str | None = None
 
 
 class RuntimeStatusResult(BaseModel):
     lab: Lab
     resources: list[RuntimeResourceStatus] = Field(default_factory=list)
     errors: list[RuntimeIssue] = Field(default_factory=list)
+    # Per-node start progress for the most recent start of this lab (empty until a start
+    # has been requested). While `lab.status` is "starting" this is live; afterwards it holds
+    # the final per-node outcome so a failure can be attributed to its node.
+    progress: list[NodeStartProgress] = Field(default_factory=list)
 
 
 class PortConflict(BaseModel):
@@ -300,6 +356,23 @@ class NetworkCheckResult(BaseModel):
     has_conflicts: bool
     conflicts: list[SubnetConflict] = Field(default_factory=list)
     error: str | None = None  # set when Docker could not be queried; conflicts unknown
+
+
+class PracticumContainerInfo(BaseModel):
+    """A container on the Docker host carrying Practicum's labels."""
+
+    name: str
+    lab_id: str | None = None
+    status: str | None = None
+
+
+class LeftoverSweepResult(BaseModel):
+    """Outcome of removing Practicum resources whose lab this API no longer knows."""
+
+    removed_containers: list[str] = Field(default_factory=list)
+    removed_networks: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    error: str | None = None  # Docker could not be queried at all
 
 
 class ApplySubnetRecommendationRequest(BaseModel):

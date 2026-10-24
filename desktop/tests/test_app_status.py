@@ -11,6 +11,18 @@ def test_status_is_blocked_when_api_unhealthy() -> None:
 
     assert status.readiness == "blocked"
     assert "uvicorn" in status.next_action
+    assert "start-practicum.bat" in status.next_action
+
+
+def test_timed_out_api_is_worded_as_slow_not_missing() -> None:
+    api = HealthStatus(reachable=False, healthy=False, detail="slow", timed_out=True)
+    docker = DockerStatus(available=True, detail="ok")
+
+    status = evaluate_app_status(api, docker)
+
+    assert status.readiness == "blocked"
+    assert "not answering in time" in status.next_action
+    assert "uvicorn" not in status.next_action
 
 
 def test_status_is_degraded_when_docker_unavailable() -> None:

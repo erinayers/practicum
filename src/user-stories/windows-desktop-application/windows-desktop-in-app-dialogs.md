@@ -40,3 +40,11 @@ While reviewing an interactive mockup of these flows, a native browser `confirm(
 
 - Reference implementation: the `showConfirm(title, message, confirmLabel, destructive, onConfirm)` helper and `#confirmModal` component added to the clickable mockup (`practicum-mockups.html`) after a native `confirm()` was caught in review — build the real PySide6 equivalent (e.g., a shared `QDialog` subclass) from that pattern rather than from scratch.
 - This story should land before or alongside `windows-desktop-labs-dashboard.md` and `windows-desktop-lab-lifecycle-controls.md`, since both depend on it for their destructive actions (Delete and Reset).
+
+## Implementation Status
+
+Done 2026-10-24 (Session 5). The two outstanding acceptance criteria are met: the dashboard's **Delete** (`main_window.py::_on_delete_requested`) and the running view's **Reset** (`running_view.py::_on_reset_clicked`) both go through `dialogs.confirm(destructive=True)`; so do the dashboard's **Reset** on an error card and the gate's subnet fixes. Grep-verified: no `QMessageBox` anywhere; the only native dialog remains `QFileDialog.getOpenFileName` in `import_lab.py`. Errors and progress are rendered in-app as banners/pills (`banner` role in `theme.py`).
+
+## Update 2026-10-24
+
+A second native dialog is now sanctioned: the system **save-file picker** used by Export (`main_window.ask_save_path`). Everything else stays in-app. Emoji status indicators were removed app-wide (plain words + colour roles instead; see `windows-desktop-visual-theme`).

@@ -1,14 +1,27 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from practicum import ports
 from practicum.main import app, service
 from practicum.runtime import DockerRuntime
 
+# The real loopback bind probe; tests get a "every port is free" stand-in by default so the
+# suite does not depend on what happens to be listening on the machine running it
+# (POST /start re-checks ports). `real_port_probe` hands the original back when a test
+# wants to exercise it.
+REAL_IS_LOCAL_PORT_FREE = ports.is_local_port_free
+
 
 @pytest.fixture(autouse=True)
-def clear_labs() -> None:
+def clear_labs(monkeypatch) -> None:
     service.clear()
     service.runtime = DockerRuntime()
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
+
+
+@pytest.fixture
+def real_port_probe():
+    return REAL_IS_LOCAL_PORT_FREE
 
 
 @pytest.fixture

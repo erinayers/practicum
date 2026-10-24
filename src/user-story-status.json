@@ -2,10 +2,10 @@
   "project": "Practicum",
   "source": "src/user-stories.md",
   "epic_folder": "src/user-stories",
-  "last_updated": "2026-10-23",
-  "latest_checkpoint": "Phases 1 through 6 are complete. Phase 7 (mockup-driven desktop UI gap, plus one backend story) is in progress: windows-desktop-prestart-lab-gate is done (PreStartGateDialog); windows-desktop-import-lab-file is done (ImportLabDialog in import_lab.py + lab_file.py, 'Import Lab File…' button in main_window.py; conflict-free imports auto-start, conflicts hand over to PreStartGateDialog; bundled sample labs; recent-files list; awaiting a Windows smoke run); windows-desktop-in-app-dialogs is in_progress with the file-picker AC now met and only the Dashboard Delete / Lifecycle Reset ACs open. Remaining phase-7 work (Labs Dashboard, Lifecycle Controls, Embedded Lab View, Visual Topology Builder, Image Pull Progress) is not yet started; the Labs Dashboard should reuse ImportLabDialog for its 'Import Existing Lab' action and PreStartGateDialog for Start. New backend+desktop story runtime-subnet-conflicts is done (GET/POST /labs/{id}/networks[...], 'Network Conflicts' in the gate, import hands over on subnet overlap) after the Windows smoke run of import hit a Docker 'Pool overlaps' failure caused by a leftover Quick Start network. windows-desktop-open-node-shell (new, done): Lab Nodes table + Open shell button (docker exec in a new console) so CLI nodes are usable from the app. Side fixes this checkpoint: start_lab lifecycle timeout (900 s), docker CLI OSError handling in runtime.py and docker_status.py, and server-side rejection of unsupported schema_version majors. The pre-existing gap (GET /labs/{lab_id}/export not guarded by a port conflict check, runtime-host-port-availability) is still open.",
-  "next_recommended_story": "windows-desktop-labs-dashboard",
-  "current_phase": "phase-7",
+  "last_updated": "2026-10-24",
+  "latest_checkpoint": "Phase 7 (mockup-driven desktop UI) is complete as of 2026-10-24 (Session 5): windows-desktop-lab-lifecycle-controls, windows-desktop-labs-dashboard, windows-desktop-embedded-lab-view, windows-desktop-in-app-dialogs, designer-visual-topology-builder and runtime-image-pull-progress are done, plus seven stories added for what the mockup and those stories needed: runtime-lab-restart (docker start after stop, POST /restart, 409 action lock), runtime-delete-lab (DELETE /labs/{id}), lab-origin-and-timestamps (origin/source_file/created_at/last_started_at/last_error on the stored lab), windows-desktop-visual-theme (theme.py + widgets.py, screen-stack MainWindow), windows-desktop-create-lab-screen, designer-quick-start-lab (template + packages + step editor, free /24 from 10.90.0.0/16), windows-desktop-status-polling. runtime-host-port-availability is closed with its last AC narrowed to Start (D-30). The desktop is now: welcome -> dashboard (cards) -> create -> quick start / designer -> gate -> running view (lifecycle toolbar, embedded QWebEngineView, instructions flyout, Lab nodes + Open shell, status bar). Side fixes: startup health retries (Tigre/06 #11), UDP port probing (#4), Docker 'network not found' tolerance on teardown, a PySide heap-corruption pattern (lambdas capturing self on child signals) replaced by widgets.bind(). Tests: core 159, desktop 270, all green; every flow also verified end-to-end against the live API with a stateful fake docker CLI. NOTHING FROM SESSION 5 HAS RUN ON WINDOWS YET — the next step is the Windows smoke run (start-practicum.bat): import a sample, watch the gate's pull progress, open the running view, Stop/Start/Restart/Reset, webtop in the embedded view on 3000/3001, Open shell, quick start with packages, designer Save & Start, Delete. Still open afterwards: Tigre/11 S-1 persistence, S-2/S-3 API supervision + packaging, S-7 edit lab, S-8/S-9/S-10 designer metadata/manual editor/export, S-14 stable lab identity. User feedback round (same day): emoji indicators removed + Fusion/light palette (unreadable dark-mode dropdown fixed); designer machine catalogue with Router (sysctl ip_forward), address suggestions/reference (designer-node-catalog); edit existing labs incl. quick starts via PUT /labs/{id} (designer-edit-existing-lab); Export from the dashboard (save picker); instructions flyout resizable + wrapping; Lab nodes Address column; move_subnet rewrites manual addresses (likely cause of the reported 100 % packet loss). Tests: core 167, desktop 285.",
+  "next_recommended_story": "windows-verification-of-session-5",
+  "current_phase": "post-phase-7",
   "phases": [
     {
       "id": "phase-1",
@@ -82,7 +82,7 @@
     {
       "id": "phase-7",
       "title": "Close the Desktop UI Gap (mockup-driven)",
-      "status": "in_progress",
+      "status": "done",
       "stories": [
         "windows-desktop-in-app-dialogs",
         "windows-desktop-labs-dashboard",
@@ -93,7 +93,16 @@
         "windows-desktop-lab-lifecycle-controls",
         "windows-desktop-embedded-lab-view",
         "designer-visual-topology-builder",
-        "runtime-image-pull-progress"
+        "runtime-image-pull-progress",
+        "runtime-lab-restart",
+        "runtime-delete-lab",
+        "lab-origin-and-timestamps",
+        "windows-desktop-visual-theme",
+        "windows-desktop-create-lab-screen",
+        "designer-quick-start-lab",
+        "windows-desktop-status-polling",
+        "designer-node-catalog",
+        "designer-edit-existing-lab"
       ]
     }
   ],
@@ -109,7 +118,7 @@
       "epic": "Windows Desktop Application",
       "title": "Launch Desktop Application",
       "status": "done",
-      "notes": "desktop/ PySide6 app (practicum_desktop) launches a MainWindow that runs API and Docker checks off the UI thread via StartupWorker (QThread) and shows a Ready/Degraded/Blocked banner with an actionable next step. Manually verified running on Windows.",
+      "notes": "desktop/ PySide6 app (practicum_desktop) launches a MainWindow that runs API and Docker checks off the UI thread via StartupWorker (QThread) and shows a Ready/Degraded/Blocked banner with an actionable next step. Manually verified running on Windows. Update 2026-10-24: readiness moved to the title bar's status chip + collapsible connection panel (API line, Docker line, next action, API base URL + Retry), auto-opened when Blocked; the health check retries timeouts (3/6/10 s) before reporting Blocked (Tigre/06 #11).",
       "acceptance_criteria": [
         {
           "text": "The app launches on Windows.",
@@ -134,7 +143,7 @@
       "epic": "Windows Desktop Application",
       "title": "Connect to Local API",
       "status": "done",
-      "notes": "desktop/src/practicum_desktop/api_client.py wraps GET /health and GET /labs with timeout/connection/non-200 handling. Base URL defaults to http://127.0.0.1:8000 and is configurable via a UI field persisted with QSettings. Manually verified running on Windows.",
+      "notes": "desktop/src/practicum_desktop/api_client.py wraps GET /health and GET /labs with timeout/connection/non-200 handling. Base URL defaults to http://127.0.0.1:8000 and is configurable via a UI field persisted with QSettings. Manually verified running on Windows. Update 2026-10-24: readiness moved to the title bar's status chip + collapsible connection panel (API line, Docker line, next action, API base URL + Retry), auto-opened when Blocked; the health check retries timeouts (3/6/10 s) before reporting Blocked (Tigre/06 #11).",
       "acceptance_criteria": [
         {
           "text": "The app calls GET /health on startup.",
@@ -209,7 +218,7 @@
       "epic": "Lab Spec Format",
       "title": "Define Docker Resource Requirements",
       "status": "done",
-      "notes": "Node resources now support optional positive CPU limits, optional positive memory limits in MB, and unique exposed ports from 1 through 65535. Nodes can still omit resources for simple or older specs.",
+      "notes": "Node resources now support optional positive CPU limits, optional positive memory limits in MB, and unique exposed ports from 1 through 65535. Nodes can still omit resources for simple or older specs. Update 2026-10-24: resources.sysctls (namespaced kernel parameters → docker run --sysctl) added for the Router preset.",
       "acceptance_criteria": [
         {
           "text": "Each node can specify a Docker image.",
@@ -238,7 +247,7 @@
       "epic": "Designer Mode",
       "title": "Create a New Lab",
       "status": "done",
-      "notes": "DesignerDialog (desktop/src/practicum_desktop/designer.py), opened via 'New Lab…' in main_window.py, lets an instructor name a blank draft, add nodes and networks, and save it via POST /labs. Unsaved-changes tracking on dialog close is not implemented (not an explicit acceptance criterion).",
+      "notes": "DesignerDialog (desktop/src/practicum_desktop/designer.py), opened via 'New Lab…' in main_window.py, lets an instructor name a blank draft, add nodes and networks, and save it via POST /labs. Unsaved-changes tracking on dialog close is not implemented (not an explicit acceptance criterion). Update 2026-10-24: the dialog became the DesignerView screen (designer-visual-topology-builder) reached from Create New Lab → Custom Lab; Save Lab returns to the dashboard, Save & Start opens the gate (D-29).",
       "acceptance_criteria": [
         {
           "text": "The instructor can create a blank lab.",
@@ -404,7 +413,7 @@
       "epic": "Designer Mode",
       "title": "Export Lab Spec",
       "status": "done",
-      "notes": "The API now exposes GET /labs/{lab_id}/export, which returns a validated, normalized, portable LabDefinition JSON without runtime-only id or status fields.",
+      "notes": "The API now exposes GET /labs/{lab_id}/export, which returns a validated, normalized, portable LabDefinition JSON without runtime-only id or status fields. Update 2026-10-24: desktop Export on every dashboard card → GET /labs/{id}/export → system save picker (<slug>.json in Documents); second sanctioned native dialog. Closes the 'export from the UI' debt (Tigre/11 S-10).",
       "acceptance_criteria": [
         {
           "text": "The app exports a portable JSON spec file.",
@@ -420,6 +429,10 @@
         },
         {
           "text": "The export process validates the spec before completion.",
+          "complete": true
+        },
+        {
+          "text": "Export is available from the desktop (dashboard card) and writes the portable spec to a file the user chooses.",
           "complete": true
         }
       ]
@@ -562,7 +575,7 @@
       "epic": "Lab Manual Flyout",
       "title": "View Lab Manual While Working",
       "status": "done",
-      "notes": "ManualFlyout (desktop/src/practicum_desktop/manual.py) is a QDockWidget toggled by a 'View Manual' button in main_window.py. It loads via ApiClient.get_preview (GET /labs/{lab_id}/preview), refreshes whenever the selected lab changes, and renders each manual section's markdown with QTextBrowser.setMarkdown (headings, lists, code blocks, and clickable links all supported).",
+      "notes": "ManualFlyout (desktop/src/practicum_desktop/manual.py) is a QDockWidget toggled by a 'View Manual' button in main_window.py. It loads via ApiClient.get_preview (GET /labs/{lab_id}/preview), refreshes whenever the selected lab changes, and renders each manual section's markdown with QTextBrowser.setMarkdown (headings, lists, code blocks, and clickable links all supported). Update 2026-10-24: ManualFlyout is now a side panel inside the running view (toggled by its Instructions button / the flyout's ×), rendered as numbered steps with markers, wrapping code blocks, 'N of M complete' and 'Mark step complete' (mockup .instructions-flyout). Update 2026-10-24 (user feedback): resizable via QSplitter, no horizontal scroll, all text wraps (Ignored horizontal size policy; TaskRow = bare checkbox + wrapping label).",
       "acceptance_criteria": [
         {
           "text": "The manual can be opened and closed from the main lab view.",
@@ -587,7 +600,7 @@
       "epic": "Lab Manual Flyout",
       "title": "Track Manual Progress",
       "status": "done",
-      "notes": "Each manual task renders as a QCheckBox inside ManualFlyout. Checked state is persisted in QSettings keyed by lab id/section id/task id, so it survives restarts without ever touching the instructor's spec on the server. A dedicated 'Reset Progress' button clears only the current lab's stored progress, independent of the lab's Docker runtime reset.",
+      "notes": "Each manual task renders as a QCheckBox inside ManualFlyout. Checked state is persisted in QSettings keyed by lab id/section id/task id, so it survives restarts without ever touching the instructor's spec on the server. A dedicated 'Reset Progress' button clears only the current lab's stored progress, independent of the lab's Docker runtime reset. Update 2026-10-24: progress keys unchanged; the running view's Reset leaves them untouched (verified by test_reset_keeps_manual_progress); 'Mark step complete' ticks the next open task.",
       "acceptance_criteria": [
         {
           "text": "Manual sections can have checkable tasks.",
@@ -641,7 +654,7 @@
       "epic": "Docker Runtime API",
       "title": "Stop Lab Through API",
       "status": "done",
-      "notes": "The API now exposes POST /labs/{lab_id}/stop. LabService delegates to the runtime, status becomes stopped on success, repeated stops are idempotent, and runtime failures return structured errors.",
+      "notes": "The API now exposes POST /labs/{lab_id}/stop. LabService delegates to the runtime, status becomes stopped on success, repeated stops are idempotent, and runtime failures return structured errors. Decision recorded 2026-10-24 (Tigre/11 C7): Stop keeps containers and networks so a later Start can `docker start` them with their addresses; only Reset removes them.",
       "acceptance_criteria": [
         {
           "text": "API exposes POST /labs/{lab_id}/stop.",
@@ -666,7 +679,7 @@
       "epic": "Docker Runtime API",
       "title": "Report Lab Runtime Status",
       "status": "done",
-      "notes": "The API now exposes GET /labs/{lab_id}/status. It returns stored lab status plus runtime resource status for networks and containers, including missing-resource errors when detected by the runtime. Update 2026-10-23: the desktop now calls GET /labs/{id}/status (ApiClient.get_status) to fill the Lab Nodes table on selection and after Start (windows-desktop-open-node-shell); continuous polling is still S-12.",
+      "notes": "The API now exposes GET /labs/{lab_id}/status. It returns stored lab status plus runtime resource status for networks and containers, including missing-resource errors when detected by the runtime. Update 2026-10-23: the desktop now calls GET /labs/{id}/status (ApiClient.get_status) to fill the Lab Nodes table on selection and after Start (windows-desktop-open-node-shell); continuous polling is still S-12. Update 2026-10-24: the desktop now polls GET /status in the running view (windows-desktop-status-polling) and the response carries per-node start progress (runtime-image-pull-progress). Update 2026-10-24: RuntimeResourceStatus.note (container self-reported status marker via docker exec cat).",
       "acceptance_criteria": [
         {
           "text": "API exposes lab runtime status.",
@@ -848,8 +861,8 @@
       "id": "runtime-host-port-availability",
       "epic": "Docker Runtime API",
       "title": "Host Port Availability Checks",
-      "status": "in_progress",
-      "notes": "src/practicum/ports.py checks host ports reserved by the Practicum API (PRACTICUM_API_PORT env var, default 8000), ports already bound on the host (socket probe), and duplicate host ports across nodes in the same lab spec. Exposed via GET /labs/{lab_id}/ports and consumed by the desktop UI, which blocks Start while conflicts exist. Export is not yet guarded by a port check, so the last acceptance criterion remains open.",
+      "status": "done",
+      "notes": "src/practicum/ports.py checks host ports reserved by the Practicum API (PRACTICUM_API_PORT env var, default 8000), ports already bound on the host (socket probe), and duplicate host ports across nodes in the same lab spec. Exposed via GET /labs/{lab_id}/ports and consumed by the desktop UI, which blocks Start while conflicts exist. Export is not yet guarded by a port check, so the last acceptance criterion remains open. Update 2026-10-24: POST /labs/{id}/start re-checks host ports right before starting (structured 'host port conflict: …' failure, no Docker call); UDP mappings probed with UDP (Tigre/06 #4). Export deliberately stays unguarded (D-30, Q-2 resolved: host ports are machine-specific, the export is portable); AC reworded accordingly.",
       "acceptance_criteria": [
         {
           "text": "A host port already used by the Practicum API is rejected.",
@@ -868,8 +881,8 @@
           "complete": true
         },
         {
-          "text": "The UI prevents start/export when unresolved port conflicts exist.",
-          "complete": false
+          "text": "Start is prevented while unresolved port conflicts exist: the gate blocks it and POST /start re-checks and fails with a structured conflict error (export is not blocked, D-30).",
+          "complete": true
         }
       ]
     },
@@ -903,7 +916,7 @@
       "epic": "Docker Runtime API",
       "title": "Subnet Conflict Detection and Resolution",
       "status": "done",
-      "notes": "Added and implemented 2026-10-23 after the first Windows smoke run of the import flow failed at start with Docker's 'Pool overlaps with other one on this address space' (Tigre/06 #13; was Tigre/11 proposal S-16). Core: src/practicum/networks.py (find_subnet_conflicts / recommend_subnet from 10.90.0.0/16 / move_subnet keeping host offsets), DockerRuntime.list_networks() (docker network ls + inspect, parses IPAM subnets, practicum.lab_id label, attached containers) and remove_network() (docker rm -f containers, then network rm), LabService.check_networks / apply_subnet_recommendation / remove_leftover_network, routes GET /labs/{id}/networks, POST /labs/{id}/networks/apply-recommendation, POST /labs/{id}/networks/remove-leftover (409 for no recommendation / not a leftover), models DockerNetworkInfo, SubnetConflict (reasons overlaps_other_lab | overlaps_leftover | overlaps_docker_network), NetworkCheckResult (error field when Docker is unreachable), and LabDefinition now rejects overlapping subnets within a lab. Desktop: ApiClient.check_networks / apply_subnet_recommendation / remove_leftover_network / reset_lab; PreStartGateDialog gained a 'Network Conflicts' group (owner text per reason; fixes 'Remove leftover' and 'Reset <lab>' via confirm(destructive=True), 'Use <subnet>' which re-renders the topology and warns that the manual may mention old addresses; Start requires both port and network checks to have answered clean); ImportLabDialog's check stage is now 'Checking host ports and networks…' and hands over to the gate on subnet conflicts. Tests: core +27 (test_networks 11, test_network_conflicts_api 11 with a FakeRuntime, test_runtime +5), desktop +17 (gate +8, api_client +7, import +2). Verified end-to-end in the sandbox against a stateful fake docker CLI: the user's exact failure reproduced, then all three fixes (remove leftover, reset owner, use subnet) cleared it and the lab started. Not yet verified on Windows with real Docker Desktop.",
+      "notes": "Added and implemented 2026-10-23 after the first Windows smoke run of the import flow failed at start with Docker's 'Pool overlaps with other one on this address space' (Tigre/06 #13; was Tigre/11 proposal S-16). Core: src/practicum/networks.py (find_subnet_conflicts / recommend_subnet from 10.90.0.0/16 / move_subnet keeping host offsets), DockerRuntime.list_networks() (docker network ls + inspect, parses IPAM subnets, practicum.lab_id label, attached containers) and remove_network() (docker rm -f containers, then network rm), LabService.check_networks / apply_subnet_recommendation / remove_leftover_network, routes GET /labs/{id}/networks, POST /labs/{id}/networks/apply-recommendation, POST /labs/{id}/networks/remove-leftover (409 for no recommendation / not a leftover), models DockerNetworkInfo, SubnetConflict (reasons overlaps_other_lab | overlaps_leftover | overlaps_docker_network), NetworkCheckResult (error field when Docker is unreachable), and LabDefinition now rejects overlapping subnets within a lab. Desktop: ApiClient.check_networks / apply_subnet_recommendation / remove_leftover_network / reset_lab; PreStartGateDialog gained a 'Network Conflicts' group (owner text per reason; fixes 'Remove leftover' and 'Reset <lab>' via confirm(destructive=True), 'Use <subnet>' which re-renders the topology and warns that the manual may mention old addresses; Start requires both port and network checks to have answered clean); ImportLabDialog's check stage is now 'Checking host ports and networks…' and hands over to the gate on subnet conflicts. Tests: core +27 (test_networks 11, test_network_conflicts_api 11 with a FakeRuntime, test_runtime +5), desktop +17 (gate +8, api_client +7, import +2). Verified end-to-end in the sandbox against a stateful fake docker CLI: the user's exact failure reproduced, then all three fixes (remove leftover, reset owner, use subnet) cleared it and the lab started. Not yet verified on Windows with real Docker Desktop. Update 2026-10-24: apply-recommendation (move_subnet) also rewrites the moved addresses in the manual (networks.rewrite_addresses) — stale 'ping 10.93.1.20' text after a move was the likely cause of a reported 100 % packet loss.",
       "acceptance_criteria": [
         {
           "text": "A lab whose subnet overlaps an existing Docker network is reported by GET /labs/{lab_id}/networks with the owner identified and a recommended subnet, before any Start is attempted.",
@@ -932,6 +945,10 @@
         {
           "text": "Overlapping subnets within one lab are rejected at validation.",
           "complete": true
+        },
+        {
+          "text": "Applying the recommended subnet also rewrites the moved addresses quoted in the lab's manual.",
+          "complete": true
         }
       ]
     },
@@ -939,23 +956,23 @@
       "id": "windows-desktop-in-app-dialogs",
       "epic": "Windows Desktop Application",
       "title": "In-App Dialogs Only",
-      "status": "in_progress",
-      "notes": "ConfirmDialog/confirm() implemented in desktop/src/practicum_desktop/dialogs.py: a reusable QDialog-based component (title, message, confirm/cancel labels, destructive styling) with 7 passing tests in desktop/tests/test_dialogs.py (desktop/tests/conftest.py adds a session QApplication fixture, new in this repo). Wired into the one destructive action that already existed in the real app, ManualFlyout._on_reset_clicked (manual.py) 'Reset Progress'. Still pending: the Labs Dashboard Delete action and the lab-lifecycle Reset action, since those screens don't exist yet (windows-desktop-labs-dashboard, windows-desktop-lab-lifecycle-controls) - this story will be fully done once those consume the same component. Update 2026-10-23: the import flow (windows-desktop-import-lab-file) added the system file-open picker (QFileDialog.getOpenFileName in import_lab.py) - it is the only native dialog in the app; there is still no QMessageBox anywhere (grep-verified), and import progress/errors are rendered in-app in the same dialog. That AC is now met; Delete (dashboard) and Reset (lifecycle) remain the two open ACs. The gate's 'Remove leftover' and 'Reset <lab>' subnet fixes (2026-10-23) also use confirm(destructive=True).",
+      "status": "done",
+      "notes": "Done 2026-10-24. ConfirmDialog/confirm() (dialogs.py) is used by every destructive action: ManualFlyout Reset progress, the gate's Remove leftover / Reset '<lab>', the dashboard's Delete and Reset (main_window.py), and the running view's Reset (running_view.py). No QMessageBox anywhere (grep-verified); the only native dialog is QFileDialog.getOpenFileName in import_lab.py. Errors/progress are in-app banners and status pills (theme.py 'banner' role). Update 2026-10-24: the system save-file picker (Export) joins the open picker as the only native dialogs; emoji indicators removed.",
       "acceptance_criteria": [
         {
           "text": "Deleting a lab from the Labs Dashboard shows the in-app confirmation component, not a native dialog.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Resetting a running lab shows the in-app confirmation component, not a native dialog.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Any other destructive or irreversible action reuses this same component rather than introducing a new native dialog.",
           "complete": true
         },
         {
-          "text": "The only native OS dialog anywhere in the app is the system file-open picker used during import.",
+          "text": "The only native OS dialogs anywhere in the app are the system file pickers: open (import) and save (export).",
           "complete": true
         }
       ]
@@ -965,7 +982,7 @@
       "epic": "Windows Desktop Application",
       "title": "Open a Shell on a Lab Node",
       "status": "done",
-      "notes": "Added and implemented 2026-10-23 (was Tigre/11 proposal S-11, P0) after the user's first started lab was unusable: they tried `ssh 10.93.1.0` from Windows - node addresses live inside Docker Desktop's VM and the nodes run no SSH server. MVP: desktop/src/practicum_desktop/node_shell.py (shell_command = docker exec -it <container> sh -c 'command -v bash && exec bash || exec sh'; open_node_shell launches it in a new console - Windows: cmd.exe /k with CREATE_NEW_CONSOLE so errors stay visible; Linux: first of x-terminal-emulator/gnome-terminal/konsole/xterm; otherwise returns the command for copying). ApiClient.get_status -> StatusResult{lab_status, resources:[ResourceStatusInfo], containers}. main_window.py gained a 'Lab Nodes' table (Node / Container / State / Open shell) filled from GET /labs/{id}/status on selection and after Start; button enabled only for running containers; status line explains addresses are reachable only inside the lab. Default window size raised to 560x760. Probe kit lab 1's manual now says to use Open shell. Tests: desktop +12 (test_node_shell 5, test_main_window +4, test_api_client +3) -> 134. Rendered offscreen against the fake-docker API. Not yet verified on Windows (CREATE_NEW_CONSOLE + cmd /k with Docker Desktop).",
+      "notes": "Added and implemented 2026-10-23 (was Tigre/11 proposal S-11, P0) after the user's first started lab was unusable: they tried `ssh 10.93.1.0` from Windows - node addresses live inside Docker Desktop's VM and the nodes run no SSH server. MVP: desktop/src/practicum_desktop/node_shell.py (shell_command = docker exec -it <container> sh -c 'command -v bash && exec bash || exec sh'; open_node_shell launches it in a new console - Windows: cmd.exe /k with CREATE_NEW_CONSOLE so errors stay visible; Linux: first of x-terminal-emulator/gnome-terminal/konsole/xterm; otherwise returns the command for copying). ApiClient.get_status -> StatusResult{lab_status, resources:[ResourceStatusInfo], containers}. main_window.py gained a 'Lab Nodes' table (Node / Container / State / Open shell) filled from GET /labs/{id}/status on selection and after Start; button enabled only for running containers; status line explains addresses are reachable only inside the lab. Default window size raised to 560x760. Probe kit lab 1's manual now says to use Open shell. Tests: desktop +12 (test_node_shell 5, test_main_window +4, test_api_client +3) -> 134. Rendered offscreen against the fake-docker API. Not yet verified on Windows (CREATE_NEW_CONSOLE + cmd /k with Docker Desktop). Update 2026-10-24: the Lab nodes table lives in the running view under the embedded lab view and is refreshed by status polling. Update 2026-10-24: Address column in the Lab nodes table.",
       "acceptance_criteria": [
         {
           "text": "A running lab's nodes are listed with their container state, each running node offering Open shell.",
@@ -989,28 +1006,32 @@
       "id": "windows-desktop-labs-dashboard",
       "epic": "Windows Desktop Application",
       "title": "Labs Dashboard",
-      "status": "not_started",
-      "notes": "New story. The desktop app has no home screen for returning users today; GET /labs is already implemented but not surfaced as a dashboard. Reference design: screen-dashboard in practicum-mockups.html. Depends on windows-desktop-in-app-dialogs for its Delete confirmation.",
+      "status": "done",
+      "notes": "Done 2026-10-24 (Session 5). dashboard.py: WelcomeScreen (zero labs / API blocked; 'You have N labs · View your labs dashboard' link) and DashboardScreen with LabCards in a 2-column scrolling grid: origin icon, name, meta line (labels.origin_meta), status badge (theme.badge_for_status, D-26: defined=Ready), activity line (labels.activity_line), per-status actions (Running: Open; Stopped/Ready: Delete + Start; Error: Delete + Reset + Start with last_error shown; Starting/Stopping: Open). main_window.py owns the API calls: Open -> running view (no Start call); Start -> PreStartGateDialog; Delete -> confirm(destructive) -> DELETE /labs/{id} (409 keeps the card and explains; last lab deleted -> welcome); Reset -> confirm -> POST /reset. A status refresh only switches between welcome and dashboard, never out of designer/quick start/running. Backend enablers: runtime-delete-lab, lab-origin-and-timestamps. Edit is not offered (no PUT /labs/{id}, S-7). Tests: test_dashboard.py (11), test_main_window.py (24), test_labels.py (6). E2E with fake docker; Windows run pending. Update 2026-10-24: dismissible NoteBanner for transient notes; delete message describes the event.",
       "acceptance_criteria": [
         {
           "text": "A user with zero labs sees the existing welcome screen with Create/Import actions.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "A user with one or more labs sees a dashboard listing each lab with its correct status.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Opening a Running lab returns to its running view without issuing a new Start call.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Starting a Stopped lab routes through the pre-start readiness gate before any containers are created.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Deleting a lab requires an in-app confirmation and removes it from the list on confirm.",
-          "complete": false
+          "complete": true
+        },
+        {
+          "text": "Canceling a delete confirmation leaves the lab list unchanged.",
+          "complete": true
         }
       ]
     },
@@ -1044,7 +1065,7 @@
       "epic": "Windows Desktop Application",
       "title": "Import Lab File and Launch",
       "status": "done",
-      "notes": "Implemented 2026-10-23 as ImportLabDialog in desktop/src/practicum_desktop/import_lab.py, opened from the new 'Import Lab File…' button in main_window.py. The dialog is the in-app 'Open Lab File' modal from the mockup (importModal): a list of recently imported files (QSettings key recent_lab_files, newest first, max 8, missing files shown greyed) plus the sample labs bundled in the package (desktop/src/practicum_desktop/samples/*.json, byte-identical copies of examples/ guarded by a test), and 'Browse computer…' which opens QFileDialog.getOpenFileName (filter *.json) - the single sanctioned native dialog; picking a file there continues immediately. The same dialog then becomes the staged progress view (importingOverlay): Reading lab file -> Importing lab definition (POST /labs/import via the new ApiClient.import_lab/ImportLabResult) -> Checking host ports (GET /labs/{id}/ports) -> Starting containers (POST /labs/{id}/start). Conflict-free labs start with no further clicks; labs with conflicts (or an unanswerable port check) return gate_required and MainWindow opens PreStartGateDialog for them, so the gate stays the only authority for starting with conflicts. File problems are caught before any API call by lab_file.read_lab_file: missing file, directory, >5 MB, non-UTF-8, JSON syntax error with line/column, non-object JSON, and .zip (no bundle format exists yet - rejected with 'choose the .json export' guidance). API schema errors are listed inline as 'nodes[0].image: Field required' lines (lab_file.format_issue); unsupported schema_version majors (e.g. 2.0) are now rejected server-side by LabDefinition with a readable message. If the API is down the dialog shows a blocked banner pointing at the main window's status/Retry instead of a generic failure. After the dialog closes MainWindow refreshes GET /labs, selects the imported lab, shows 'imported and started' (or 'imported - use Start when ready'), and opens the manual flyout when started - today's equivalent of the running view until windows-desktop-embedded-lab-view exists; re-point _apply_pending_selection when it does. Duplicate imports create a new lab each time (API behaviour; Tigre/09 Q-1 still open). Also fixed on the way: ApiClient.start_lab now uses a 900 s lifecycle timeout (Tigre/06 #3) with a specific timeout message; the runtime and docker_status now treat any OSError from the docker CLI (e.g. PermissionError) as a structured failure instead of a 500 / a dead startup thread. Tests: desktop 105 (+56: test_lab_file 19, test_import_lab 21, test_main_window 7, test_api_client +8, test_docker_status +1; shared tests/qt_helpers.py), core 104 (+4). Exercised end-to-end in a Linux sandbox against a live API (PySide6 offscreen): valid import, schema 2.0 rejection, multi-error file, forced port conflict -> gate, conflict-free -> start failure surfaced with guidance. NOT yet manually verified on Windows - needs one smoke run with Docker Desktop (native picker look, auto-start landing, recent list). Update 2026-10-23 (after the first Windows smoke run hit Tigre/06 #13): the check stage is now 'Checking host ports and networks…' - a subnet overlap with an existing Docker network (typically a leftover from an earlier session) hands over to the gate, which can fix it, instead of failing at start (runtime-subnet-conflicts).",
+      "notes": "Implemented 2026-10-23 as ImportLabDialog in desktop/src/practicum_desktop/import_lab.py, opened from the new 'Import Lab File…' button in main_window.py. The dialog is the in-app 'Open Lab File' modal from the mockup (importModal): a list of recently imported files (QSettings key recent_lab_files, newest first, max 8, missing files shown greyed) plus the sample labs bundled in the package (desktop/src/practicum_desktop/samples/*.json, byte-identical copies of examples/ guarded by a test), and 'Browse computer…' which opens QFileDialog.getOpenFileName (filter *.json) - the single sanctioned native dialog; picking a file there continues immediately. The same dialog then becomes the staged progress view (importingOverlay): Reading lab file -> Importing lab definition (POST /labs/import via the new ApiClient.import_lab/ImportLabResult) -> Checking host ports (GET /labs/{id}/ports) -> Starting containers (POST /labs/{id}/start). Conflict-free labs start with no further clicks; labs with conflicts (or an unanswerable port check) return gate_required and MainWindow opens PreStartGateDialog for them, so the gate stays the only authority for starting with conflicts. File problems are caught before any API call by lab_file.read_lab_file: missing file, directory, >5 MB, non-UTF-8, JSON syntax error with line/column, non-object JSON, and .zip (no bundle format exists yet - rejected with 'choose the .json export' guidance). API schema errors are listed inline as 'nodes[0].image: Field required' lines (lab_file.format_issue); unsupported schema_version majors (e.g. 2.0) are now rejected server-side by LabDefinition with a readable message. If the API is down the dialog shows a blocked banner pointing at the main window's status/Retry instead of a generic failure. After the dialog closes MainWindow refreshes GET /labs, selects the imported lab, shows 'imported and started' (or 'imported - use Start when ready'), and opens the manual flyout when started - today's equivalent of the running view until windows-desktop-embedded-lab-view exists; re-point _apply_pending_selection when it does. Duplicate imports create a new lab each time (API behaviour; Tigre/09 Q-1 still open). Also fixed on the way: ApiClient.start_lab now uses a 900 s lifecycle timeout (Tigre/06 #3) with a specific timeout message; the runtime and docker_status now treat any OSError from the docker CLI (e.g. PermissionError) as a structured failure instead of a 500 / a dead startup thread. Tests: desktop 105 (+56: test_lab_file 19, test_import_lab 21, test_main_window 7, test_api_client +8, test_docker_status +1; shared tests/qt_helpers.py), core 104 (+4). Exercised end-to-end in a Linux sandbox against a live API (PySide6 offscreen): valid import, schema 2.0 rejection, multi-error file, forced port conflict -> gate, conflict-free -> start failure surfaced with guidance. NOT yet manually verified on Windows - needs one smoke run with Docker Desktop (native picker look, auto-start landing, recent list). Update 2026-10-23 (after the first Windows smoke run hit Tigre/06 #13): the check stage is now 'Checking host ports and networks…' - a subnet overlap with an existing Docker network (typically a leftover from an earlier session) hands over to the gate, which can fix it, instead of failing at start (runtime-subnet-conflicts). Update 2026-10-24: opened from 'Import Existing Lab' on the welcome screen and the dashboard (the old 'Import Lab File…' button is gone); passes source_file; start stage polls real progress; lands on the running view when started.",
       "acceptance_criteria": [
         {
           "text": "The user can select a lab file via a file-open affordance.",
@@ -1072,24 +1093,32 @@
       "id": "windows-desktop-lab-lifecycle-controls",
       "epic": "Windows Desktop Application",
       "title": "Lab Lifecycle Controls",
-      "status": "not_started",
-      "notes": "New story. The real desktop app currently has no Stop/Restart/Reset controls in its running-lab view at all, only Start. Wires POST /labs/{lab_id}/reset (already done per student-reset-lab) through the shared confirmation component from windows-desktop-in-app-dialogs, visually distinct from Stop/Restart. Must not touch the separate, already-implemented manual-progress 'Reset Progress' control.",
+      "status": "done",
+      "notes": "Done 2026-10-24 (Session 5). RunningLabView (desktop/src/practicum_desktop/running_view.py) is the running-lab screen from the mockup: header with back/title/meta/status badge and the lifecycle toolbar. Running: Restart + Stop lab (unconfirmed) + Reset (kind=danger, always confirmed via dialogs.confirm(destructive=True) with 'more destructive than Stop … cannot be undone') + Instructions toggle. Stopped/Ready/Error: Start lab (through PreStartGateDialog, D-4) + Reset (offered in every state). All lifecycle buttons are disabled while a call is in flight (_busy), the view polls GET /status every second meanwhile and shows the per-node StartProgressPanel, a 409 (busy) is explained as a warning. Confirmed Reset -> POST /reset -> badge Ready + message; manual progress in QSettings untouched (test_reset_keeps_manual_progress); cancel leaves everything unchanged. Backend enablers: runtime-lab-restart (docker start for stopped containers, POST /restart, 409 action lock). Tests: desktop/tests/test_running_view.py (19). E2E against a fake docker CLI (stop -> start via gate -> reset); Windows run pending. Update 2026-10-24: the Windows crash during a quick start with two port overrides (QThread destroyed while running) is fixed at the root by workers.ManagedThread (self-registering threads, D-41); polls skip a tick while the previous one runs.",
       "acceptance_criteria": [
         {
           "text": "The running-lab view exposes Restart, Stop, and Reset as distinct actions.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Selecting Reset always shows an in-app confirmation before any destructive call is made.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Confirming Reset calls the lab reset endpoint and the UI reflects the lab's returned-to-clean state afterward.",
-          "complete": false
+          "complete": true
+        },
+        {
+          "text": "Canceling the Reset confirmation leaves the lab running and unchanged.",
+          "complete": true
         },
         {
           "text": "Manual progress survives a Reset; it is only cleared by the manual flyout's own Reset Progress action.",
-          "complete": false
+          "complete": true
+        },
+        {
+          "text": "Lifecycle controls are disabled while a Start, Stop, Restart or Reset call is in flight on the same lab.",
+          "complete": true
         }
       ]
     },
@@ -1097,24 +1126,24 @@
       "id": "windows-desktop-embedded-lab-view",
       "epic": "Windows Desktop Application",
       "title": "Embedded Lab View",
-      "status": "not_started",
-      "notes": "New story. Replaces the current webbrowser.open(...)-based external launch with an in-app embedded view (likely QWebEngineView from the already-bundled PySide6 QtWebEngineWidgets), docked beside the existing Lab Manual flyout. Reference design: screen-running's browser-pane in practicum-mockups.html.",
+      "status": "done",
+      "notes": "Done 2026-10-24 (Session 5). embedded_view.py: EmbeddedLabView hosts a QWebEngineView (D-16; LocalLabPage accepts self-signed certificates for localhost only, D-28) behind a browser chrome (reload, URL, port picker when >1 TCP mapping with the most web-like port preselected, open in system browser). probe_service GETs http://localhost:<port>/ (any status = answering) and falls back to https:// when plain HTTP is garbled (webtop 3001); until the service answers a waiting card retries every 2.5 s. No web ports -> explanation pointing at Open shell; stopped lab -> says so; QtWebEngine missing -> system-browser fallback card. The instructions flyout toggles independently without reloading the page. main.py sets AA_ShareOpenGLContexts. Tests: test_embedded_view.py (13) + running-view cases. Windows run with webtop pending. Update 2026-10-24 (Windows report: nginx 400 'plain HTTP request was sent to HTTPS port' on webtop 3001): probe treats that 400 as a TLS port and retries https; default mapping scores plain-web ports before TLS-only ports (443/8443/3001) regardless of order. First Windows confirmation that the embedded view renders webtop.",
       "acceptance_criteria": [
         {
           "text": "A lab with one browser-accessible node shows that node's interface embedded in the app, not in an external browser.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "A lab with multiple browser-accessible nodes lets the user pick which one to view.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "The instructions flyout can be opened and closed without losing the embedded view's state.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "An open-in-system-browser option is available from the embedded view.",
-          "complete": false
+          "complete": true
         }
       ]
     },
@@ -1122,24 +1151,28 @@
       "id": "designer-visual-topology-builder",
       "epic": "Designer Mode",
       "title": "Visual Topology Builder (Basic)",
-      "status": "not_started",
-      "notes": "New story. Upgrades the existing table-based DesignerDialog (designer-add-nodes/designer-add-networks/designer-connect-nodes-networks, all done) to a card-based Machines/Network-Topology/Networks layout with no changes to validation or the underlying data model. Deliberately scoped below future-roadmap/advanced-designer-features/advanced-visual-topology-designer.md (drag-and-drop canvas, auto-layout), which remains a candidate paid feature per open-core-boundary.md. Reference design: screen-custom in practicum-mockups.html.",
+      "status": "done",
+      "notes": "Done 2026-10-24 (Session 5). designer.py: DesignerDialog -> DesignerView screen laid out like screen-custom: Machines panel (MachineRow cards: icon/id/image/derived role/remove + add form), Network topology panel (widgets.TopologyView schematic: cards in spec order, connector pills for adjacent machines sharing a network, every interface listed under its machine, orphan networks at the right; interfaces table; connect form), Networks panel (NetworkRow + add form), bottom bar with status pill ('Draft valid · 3 machines · 2 networks' or what is missing) and Validate / Cancel / Save Lab / Save & Start (D-29). Same in-memory draft and API calls; validation messages unchanged and inline; client-side mirrors added for overlapping subnets and network/broadcast addresses. Role derived from interface count (D-27). No drag-and-drop (D-6); in-place edit still S-7. Tests: test_designer.py (14), test_widgets.py.",
       "acceptance_criteria": [
         {
           "text": "Adding a machine shows it as a card with its id and image.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Adding a network shows it in the networks panel with its id and subnet.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "Connecting a machine to a network updates the topology view to show that connection and its subnet label.",
-          "complete": false
+          "complete": true
+        },
+        {
+          "text": "Removing a machine, network, or connection updates all affected panels immediately.",
+          "complete": true
         },
         {
           "text": "Existing Validate and Save behavior, including error messages, is unchanged.",
-          "complete": false
+          "complete": true
         }
       ]
     },
@@ -1147,24 +1180,269 @@
       "id": "runtime-image-pull-progress",
       "epic": "Docker Runtime API",
       "title": "Image Pull and Start Progress",
-      "status": "not_started",
-      "notes": "New story, the one backend exception in the otherwise desktop-UI-only phase-7 backlog. DockerRuntime.start() (src/practicum/runtime.py) shells out to `docker run` per container via subprocess and blocks on the final exit code only; it surfaces no incremental pull/start progress today. The mockup's start/import loading sequences currently fake this with a fixed-duration timer. Likely needs an explicit `docker pull` step per node plus parsing Docker's streamed JSON progress, surfaced through a richer GET /labs/{lab_id}/status rather than a new transport.",
+      "status": "done",
+      "notes": "Done 2026-10-24 (Session 5). runtime.py: DockerRuntime.start(lab, on_progress) checks each image (docker image inspect) and pulls only missing ones with an explicit streamed `docker pull` (Popen), parsing per-layer status lines into percent + 'n of m layers'; per-node steps waiting/checking_image/pulling_image/creating_container/connecting_networks/ready/failed; failures attributed to the node ('node X (image): could not pull image …'). models.py: NodeStartProgress, RuntimeStatusResult.progress, RuntimeActionResult.pending, Lab.last_error. service.py: progress store, POST /start?wait=false runs on a background thread (202, pending=true), default wait=true unchanged; action lock. Desktop: gate and import start with wait=false and poll GET /status rendering StartProgressPanel / summarize_progress instead of fixed timers; running view shows the panel while starting. Non-TTY docker pull has no byte counts -> layer-based percent. Tests: test_runtime.py (+5), test_api.py (+3), desktop test_progress_panel.py, gate/import/running-view tests. E2E with a fake docker that streams pull output.",
       "acceptance_criteria": [
         {
           "text": "Lab status exposes a distinguishable in-progress state per node while starting, separate from running/stopped/error.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "When a node's image must be pulled, its status includes enough information for the desktop app to show real percentage-style progress.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "When a node's image is already local, its status does not show pull progress and moves directly to container startup.",
-          "complete": false
+          "complete": true
         },
         {
           "text": "A failed pull or container start is reported against the specific node, with a message distinct from a generic failure.",
-          "complete": false
+          "complete": true
+        },
+        {
+          "text": "Existing start/status/stop/reset behavior and endpoints are otherwise unchanged.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-lab-restart",
+      "epic": "Docker Runtime API",
+      "title": "Restart a Lab and Start After Stop",
+      "status": "done",
+      "notes": "New 2026-10-24 (was Tigre/11 S-6). DockerRuntime.start uses `docker start` for containers left by Stop (Tigre/06 #2 fixed); LabService.restart + POST /labs/{id}/restart; action lock: start/stop/restart/reset/delete on a starting/stopping lab -> 409 LabBusyError; teardown tolerates 'network X not found' as well as 'No such …' (_is_missing_error). ApiClient.stop_lab/restart_lab/reset_lab share _lifecycle_call (lifecycle timeout, 409 -> busy). Tests in tests/test_api.py, test_runtime.py, test_service.py, desktop/tests/test_api_client.py.",
+      "acceptance_criteria": [
+        {
+          "text": "Starting a stopped lab reuses its existing containers (docker start) and ends in running.",
+          "complete": true
+        },
+        {
+          "text": "POST /labs/{lab_id}/restart on a running lab calls stop then start and ends in running; on a stopped or defined lab it just starts it.",
+          "complete": true
+        },
+        {
+          "text": "A lifecycle call made while the lab is starting or stopping is rejected with 409 and leaves the lab's status unchanged.",
+          "complete": true
+        },
+        {
+          "text": "Resetting a lab whose networks were already removed outside Practicum succeeds.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "runtime-delete-lab",
+      "epic": "Docker Runtime API",
+      "title": "Delete a Lab Through the API",
+      "status": "done",
+      "notes": "New 2026-10-24 (was Tigre/11 S-4). DELETE /labs/{id} -> 204; never-started labs skip Docker; otherwise runtime reset first, failure keeps the lab (status error, last_error) and answers 409 (D-25); 404 unknown; 409 while busy. ApiClient.delete_lab (DeleteResult, 404 = already gone). Dashboard Delete uses it after confirm(). Tests: tests/test_api.py test_delete_*, desktop test_api_client/test_main_window. Update 2026-10-24: delete always resets the lab's Docker names; startup lifespan sweep + POST /docker/sweep-leftovers remove Practicum-labelled resources of labs this API does not know (D-40).",
+      "acceptance_criteria": [
+        {
+          "text": "Deleting a running lab removes its Docker resources and the lab; GET /labs no longer lists it.",
+          "complete": true
+        },
+        {
+          "text": "Deleting a never-started lab succeeds even when Docker is unavailable.",
+          "complete": true
+        },
+        {
+          "text": "When cleanup fails, the lab is still listed and the 409 detail explains what went wrong.",
+          "complete": true
+        },
+        {
+          "text": "Deleting an unknown lab returns 404.",
+          "complete": true
+        },
+        {
+          "text": "Practicum containers and networks left by a previous API session are removed when the API starts (and on POST /docker/sweep-leftovers); other Docker resources are never touched.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "lab-origin-and-timestamps",
+      "epic": "Lab Spec Format",
+      "title": "Lab Origin and Activity Timestamps",
+      "status": "done",
+      "notes": "New 2026-10-24 (was Tigre/11 S-5). Stored Lab gains origin (designer|imported|quick_start), source_file, created_at, last_started_at, last_error; set via POST /labs?origin= and POST /labs/import?source_file=, updated by lifecycle actions; excluded from export and preserved by port/subnet recommendations (LAB_RUNTIME_FIELDS, LabService._with_definition). Desktop LabSummary parses them; labels.py words the card meta/activity lines. Resolves Q-6.",
+      "acceptance_criteria": [
+        {
+          "text": "A created, quick-started and imported lab each report the matching origin (and source_file for the import) from GET /labs.",
+          "complete": true
+        },
+        {
+          "text": "The exported spec of any lab contains none of the bookkeeping fields.",
+          "complete": true
+        },
+        {
+          "text": "last_started_at is set after a successful start and last_error is cleared; a failed action sets last_error.",
+          "complete": true
+        },
+        {
+          "text": "Applying a port or subnet recommendation keeps origin, source_file and created_at.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-visual-theme",
+      "epic": "Windows Desktop Application",
+      "title": "Desktop Visual Theme (Mockup Look and Feel)",
+      "status": "done",
+      "notes": "New 2026-10-24. theme.py translates the mockup's :root tokens into one QSS sheet keyed on role properties (kind/role/panel/badge/chip/banner) + badge_for_status mapping (D-26); widgets.py provides Panel, Badge, Chip, StatTile, StatusPill, BackLink, FlowLayout, AutoSizeStack, TopologyView/TopologyCanvas, bind()/payload_of() (no lambdas capturing self on child signals — Tigre/06 #15), style_frame/edge_frame (no bare QFrame selectors — QLabel is a QFrame). main_window.py: 1200x760 window, brand title bar, status chip + collapsible connection panel, QStackedWidget of six screens. Tests: test_theme.py, test_widgets.py; screenshots reviewed offscreen. Update 2026-10-24 (user feedback): emoji removed app-wide (words + colour; geometric glyph icons); Fusion style + fixed light palette (Windows dark mode made combo popups black-on-black); combo popup styled explicitly.",
+      "acceptance_criteria": [
+        {
+          "text": "All six screens render inside the one window with the title bar and status chip.",
+          "complete": true
+        },
+        {
+          "text": "Status badges, primary/secondary/danger buttons and panels look the same on every screen that uses them.",
+          "complete": true
+        },
+        {
+          "text": "The connection panel is hidden by default, opened by the chip, and opened automatically when the API is unreachable.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-create-lab-screen",
+      "epic": "Windows Desktop Application",
+      "title": "Create New Lab Screen",
+      "status": "done",
+      "notes": "New 2026-10-24 (mockup screen-create had no story). create_lab.py CreateLabScreen: Quick start card (TemplateOption radios from quickstart.TEMPLATES; Windows disabled with reason) and Custom Lab card (compact TopologyView illustration); emits quick_start_requested(template)/custom_requested/back_requested; MainWindow navigates. Tests: test_create_lab.py, test_main_window.py.",
+      "acceptance_criteria": [
+        {
+          "text": "Create New Lab is reachable from both the welcome screen and the dashboard.",
+          "complete": true
+        },
+        {
+          "text": "The Ubuntu template is selected by default and the Windows template cannot be selected.",
+          "complete": true
+        },
+        {
+          "text": "Quick start opens the quick start configuration for the selected template; Custom Lab opens the designer.",
+          "complete": true
+        },
+        {
+          "text": "The back link returns to the user's home screen.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-quick-start-lab",
+      "epic": "Designer Mode",
+      "title": "Quick Start Lab from a Template",
+      "status": "done",
+      "notes": "New 2026-10-24 (mockup screen-quickstart; absorbs Tigre/11 S-15 second half, fixes Tigre/06 #1). quickstart.py: TEMPLATES (ubuntu:22.04; windows disabled), QuickStartDraft, validate_package_name, package_install_command (apt-get … || warn; exec sleep infinity), steps_to_manual (one section + 'Done' task per step), build_quick_start_lab on a free /24 from 10.90.0.0/16 avoiding all known labs (existing_lab_subnets), create_quick_start_lab(origin=quick_start). create_lab.py QuickStartScreen: name, Instructor setup toggle (author/version/description), template bar, What's included chips + add, step editor, status pill, Create Lab -> gate -> running. Replaces the old 'Quick Start: Ubuntu' button. Tests: test_quickstart.py (9), test_create_lab.py (8), test_main_window.py. Update 2026-10-24 (user request): new default template 'Ubuntu Desktop' (kind=desktop) = lscr.io/linuxserver/webtop:ubuntu-xfce with 2 vCPU/2 GB/1 GB shm, ports 3000+3001, TITLE env, command kept (null) so the image's init runs; packages go through the LinuxServer universal-package-install mod (DOCKER_MODS + INSTALL_PACKAGES=a|b|c) instead of a command; the embedded lab view loads localhost:3000 once it answers. The terminal-only 'Ubuntu' template keeps the apt-get command path. CreateLabScreen radios are now in a QButtonGroup (they live in separate frames). D-35. E2E verified with the fake docker (create → gate → running view with the desktop URL loaded and the step in the flyout). Update 2026-10-24: curated PACKAGE_CATALOG per template kind shown as ToggleChips (+ 'Other packages' field); install script writes /run/practicum-packages.status (installing → ready / FAILED) which GET /status surfaces as RuntimeResourceStatus.note → Lab nodes table + login shells (Open shell uses bash -l).",
+      "acceptance_criteria": [
+        {
+          "text": "Adding and removing packages updates the chips and the status pill; invalid names are rejected inline.",
+          "complete": true
+        },
+        {
+          "text": "Steps can be added, edited and removed; numbering stays contiguous.",
+          "complete": true
+        },
+        {
+          "text": "Create Lab produces a lab whose node runs the chosen template image with the package command, whose manual has one section per step, and whose subnet does not overlap existing labs.",
+          "complete": true
+        },
+        {
+          "text": "The new lab is reviewed in the pre-start gate and, once started, opens in the running view with its steps in the instructions flyout.",
+          "complete": true
+        },
+        {
+          "text": "Cancel / back discard the draft.",
+          "complete": true
+        },
+        {
+          "text": "An Ubuntu Desktop quick start, once started, shows the desktop inside the running view's embedded lab view without the student opening a browser or terminal.",
+          "complete": true
+        },
+        {
+          "text": "Package installation progress is visible: the Lab nodes table shows installing / ready / failed for the node and the shell prints the same status when opened.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "windows-desktop-status-polling",
+      "epic": "Windows Desktop Application",
+      "title": "Live Status Polling in the Running View",
+      "status": "done",
+      "notes": "New 2026-10-24 (was Tigre/11 S-12). running_view.py polls GET /labs/{id}/status: 1 s while starting/stopping or an action is in flight (progress panel shown), 5 s otherwise, paused on hide; badge, nodes table, containers count and embedded view follow; error status surfaces last_error; lab_changed notifies MainWindow to refresh the dashboard cache. Absorbs runtime-api-status 'Desktop UI refreshes status'.",
+      "acceptance_criteria": [
+        {
+          "text": "A starting lab shows the per-node progress panel and fast polling; once running, the browser pane returns and polling slows down.",
+          "complete": true
+        },
+        {
+          "text": "Stopping the containers outside Practicum flips the badge on the next tick.",
+          "complete": true
+        },
+        {
+          "text": "Hiding the view stops the poll timer.",
+          "complete": true
+        },
+        {
+          "text": "An error status surfaces last_error in the view.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-node-catalog",
+      "epic": "Designer Mode",
+      "title": "Machine Catalogue for the Custom Lab Designer",
+      "status": "done",
+      "notes": "New 2026-10-24 (user feedback: 'images of nodes to pre-select from … daisy chain machines'). node_catalog.py PRESETS: Ubuntu host, Alpine host, Router (alpine + sysctl net.ipv4.ip_forward=1), Web server (nginx, 8080→80, command kept), Ubuntu Desktop (webtop 3000/3001), Custom image; NodePreset.node() builds the full node; next_node_id suggests host-1/router-1…; suggest_address pre-fills the connect form (routers .1, hosts from .10; skips network/broadcast/Docker gateway/taken) and an address reference line + per-network 'machine · address' rows answer 'a reference for the hosts ips'. Core: ResourceRequirements.sysctls (namespaced keys) → docker run --sysctl. D-36. Tests: test_designer.py, test_runtime.py, test_models.py.",
+      "acceptance_criteria": [
+        {
+          "text": "Choosing Router and adding it produces a node with sysctls net.ipv4.ip_forward=1; the resulting docker run carries --sysctl net.ipv4.ip_forward=1.",
+          "complete": true
+        },
+        {
+          "text": "Choosing Ubuntu Desktop produces the webtop node with its ports, shm and command: null.",
+          "complete": true
+        },
+        {
+          "text": "Ids are suggested and never collide with existing machines.",
+          "complete": true
+        },
+        {
+          "text": "The connect form pre-fills the next free address for the chosen network and updates the reference line after each connection.",
+          "complete": true
+        },
+        {
+          "text": "The Networks panel shows machine · address per attached machine.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "designer-edit-existing-lab",
+      "epic": "Designer Mode",
+      "title": "Edit an Existing Lab",
+      "status": "done",
+      "notes": "New 2026-10-24 (user feedback; was Tigre/11 S-7 minus invalid drafts). Core: PUT /labs/{id} = LabService.replace (validated like POST; keeps id/origin/source_file/created_at/last_started_at; running → 409 LabRunningError; busy → 409; stopped/error → runtime reset first, failure keeps the lab with 409; status → defined). Desktop: ApiClient.get_lab/update_lab; DesignerView.load_lab (edit mode title/subtitle/'Save changes', presets recognised via preset_for_node, schema_version + manual passed through); dashboard Edit button on every non-running card; MainWindow._on_edit_requested refuses running labs with a note. Tests: test_api.py test_put_*, test_api_client.py, test_designer.py, test_main_window.py.",
+      "acceptance_criteria": [
+        {
+          "text": "Edit on a stopped or ready card (any origin) opens the designer pre-filled with that lab.",
+          "complete": true
+        },
+        {
+          "text": "Saving calls PUT /labs/{id}; the lab keeps its id/origin/created time and shows as Ready on the dashboard.",
+          "complete": true
+        },
+        {
+          "text": "Editing a running lab is refused with a message, both by the app and by the API.",
+          "complete": true
+        },
+        {
+          "text": "The lab's manual is unchanged after an edit that only touched the topology.",
+          "complete": true
         }
       ]
     }

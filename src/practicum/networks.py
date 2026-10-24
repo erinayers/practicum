@@ -9,10 +9,11 @@ and what free subnet could be used instead.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from ipaddress import IPv4Network
 
-from practicum.models import DockerNetworkInfo, Lab, SubnetConflict
+from practicum.models import LAB_RUNTIME_FIELDS, DockerNetworkInfo, Lab, SubnetConflict
 
 # Recommendations are drawn from here so they stay clear of hand-authored lab subnets
 # (10.0.x / 10.50.x are used by the examples and the Quick Start template).
@@ -107,7 +108,8 @@ def move_subnet(lab: Lab, network_id: str, new_subnet: IPv4Network) -> dict:
     if new_subnet.prefixlen != old_subnet.prefixlen:
         raise ValueError("the replacement subnet must have the same prefix length")
 
-    definition = lab.model_dump(exclude={"id", "status"}, mode="json")
+    definition = lab.model_dump(exclude=set(LAB_RUNTIME_FIELDS), mode="json")
+    renames: dict[str, str] = {str(old_subnet): str(new_subnet)}
     for network in definition["networks"]:
         if network["id"] == network_id:
             network["subnet"] = str(new_subnet)
@@ -116,6 +118,29 @@ def move_subnet(lab: Lab, network_id: str, new_subnet: IPv4Network) -> dict:
             continue
         old_ip, _, _prefix = interface["address"].partition("/")
         offset = int(IPv4Network(f"{old_ip}/32").network_address) - int(old_subnet.network_address)
-        new_ip = new_subnet.network_address + offset
+        new_ip = str(new_subnet.network_address + offset)
         interface["address"] = f"{new_ip}/{new_subnet.prefixlen}"
+        renames[old_ip] = new_ip
+    # The instructor's manual almost always quotes these addresses ("ping 10.93.1.20"); a
+    # student following stale text would see 100 % packet loss. Rewrite them too.
+    if definition.get("manual"):
+        rewrite_addresses(definition["manual"], renames)
     return definition
+
+
+def rewrite_addresses(manual: dict, renames: dict[str, str]) -> None:
+    """Replaces whole-token occurrences of the old addresses/subnets in every section's
+    markdown and task text (in place). Longest keys first so `10.0.1.1` never clobbers
+    `10.0.1.10`."""
+    if not renames:
+        return
+    alternatives = "|".join(re.escape(k) for k in sorted(renames, key=len, reverse=True))
+    pattern = re.compile(r"(?<![\d.])(" + alternatives + r")(?![\d.])")
+
+    def swap(text: str) -> str:
+        return pattern.sub(lambda m: renames[m.group(1)], text)
+
+    for section in manual.get("sections", []):
+        section["content_markdown"] = swap(section["content_markdown"])
+        for task in section.get("tasks", []):
+            task["text"] = swap(task["text"])

@@ -43,3 +43,18 @@ so that I don't have to juggle a separate browser tab alongside my instructions.
 - On the desktop stack, PySide6's `QtWebEngineWidgets` (already bundled with the installed PySide6 Addons package) provides `QWebEngineView`, which is the natural fit for the embedded view — no new dependency should be required.
 - Reference design: `screen-running`'s `browser-pane` in the clickable mockup (`practicum-mockups.html`), which mocks the embedded view plus the flyout toggle.
 - This directly replaces the current `webbrowser.open(...)`-based behavior in the desktop app's running-lab flow.
+
+## Implementation Status
+
+Done 2026-10-24 (Session 5) in `desktop/src/practicum_desktop/embedded_view.py` (`EmbeddedLabView`), hosted by the running view's left pane.
+
+- `QWebEngineView` (PySide6 QtWebEngine, D-16) renders the published port inside the app; a browser chrome gives ↻ reload, the URL, a port picker when the lab maps more than one TCP port (the most web-like port is preselected; well-known non-web ports such as 22 are listed but not chosen by default), and ↗ "open in system browser".
+- Before loading, `probe_service` GETs `http://localhost:<port>/` (any HTTP status counts as answering) and falls back to `https://` when the port accepts connections but garbles plain HTTP (webtop's 3001); self-signed certificates are accepted for localhost only (`LocalLabPage`, D-28). While the container's service is not answering yet the pane shows a waiting card and retries every 2.5 s.
+- Labs without browser-accessible ports get an explanation pointing at Open shell; a stopped lab says so; when QtWebEngine is not importable the pane offers the system browser instead, so the rest of the app keeps working.
+- The instructions flyout is toggled independently (`Instructions` button / × in the flyout) without reloading the page or losing checked tasks.
+- Known limitations (documented, not fixed): clipboard/WebGL/downloads inside QtWebEngine behave like Chromium's defaults; `main.py` sets `AA_ShareOpenGLContexts` as QtWebEngine requires.
+- Tests: `desktop/tests/test_embedded_view.py` (13), plus the embedded-view cases in `test_running_view.py`. QtWebEngine itself was exercised offscreen in the sandbox (a page loads); the Windows run with webtop on 3000/3001 is pending.
+
+## Update 2026-10-24 (user report: "400 Bad Request — The plain HTTP request was sent to HTTPS port")
+
+The embedded view had loaded `http://localhost:3001` on a webtop lab: nginx's 400 counted as "the port answers over HTTP", and the picker could prefer 3001 over 3000 once the gate had re-mapped 3000 (the fixed mapping is appended after 3001). Fixed: `probe_service` treats a 400 whose body says "plain HTTP request was sent to HTTPS port" as a TLS port and retries `https://`; `pick_default_mapping` scores ports (plain-web first, TLS-only ports such as 443/8443/3001 next, non-web ports last) regardless of mapping order. Tests: `test_probe_treats_nginx_plain_http_on_tls_port_as_https`, `test_default_mapping_prefers_web_like_tcp_ports`.

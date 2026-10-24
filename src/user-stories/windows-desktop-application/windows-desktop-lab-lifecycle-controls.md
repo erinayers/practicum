@@ -45,3 +45,13 @@ so that I don't accidentally wipe my work when I only meant to restart a contain
 
 - Backend already exists: `POST /labs/{lab_id}/reset` (see `student-reset-lab.md`, already done). This story is desktop UI only: exposing Stop/Restart/Reset in the toolbar and wiring Reset through the shared in-app confirmation component.
 - Reference design: the running-lab toolbar in the clickable mockup (`practicum-mockups.html`, `screen-running`) currently only shows Restart/Stop placeholders — Reset and its confirmation still need to be added there as well as in the real app.
+
+## Implementation Status
+
+Done 2026-10-24 (Session 5) in `desktop/src/practicum_desktop/running_view.py` (`RunningLabView`).
+
+- Toolbar while running: **↻ Restart**, **■ Stop lab** (both unconfirmed) and **Reset** (red `kind="danger"`, always confirmed through `dialogs.confirm(destructive=True)` with text that says it is more destructive than Stop and cannot be undone); **📖 Instructions** toggles the flyout. When the lab is stopped/ready/error the toolbar shows **▶ Start lab** (which routes through `PreStartGateDialog`, D-4) plus Reset — Reset is offered whatever the state, as the story's edge case asks.
+- While any lifecycle call is in flight every lifecycle button is disabled (`_busy`), the feedback banner shows "Stopping lab…"/"Restarting lab…"/"Resetting lab…", and the view polls `GET /status` every second so the same progress state (per-node `StartProgressPanel`) appears for Restart as for Start. A 409 from the API (another action already running) is explained as a warning, not a failure.
+- After a confirmed Reset the badge returns to **Ready**, the message says the lab is back to its original state and that instruction progress is kept; `ManualFlyout`'s QSettings progress is untouched (test `test_reset_keeps_manual_progress`). Cancelling the confirmation changes nothing (test `test_reset_always_asks_first_and_cancel_changes_nothing`).
+- Backend enablers built alongside: `runtime-lab-restart.md` (start after stop via `docker start`, `POST /restart`, action lock) so Restart does not hit Tigre/06 #2.
+- Tests: `desktop/tests/test_running_view.py` (19). Verified end-to-end with the fake `docker` CLI (stop → start via gate → reset); Windows run pending.

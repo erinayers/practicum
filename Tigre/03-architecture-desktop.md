@@ -1,247 +1,191 @@
 # 03 — Desktop App Architecture (`desktop/src/practicum_desktop/`)
 
-PySide6 (Qt 6) Windows GUI. **Pure client of the core API** — no lab logic. 15 modules
-(+ bundled `samples/`), ~2,500 lines.
+PySide6 (Qt 6) Windows GUI. **Pure client of the core API** — no lab logic. 24 modules
+(+ bundled `samples/`), ~7,400 lines after Session 5 (2026-10-24), built screen-for-screen from
+`design/practicum-mockups.html`.
 
 ```
-main.py (18)          QApplication + MainWindow; console script `practicum-desktop`
-main_window.py (~400) MainWindow(QMainWindow) — the single screen today
-api_client.py (~520)  ApiClient (httpx) + result dataclasses; never raises, returns success flags
-import_lab.py (~430)  ImportLabDialog — "Open Lab File" modal + staged import/start progress;
-                      RecentLabFiles (QSettings); LabFileRowDelegate; ImportOutcome
-lab_file.py (~170)    read_lab_file() (specific file errors), format_issue(), sample_lab_files()
-node_shell.py (~75)   shell_command() / open_node_shell() — docker exec in a new console window
-samples/*.json        static-routing / ubuntu-quickstart / ubuntu-webtop — copies of examples/
-app_status.py (40)    evaluate_app_status(api, docker) -> AppStatus(readiness ready|degraded|blocked)
-docker_status.py (36) check_docker() -> DockerStatus via `docker info` (5 s timeout)
-startup.py (28)       StartupWorker(QThread): health + docker + list_labs off the UI thread
-workers.py (21)       CallableWorker(QThread): run any callable, emit finished_call(result)
-dialogs.py (78)       ConfirmDialog + confirm() — THE sanctioned in-app confirmation
-prestart_gate.py (244) PreStartGateDialog — mandatory review screen before Start
-designer.py (408)     DesignerDialog — instructor form: nodes / networks / connections
-manual.py (141)       ManualFlyout(QDockWidget) — manual sections + checkable tasks
-quickstart.py (97)    UBUNTU_QUICK_START_LAB dict + (unused/broken) subnet-picking helpers
-eduLabs.code-workspace  stray VS Code workspace file (personal paths) — see Tigre/06
+main.py (25)            AA_ShareOpenGLContexts → QApplication → apply_theme → MainWindow
+main_window.py (~520)   MainWindow: title bar + status chip + connection panel + QStackedWidget
+                        of screens; owns all API calls the screens request; navigation
+theme.py (~280)         design tokens → one QSS; role properties; badge_for_status (D-26)
+widgets.py (~600)       Panel, Badge, Chip, RemovableChip, StatTile, StatusPill, BackLink,
+                        FlowLayout, AutoSizeStack, TopologyView/TopologyCanvas, bind()/payload_of(),
+                        style_frame()/edge_frame(), discard(), copyable_label(), make_button()
+labels.py (~90)         pure text: origin_meta, activity_line, relative_time, lab_icon, plural
+dashboard.py (~300)     WelcomeScreen, DashboardScreen, LabCard
+create_lab.py (~520)    CreateLabScreen (choice cards, template radios), QuickStartScreen, StepRow
+quickstart.py (~240)    TEMPLATES, QuickStartDraft, build_quick_start_lab, create_quick_start_lab
+designer.py (~800)      DesignerView: Machines (preset picker) / Network topology / Networks panels,
+                        lab details, address suggestion + reference, Validate, Save Lab,
+                        Save & Start, load_lab() edit mode (PUT)
+node_catalog.py (~190)  NodePreset/PRESETS (host, alpine, router+sysctl, web, desktop, custom),
+                        next_node_id, suggest_address, preset_for_node
+prestart_gate.py (~700) PreStartGateDialog: review + conflicts + real start progress (wait=false)
+import_lab.py (~560)    ImportLabDialog (file picker + staged import with real start progress)
+lab_file.py (~170)      read_lab_file, format_issue, sample_lab_files
+running_view.py (~480)  RunningLabView: header/toolbar (lifecycle), embedded view + nodes table,
+                        ManualFlyout, status bar, GET /status polling
+embedded_view.py (~330) EmbeddedLabView: QWebEngineView + chrome, probe_service, waiting state
+manual.py (~300)        ManualFlyout (steps, markers, Mark step complete, local progress)
+progress_panel.py (~130) StartProgressPanel, summarize_progress, node_percent, step_text
+node_shell.py (69)      shell_command / open_node_shell (docker exec in a new console)
+api_client.py (~900)    ApiClient + result dataclasses; never raises
+app_status.py (~45)     evaluate_app_status → ready | degraded | blocked (+ timeout wording)
+docker_status.py (40)   check_docker() via `docker info`
+startup.py (~45)        StartupWorker; check_health_with_retries (3 s, 6 s, 10 s)
+workers.py (21)         CallableWorker(QThread)
+dialogs.py (78)         ConfirmDialog + confirm() — THE sanctioned in-app confirmation
+samples/*.json          copies of examples/ (guarded by a test)
+eduLabs.code-workspace  stray VS Code workspace file — see Tigre/06 H2
 ```
+
+## Screen map (MainWindow's `QStackedWidget`)
+
+| key | widget | mockup | reached from | leaves to |
+|---|---|---|---|---|
+| `welcome` | `WelcomeScreen` | screen-welcome | startup with 0 labs or API blocked; deleting the last lab | create / import / dashboard link |
+| `dashboard` | `DashboardScreen` | screen-dashboard | startup with ≥1 lab; back from anywhere | Open → running; Start → gate → running; Edit → designer (`load_lab`); Export → save picker; Delete/Reset (confirm) |
+| `create` | `CreateLabScreen` | screen-create | Create New Lab | Quick start → quickstart; Custom Lab → designer |
+| `quickstart` | `QuickStartScreen` | screen-quickstart | create | Create Lab → `create_quick_start_lab` → gate → running |
+| `designer` | `DesignerView` | screen-custom | create | Save Lab → dashboard; Save & Start → gate → running |
+| `running` | `RunningLabView` | screen-running | Open / any successful Start / import | ← back → home |
+
+Modal dialogs (exec): `PreStartGateDialog` (screen-preview — *every* Start goes through it, D-4),
+`ImportLabDialog` (the "Open Lab File" modal; the only native dialog is its file picker),
+`ConfirmDialog`.
+
+`HOME_SCREENS = ("welcome", "dashboard")`: a status/lab-list refresh may only switch between
+these two; it never yanks the user out of the designer, the quick start form or a running lab.
+`_notify(text, banner)` writes a transient note to both home screens.
+`_pending_selection = (lab_id, message, open_running)` is applied after the next lab-list refresh
+(land on the running view when a lab started, else dashboard + note).
 
 ## Threading pattern (use this everywhere)
 
-Every blocking call (HTTP, subprocess) runs in a `QThread` subclass and reports back via a
-`Signal(object)`:
+Every blocking call (HTTP, subprocess) runs in a `CallableWorker(QThread)` and reports back via
+`finished_call(object)`. Screens keep their workers in a list (`self._workers`, pruned at 32) —
+never reassign a single attribute from inside the previous worker's completion slot (Tigre/06 #6).
+`main_window._run(func, *args, on_done, **kwargs)` and `running_view._run` are the helpers.
+Worker bodies that need extra context return a tuple (e.g. `_delete_named → (DeleteResult, name)`)
+instead of a lambda closure as the slot.
 
-```python
-self._x_worker = CallableWorker(self._api_client.some_call, arg1, arg2)
-self._x_worker.finished_call.connect(self._on_some_call_done)
-self._x_worker.start()
-```
+**Signal connections — the rule that cost a day (Tigre/06 #15):** never connect a lambda that
+captures `self` to a child widget's signal. It closes a Python reference cycle
+(owner → child → lambda → owner) that the GC breaks in an order PySide 6.12 does not survive
+(`malloc_consolidate(): unaligned fastbin chunk detected` on teardown, reproduced with a
+`ManualFlyout` of two sections). Use `widgets.bind(button, self._slot, payload)` +
+`payload_of(self.sender())`, connect bound methods, or give the child its own signal.
 
-- Keep a reference on `self` (else the QThread is GC'd mid-run).
-- `StartupWorker` is the special-case one: emits `finished_check(AppStatus, LabsResult|None)`.
-- Tests replace `CallableWorker` with a synchronous `ImmediateWorker` via
-  `monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)` — new dialogs should
-  import `CallableWorker` at module level so the same trick works.
-- Caveat: workers are reassigned without waiting for the previous one (see Tigre/06 #6).
+Tests replace `CallableWorker` with `ImmediateWorker` / `StalledWorker` (`tests/qt_helpers.py`)
+per module (`monkeypatch.setattr(running_view, "CallableWorker", ImmediateWorker)` — and also
+`embedded_view`, because each module imports the class at module level). Fixtures must stop
+timers / close widgets on teardown (`view.clear(); view.close()`), otherwise a late poll tick
+creates a real QThread against the fake client after the monkeypatch is undone.
+
+## Styling rules (theme.py / widgets.py)
+
+- One application-wide style sheet (`theme.STYLESHEET`, applied in `main.py`). Widgets are
+  styled by dynamic properties: `button.setProperty("kind", "primary|secondary|danger|ghost|link|dashed")`,
+  `setProperty("small", True)`, `label.setProperty("role", "h1|hero|h2|h3|title|subtitle|muted|hint|mono|label|error|ok")`,
+  `frame.setProperty("panel", "true|soft|dark")`, `label.setProperty("badge", role)`,
+  `label.setProperty("chip", "true|muted|count")`, `label.setProperty("banner", "ok|warn|error|info")`.
+  After changing a property at runtime call `theme.restyle(widget)` (or `widgets.set_role`).
+- `apply_theme` forces the **Fusion** style and `light_palette()` (Windows dark mode otherwise
+  leaks into combo popups etc.); no emoji anywhere — words + colour for status, geometric glyphs
+  (■ ◆ ▣ ▶ ↓ ◆, `NODE_HOST_GLYPH`/`NODE_GATEWAY_GLYPH`) for icons.
+- `theme.badge_for_status(api_status) → (role, label)`: running→Running, stopped→Stopped,
+  defined→**Ready**, error→Error, starting/stopping→Starting…/Stopping… (D-26).
+- **Never** write `frame.setStyleSheet("QFrame { border… }")` on a container: `QLabel` is a
+  `QFrame`, so every label inside gets the border too. Use `style_frame(frame, css)` /
+  `edge_frame("top"|"bottom", colour, style)`, which key the rule on a unique object name.
+- Transient notes: `widgets.NoteBanner.show_note(text, kind)` (dismissible; `message_label` is
+  the text). Chip rows: put a `FlowLayout` inside `widgets.FlowHost` (pins its minimum height
+  to the flow's height-for-width; plain QWidget hosts clip the last row). Checkable chips:
+  `ToggleChip`.
+- Rebuilding lists (cards, rows, chips, steps): `widgets.discard(widget)` (hide + reparent +
+  deleteLater) — `deleteLater()` alone leaves ghosts painted until the event loop runs.
+- Tables with cell-widget buttons: Qt does not measure cell widgets — set the column width
+  (`setColumnWidth`) and the row height (`verticalHeader().setDefaultSectionSize(34)`).
+- Markdown in the flyout: `manual.markdown_to_html` (QTextDocument → HTML) with `<pre>` blocks
+  turned into wrapping monospace paragraphs; QLabel never wraps `<pre>`. Do **not** set
+  `TextSelectableByMouse` on those labels (part of the #15 teardown crash). Wrapping labels in
+  narrow panels get `QSizePolicy.Ignored` horizontally (a long token must not widen the panel);
+  `QCheckBox` cannot wrap → `manual.TaskRow` (bare box + wrapping label). The running view's body
+  is a `QSplitter` (lab view | flyout, min 240 px).
 
 ## ApiClient (api_client.py)
 
-`ApiClient(base_url="http://127.0.0.1:8000", timeout=3.0)`. Every method catches
-`httpx.HTTPError` / bad status / bad JSON and returns a dataclass with `success: bool` and
-`detail: str`. Methods and results:
+`ApiClient(base_url, timeout=3.0, lifecycle_timeout=900.0)`. Every method catches
+`httpx.HTTPError` / bad status / bad JSON and returns a dataclass with `success` + `detail`.
 
-| Method | Endpoint | Result dataclass |
+| Method | Endpoint | Result |
 |---|---|---|
-| `check_health()` | GET /health | `HealthStatus{reachable, healthy, detail}` |
-| `list_labs()` | GET /labs | `LabsResult{success, labs: [LabSummary{id,name,status}], detail}` |
-| `check_ports(lab_id)` | GET /labs/{id}/ports | `PortCheckResult{success, has_conflicts, conflicts:[PortConflict], detail}` |
-| `apply_port_recommendation(lab_id, node_id, host_port, protocol)` | POST …/ports/apply-recommendation | `PortCheckResult` (409 detail surfaced) |
-| `validate_lab(dict)` | POST /labs/validate | `ValidateLabResult{success, valid, errors:[FieldIssue], detail}` |
-| `create_lab(dict)` | POST /labs | `CreateLabResult{success, lab_id, errors:[FieldIssue], detail}` (parses 201 and 422) |
-| `start_lab(lab_id)` | POST /labs/{id}/start | `StartResult{success, detail}` (first runtime error message as detail) |
-| `get_preview(lab_id)` | GET /labs/{id}/preview | `PreviewResult{success, name, description, author, version, required_images, estimated_resources: EstimatedResourcesInfo{total_cpu,total_memory_mb}, topology: TopologyInfo{nodes,networks,interfaces}, manual_sections:[ManualSectionInfo{id,title,content_markdown,tasks:[ManualTaskInfo]}], port_mappings:[PortMappingInfo{host,container,protocol}], detail}` |
+| `check_health(timeout=None)` | GET /health | `HealthStatus{reachable, healthy, detail, timed_out}` |
+| `list_labs()` | GET /labs | `LabsResult{labs: [LabSummary{id, name, status, origin, source_file, created_at, last_started_at, last_error, node_count, network_count, description}]}` |
+| `create_lab(dict, origin="designer")` | POST /labs?origin= | `CreateLabResult` |
+| `import_lab(dict, source_file=None)` | POST /labs/import?source_file= | `ImportLabResult` |
+| `delete_lab(id)` | DELETE /labs/{id} | `DeleteResult` (404 = already gone; 409 detail surfaced) |
+| `get_lab(id)` / `export_lab(id)` | GET /labs/{id} / GET /labs/{id}/export | `LabDefinitionResult{definition, name, status}` |
+| `update_lab(id, dict)` | PUT /labs/{id} | `CreateLabResult` (422 → errors; 409 detail, e.g. running) |
+| `start_lab(id, wait=True)` | POST /labs/{id}/start[?wait=false] | `StartResult{success, detail, lab_status, pending, busy}` |
+| `stop_lab` / `restart_lab` / `reset_lab` | POST …/stop, /restart, /reset | `StartResult` via `_lifecycle_call` (lifecycle timeout; 409 → `busy=True`) |
+| `get_status(id)` | GET /labs/{id}/status | `StatusResult{lab_status, resources, progress: [NodeProgressInfo{node_id, image, step, percent, detail}], last_error, detail}`; `.containers`, `.running_container_count` |
+| `get_preview(id)` | GET /labs/{id}/preview | `PreviewResult{status, name, description, author, version, required_images, estimated_resources, topology, manual_sections, port_mappings}` |
+| `check_ports` / `apply_port_recommendation` | GET/POST …/ports… | `PortCheckResult` |
+| `check_networks` / `apply_subnet_recommendation` / `remove_leftover_network` | GET/POST …/networks… | `NetworkCheckResult` |
+| `validate_lab(dict)` | POST /labs/validate | `ValidateLabResult` |
 
-| `check_networks(lab_id)` | GET /labs/{id}/networks | `NetworkCheckResult{success, has_conflicts, conflicts:[SubnetConflict], detail}` — `success=False` also when the API's own `error` is set (Docker unreachable) |
-| `apply_subnet_recommendation(lab_id, network_id)` | POST …/networks/apply-recommendation | `NetworkCheckResult` (409 detail surfaced) |
-| `remove_leftover_network(lab_id, network_name)` | POST …/networks/remove-leftover | `NetworkCheckResult` (lifecycle timeout; 409 detail surfaced) |
-| `get_status(lab_id)` | GET /labs/{id}/status | `StatusResult{success, lab_status, resources:[ResourceStatusInfo{kind,id,name,exists,status,error}], detail}`; `.containers` property |
-| `reset_lab(lab_id)` | POST /labs/{id}/reset | `StartResult{success, detail}` (lifecycle timeout) |
-| `import_lab(dict)` | POST /labs/import | `ImportLabResult{success, lab_id, lab_name, errors:[FieldIssue], detail}` — `success` only when stored; validation rejection → `errors`; transport/422/odd body → `detail` only |
+`NODE_STEP_LABELS`, `ORIGIN_LABELS`, `PORT_CONFLICT_REASONS`, `SUBNET_CONFLICT_REASONS` live here.
 
-`ApiClient(base_url, timeout=3.0, lifecycle_timeout=900.0)` — `start_lab` uses
-`lifecycle_timeout` (Tigre/06 #3 fix); future `stop/reset/restart` wrappers must too.
+## RunningLabView (running_view.py) — the lifecycle story
 
-**Not yet wrapped** (needed by Phase 7): `stop_lab`, `export_lab`, delete (no endpoint exists
-server-side either). `SUBNET_CONFLICT_REASONS` joins `PORT_CONFLICT_REASONS` here.
+- `show_lab(LabSummary)` sets header/meta/badge, loads `get_preview` (manual + port mappings →
+  flyout + embedded view) when the lab changed, then `refresh()` (= `get_status`) and starts
+  polling (`FAST_POLL_MS` 1000 while busy/starting/stopping, `SLOW_POLL_MS` 5000 idle; stopped
+  on `hideEvent`).
+- Toolbar by status (`_apply_buttons`): running → Restart, Stop lab, Reset(danger), Instructions;
+  otherwise → **▶ Start lab** (emits `start_requested(lab_id)`; MainWindow opens the gate), Reset,
+  Instructions. Everything lifecycle is disabled while `_busy` or status ∈ {starting, stopping}.
+- `_run_lifecycle(text, api_call)`: busy on, banner "info", worker, fast polling →
+  `_on_lifecycle_done`: success → badge from `lab_status`, ✅ banner (Reset gets the "original
+  state … instruction progress is kept" wording), `lab_changed`; `busy` (409) → ⏳ warn banner;
+  failure → ❌ error banner + badge from `lab_status`. Then `refresh()`.
+- Reset → `confirm(RESET_TITLE, RESET_MESSAGE, "Reset lab", destructive=True)` first; cancel = no call.
+- `_on_status_loaded`: badge, nodes table (`container_state_text`: missing → "not created"),
+  status bar "N containers running", embedded view `set_lab_running` only on change,
+  `center_stack` index 1 (= `StartProgressPanel`) while `starting`, error → `last_error` banner.
+- Nodes table: Node / Container / State / Open shell (`bind(button, self._on_open_shell_clicked,
+  container)` → `open_node_shell` worker), sized to its rows (max 6 visible).
 
-`PORT_CONFLICT_REASONS` dict (reason code → human text) lives here and is shared by
-`main_window.py` and `prestart_gate.py`.
+## EmbeddedLabView (embedded_view.py)
 
-## MainWindow (main_window.py) — current single-screen layout, top to bottom
+`set_port_mappings(list[PortMappingInfo])` + `set_lab_running(bool)` drive it. `pick_default_mapping`
+prefers TCP ports not in `NON_WEB_PORTS` (22, 53, 3306…). `probe_service(port)` GETs
+`http://localhost:<port>/` (any status = answering; refused/timeout = not yet) and falls back to
+`https://` when plain HTTP is garbled (webtop 3001). Waiting card retries every `RETRY_INTERVAL_MS`
+(2500). `LocalLabPage.certificateError` accepts self-signed certs for localhost only (D-28).
+`web_view_factory` is injectable (tests pass a `QTextBrowser` stand-in; `None` → system-browser
+fallback card). QtWebEngine ran fine offscreen in the sandbox (`QTWEBENGINE_CHROMIUM_FLAGS=--no-sandbox`
+may be needed when running as root).
 
-1. Readiness banner `Status: Ready|Degraded|Blocked`, API line (✅/❌ + detail), Docker line,
-   `next_action` copyable label.
-2. `API base URL:` `QLineEdit` + **Retry** button → saves `api_base_url` to QSettings, rebuilds
-   `ApiClient`, reruns `check_status()`.
-3. `Labs:` `QListWidget` — items `"{name} ({status})"`; parallel `self._lab_ids` list. A
-   placeholder row "No labs defined yet." is added when empty (row index with no id).
-4. **New Lab…** → `DesignerDialog.exec()`; on Accepted → `check_status()` (reloads list).
-   **Import Lab File…** (same row) → `ImportLabDialog.exec()`; then if `outcome.gate_required`
-   → `PreStartGateDialog`; then `_pending_selection = (lab_id, message, show_manual)` +
-   `check_status()`; `_on_status_checked` → `_apply_pending_selection` selects the lab row, sets
-   `start_result_label` ("✅ '<name>' imported and started." / "'<name>' imported. Select it below
-   and use Start when ready.") and shows the manual flyout when started. `_last_status` (AppStatus)
-   is kept so the import dialog can show its "API not available" banner.
-5. **Quick Start: Ubuntu** → `CallableWorker(api.create_lab, UBUNTU_QUICK_START_LAB)` →
-   status label → `check_status()`.
-6. **View Manual** (enabled when a lab is selected) → toggles `ManualFlyout` visibility.
-7. `Port Conflicts:` table (Node / Host Port / Issue / Recommended with "Use <port>" buttons).
-8. `Browser Access:` table (Host Port / Maps To / "Open in Browser" → `webbrowser.open
-   (http://localhost:{port})`) — filled from `PreviewResult.port_mappings`.
-8b. `Lab Nodes:` table (Node / Container / State / **Open shell**) — filled by `_refresh_nodes()`
-   → `get_status` on row change and after Start; button enabled only when the container is
-   `running`; click → `open_node_shell(name, node_id)` in a worker → `nodes_status_label`
-   (failure text + copyable command).
-9. **Start Selected Lab…** → opens `PreStartGateDialog`; on Accepted shows "✅ Lab started.";
-   then re-runs port check and `_refresh_nodes()`.
-10. `ManualFlyout` docked right (hidden by default).
+## PreStartGateDialog (prestart_gate.py)
 
-Selecting a lab row (`_on_lab_row_changed`) fires two workers: `check_ports` and `get_preview`
-(the latter feeds both the manual flyout and the browser-access table).
+Layout = screen-preview (see story addendum). Behaviour unchanged for conflicts; Start now calls
+`start_lab(wait=False)` → if `pending`, `_poll_status` every `START_POLL_MS` (1000) rendering
+`StartProgressPanel` in the footer (`AutoSizeStack` page 1) until `lab_status` leaves `starting`:
+running → `accept()`; else ❌ `last_error`/failed node detail, Start re-enabled. `reject()` is a
+no-op while `_starting`. Public attributes tests use: `name_label`, `image_chips`, `cpu_label`,
+`memory_label`, `topology_canvas.view`, `manual_label`, `conflicts_banner/table`,
+`networks_banner/table`, `status_pill`, `status_label`, `footer_stack`, `progress_panel`,
+`start_button`, `cancel_button`.
 
-QSettings: `QSettings("Practicum", "Practicum Desktop")`. Keys: `api_base_url`,
-`manual_progress/{lab_id}/{section_id}/{task_id}` = bool, `recent_lab_files` = list[str]
-(newest first, max 8; a one-element list may come back as a plain `str` — `RecentLabFiles`
-normalises).
+## QSettings
 
-Window: title "Practicum", default size 560×760 (small; the mockups imply a much larger
-multi-screen app — Phase 7 will restructure this).
+`QSettings("Practicum", "Practicum Desktop")` (monkeypatched to an ini file in tests). Keys:
+`api_base_url`, `manual_progress/{lab_id}/{section_id}/{task_id}` = bool, `recent_lab_files`.
 
-## PreStartGateDialog (prestart_gate.py) — done, the "single authority" for Start
+## Window
 
-- Constructor kicks off `get_preview` and `check_ports` in parallel workers.
-- Shows: name (bold 16px), description, `author · version`, required images (comma list),
-  CPU `"{n} vCPU"`/`Unknown`, Memory `"{n} MB"`/`Unknown`, read-only topology table
-  (Node/Network/Address — one row per interface), manual step count sentence or "This lab has
-  no manual.", Port Conflicts group (banner + table with "Use <port>" buttons), status label,
-  Cancel / **Start Lab** buttons.
-- **Network Conflicts** group (2026-10-23): banner + table Network / Subnet / Issue (stretch) /
-  Fix. Issue text per reason (`_subnet_issue_text`); Fix cell = buttons **Remove leftover**
-  (`overlaps_leftover`, `confirm(destructive)` → `remove_leftover_network`), **Reset '<name>'**
-  (`overlaps_other_lab`, confirm → `reset_lab(owner)` then `check_networks` in one worker), and
-  **Use <subnet>** (any reason with a recommendation → `apply_subnet_recommendation`, then the
-  banner adds "addresses were remapped… manual may still mention the original addresses" and the
-  preview is reloaded so the topology table shows the new addresses). `_run_network_fix` drives
-  all three through `_on_network_fix_done`.
-- Start Lab enabled only when **both** checks have answered (`_ports_known`, `_networks_known`)
-  and both `self._conflicts` and `self._subnet_conflicts` are empty (`_update_start_enabled`).
-  A failed network check shows "Could not check Docker networks: … Start stays disabled".
-  Applying a recommendation re-renders from the server's fresh response.
-- Start → `start_lab` worker → on success `accept()`; on failure shows `❌ detail` and
-  re-enables Start if still conflict-free.
-- Docstring states: every entry point that can start a lab (dashboard, import-and-launch)
-  **must reuse this dialog**, not reimplement the gate.
-- Not yet shown: image local-vs-pull status (no API support), manual preview content (only a
-  count).
-
-## ImportLabDialog (import_lab.py) — done, the import-and-launch flow
-
-Two pages in a `QStackedWidget`:
-- **Choose**: title "Open Lab File", optional amber banner when `api_available=False`
-  (Open/Browse disabled), `files_list` (`QListWidget` + `LabFileRowDelegate`: file icon, bold
-  name, muted hint "Recent · 2 KB" / "Sample lab · 1 KB" / "Recent · file not found" (row disabled));
-  item text = file name, `FILE_HINT_ROLE` (UserRole) = hint, tooltip = full path. Recent files
-  first, then bundled samples not already in recent. **Browse computer…** →
-  `QFileDialog.getOpenFileName(self, "Open Lab File", <dir of newest recent | home>,
-  "Practicum lab files (*.json);;All files (*)")` — picking continues immediately. **Open**
-  (default button, also double-click) for list rows.
-- **Progress**: `stage_label` (Reading lab file… 10 % → Importing lab definition… 35 % →
-  Checking host ports and networks… 60 % → Starting containers… 85 % (+ `START_HINT` about image pulls) →
-  Lab started 100 %), `file_label` (path, then lab name), `progress_bar`, `detail_label`
-  (❌ message + hint), `errors_box` (`QPlainTextEdit`, "• nodes[0].image: Field required" lines),
-  **Choose another file** (only while `outcome is None`), **Close** (disabled while busy;
-  `reject()`/`closeEvent` are ignored while a stage is in flight).
-
-Flow (each stage a `CallableWorker`, module-level import so tests swap in `ImmediateWorker`):
-`read_lab_file` → `api.import_lab` → (`outcome` set, recent list updated) → `api.check_ports` →
-`api.check_networks` → conflicts **or check failure** in either ⇒ `_hand_over_to_gate()`
-(`outcome.gate_required = True`, `accept()`); else `api.start_lab`
-→ success ⇒ `outcome.started = True`, `accept()`; failure ⇒ error + "select it and use Start"
-hint, dialog stays open (result ≠ Accepted, `outcome` still set so the caller refreshes).
-
-Not done here: duplicate detection (D-19), `.zip` (D-18), per-image pull progress.
-
-## DesignerDialog (designer.py)
-
-Form-based, table-driven. State: `_nodes: [{id,image}]`, `_networks: [{id,subnet}]`,
-`_interfaces: [{node,network,address}]` (plain dicts). Three groups:
-
-- **Nodes**: id field + editable combo (`SUGGESTED_IMAGES = ["alpine:3.21", "ubuntu:22.04",
-  "nginx:latest"]`) + Add Node; table ID/Image/Remove.
-- **Networks**: id + subnet (`IPv4Network(strict=True)`) + Add Network; table ID/Subnet/
-  Attached Nodes (derived live from interfaces)/Remove.
-- **Connections**: node combo + network combo + address (`IPv4Interface`) + Connect; table
-  Node/Network/Address/Remove.
-
-Client-side rules mirror the server: `ID_PATTERN = ^[a-z][a-z0-9-]*$`, unique ids, address in
-subnet, one interface per node per network, unique IPs. Removing a node/network cascades to
-its interfaces. `_build_definition()` emits only `name/nodes/networks/interfaces` — **no
-description/author/version/manual/resources authoring yet**. Validate → `validate_lab`; Save →
-`create_lab` → `accept()` on success. Errors shown as `"loc.path: message; …"` in a status label.
-No unsaved-changes guard on close.
-
-## ManualFlyout (manual.py)
-
-`QDockWidget("Lab Manual")`, right/left dock areas, hidden initially. `show_lab(lab_id, name,
-sections)` renders each section as a `QGroupBox(title)` with a `QTextBrowser.setMarkdown
-(content_markdown)` (external links open) and one `QCheckBox` per task. Checkbox state is
-persisted to QSettings on toggle and read back on render. **Reset Progress** → `confirm(...)`
-(destructive) → `settings.remove("manual_progress/{lab_id}")` → re-render. `show_empty(msg)`
-clears. Progress is never sent to the API and is independent of the runtime reset.
-
-## dialogs.py — in-app dialog rule
-
-`confirm(parent, title, message, confirm_label="Confirm", cancel_label="Cancel",
-destructive=False) -> bool`. The only native dialog in the app is `QFileDialog.getOpenFileName`
-in `import_lab.py` (grep for `QMessageBox` should stay empty). `ConfirmDialog(QDialog)` modal, word-wrapped message,
-`QDialogButtonBox` with Reject/Accept roles; destructive style
-`background-color:#dc2626; color:white; font-weight:600`. **Never use `QMessageBox` or OS
-message boxes** anywhere in the app (story `windows-desktop-in-app-dialogs`). The only
-permitted native dialog is the file-open picker for import.
-
-## quickstart.py
-
-`UBUNTU_QUICK_START_LAB` — "Ubuntu Quick Start", `ubuntu:22.04`, cpu 1 / 512 MB, network
-`lab-net 10.50.0.0/24`, interface `10.50.0.10/24`, one manual section with 2 tasks (mirrors
-`examples/ubuntu-quickstart.json`). `QUICK_START_SUBNET_POOL = 10.90.0.0/16`,
-`_pick_free_subnet`, `build_ubuntu_quick_start_lab`, `create_ubuntu_quick_start_lab` — the
-latter is **dead and broken** (`preview.network_subnets` attribute doesn't exist); MainWindow
-posts the constant dict directly. See Tigre/06 #1.
-
-## Tests (desktop/tests/, 134 total)
-
-- `conftest.py` — session-scoped autouse `qapp` fixture creating `QApplication([])`.
-- `qt_helpers.py` — shared `ImmediateWorker` (synchronous `CallableWorker` stand-in) and
-  `StalledWorker` (never finishes until `.finish()`; exposes the busy state). Import as
-  `from qt_helpers import …` (pytest puts `tests/` on `sys.path`).
-- `test_api_client.py` (45) — monkeypatch `httpx.get/post` with fake responses; also
-  `httpx.ConnectError`/`TimeoutException`; `import_lab` and lifecycle-timeout cases.
-- `test_lab_file.py` (19) — pure Python: every `read_lab_file` failure mode, `format_issue`,
-  sample discovery, and `test_bundled_samples_match_repo_examples` (samples == `examples/`).
-- `test_import_lab.py` (23) — `FakeApiClient` + `ImmediateWorker`, ini-file `QSettings` in
-  `tmp_path`, `QFileDialog.getOpenFileName` monkeypatched; covers recent list, chooser states,
-  every flow outcome, and close-while-busy (`StalledWorker`).
-- `test_main_window.py` (11) — **first MainWindow tests**: monkeypatch `ApiClient`, `QSettings`,
-  `StartupWorker`, `CallableWorker`, `ImportLabDialog`, `PreStartGateDialog` on `main_window`;
-  asserts the import → gate → refresh → select → message/manual wiring.
-- `test_node_shell.py` (5) — `sys.platform` / `shutil.which` / `subprocess.Popen` monkeypatched.
-- `test_app_status.py` (4), `test_docker_status.py` (5) — pure logic / subprocess monkeypatch.
-- **Qt swallows exceptions in slots**: a broken slot prints a traceback and the test still passes.
-  Run `pytest -s | grep Traceback` after touching signal handlers.
-- `test_dialogs.py` (7) — needs QApplication; checks labels, destructive style, accept/reject,
-  `confirm()` via monkeypatched `exec`.
-- `test_prestart_gate.py` (15) — `FakeApiClient` + `ImmediateWorker` (synchronous) injected by
-  monkeypatching `prestart_gate.CallableWorker`; checks rendering, start gating, accept/reject,
-  and the subnet-conflict fixes (monkeypatch `prestart_gate.confirm`).
-- No tests for `designer.py`, `manual.py`, `quickstart.py`, `startup.py`.
-
-Run from `desktop/`: `pytest` (needs PySide6 installed; `pip install -e ".[dev]"`). In the Linux
-sandbox PySide6 installs from pip; run with `QT_QPA_PLATFORM=offscreen` (see Tigre/07).
+1200×760 default (the mockup's `.window`), minimum 960×620. Title bar 46 px with the "PR practicum"
+brand and the status chip (● Ready / Docker unavailable / API unreachable / Checking…).

@@ -11,11 +11,11 @@
 | **Network** | One Docker bridge network with a fixed IPv4 subnet. |
 | **Interface** | Attachment of a node to a network with a static IP (`address` as `ip/prefix`). Mockups call these "connections". |
 | **Manual** | Embedded instructional content: sections (markdown) with checkable tasks ("steps" in mockups). |
-| **Manual flyout** | The dockable `ManualFlyout` panel in the desktop app; mockups call it "Instructions flyout". |
-| **Designer Mode** | Instructor workflow — `DesignerDialog` today; mockups `screen-custom`. |
+| **Manual flyout / Instructions flyout** | `ManualFlyout`, the side panel of the running view: numbered steps (one per manual section), checkable tasks, "Mark step complete", local progress. |
+| **Designer Mode** | Instructor workflow — `DesignerView` screen (Machines / Network topology / Networks panels); mockup `screen-custom`. |
 | **Import Mode** | Student workflow — import, preview, start/stop/reset, manual. |
-| **Quick Start** | One-click single-Ubuntu lab (`quickstart.py`). Mockups extend it to OS templates + packages + step editor. |
-| **Pre-start gate / readiness gate** | `PreStartGateDialog` — review + port-conflict resolution before Start. |
+| **Quick start** | Single-host lab from a template (`QuickStartScreen` + `quickstart.py`): **Ubuntu Desktop** (default; webtop desktop shown in the embedded lab view, packages via `INSTALL_PACKAGES`) or **Ubuntu** (terminal; packages → apt-get node command); name, instruction steps (→ manual sections), free /24 from 10.90.0.0/16. Windows template listed but disabled. |
+| **Pre-start gate / readiness gate** | `PreStartGateDialog` — review (images, topology, manual, resources) + port/subnet-conflict resolution before Start; shows the real start progress. Every Start goes through it. |
 | **Port conflict** | Host port problem: `duplicate_in_spec`, `reserved_by_practicum_api`, `in_use_on_host`; each has a `recommended_port`. |
 | **Recommendation** | Server-suggested free host port; applying it rewrites the node's mapping. |
 | **Exposed port** | `exposed_ports: [p]` → `-p p:p` tcp. **Port mapping** = `{host, container, protocol}`. |
@@ -24,7 +24,16 @@
 | **RuntimeFailure / RuntimeIssue** | Exception in runtime / its serialized form in API responses. |
 | **Status (lab)** | `defined → starting → running → stopping → stopped`, plus `error`; `reset` → `defined`. |
 | **Status (resource)** | `RuntimeResourceStatus{kind: network\|container, exists, status}` from `docker inspect`. |
-| **Draft** | Mockup/dashboard term for a saved-but-never-started/validated lab (maps to status `defined`). |
+| **Ready** | Dashboard badge for status `defined` (a stored, validated lab that is not running). The mockup's "Draft" was dropped (D-26) because unvalidated labs cannot be stored. |
+| **Running view** | `RunningLabView`, the screen a lab is used from: lifecycle toolbar (Start/Restart/Stop/Reset/Instructions), embedded lab view, Lab nodes + Open shell, instructions flyout, status bar. |
+| **Embedded lab view** | `EmbeddedLabView`: QWebEngineView showing what the lab publishes on a host port, with URL bar, port picker, waiting state and "open in system browser". |
+| **Dashboard / lab card** | `DashboardScreen` / `LabCard` ("Your Labs"): one card per lab with origin meta, badge, activity line and Open / Start / Delete / Reset. |
+| **Origin** | How a stored lab came to exist on this machine: `designer`, `imported` (+ `source_file`), `quick_start`. Bookkeeping only, never exported. |
+| **Action lock / busy** | A lab that is `starting` or `stopping` refuses other lifecycle calls with 409; the desktop disables its lifecycle buttons meanwhile. |
+| **Start progress** | Per-node `NodeStartProgress` (`checking_image`, `pulling_image` + percent, `creating_container`, `connecting_networks`, `ready`, `failed`) in `GET /status`, rendered by `StartProgressPanel`. |
+| **Machine preset / catalogue** | `node_catalog.PRESETS`: ready-made node recipes (Ubuntu host, Alpine host, Router with IP forwarding, Web server, Ubuntu Desktop, Custom image) the designer adds machines from. |
+| **Edit mode** | `DesignerView.load_lab()`: the designer pre-filled with an existing lab; Save → `PUT /labs/{id}`. |
+| **Leftover** | A Practicum-labelled Docker network/container whose lab the API no longer knows (API restarted); the gate can remove it. |
 | **Story / Epic / Phase** | Backlog units in `src/user-stories/`; tracked in `user-story-status.json`. |
 | **Future roadmap** | `src/future-roadmap/` — paid-tier ideas, not built. |
 | **Mockups** | `design/practicum-mockups.html` clickable HTML prototype used to derive Phase 7. |
@@ -36,7 +45,10 @@
 - Docker: `practicum-{lab.id[:8]}-{node_id|network_id}`; labels `practicum.lab_id`,
   `practicum.node_id`, `practicum.network_id`.
 - QSettings: org `Practicum`, app `Practicum Desktop`; keys `api_base_url`,
-  `manual_progress/{lab_id}/{section_id}/{task_id}`.
+  `manual_progress/{lab_id}/{section_id}/{task_id}`, `recent_lab_files`.
+- Qt style roles (theme.py): `kind` (buttons), `role` (labels), `panel`, `badge`, `chip`,
+  `banner`; object names `titlebar`, `brandBadge`, `brandName`, `screen`, `panelHead`,
+  `bottomBar`, `urlBar`, `instructionsFlyout`.
 - Env: `PRACTICUM_API_PORT` (default 8000).
 - Story ids: `<epic-prefix>-<kebab>` e.g. `windows-desktop-labs-dashboard`, file
   `src/user-stories/<epic-folder>/<story-id>.md`.

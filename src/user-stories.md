@@ -105,6 +105,20 @@ Phases 1-6 built a working API and a functional, form-based desktop shell. Click
 28. [Visual Topology Builder (Basic)](user-stories/designer-mode/designer-visual-topology-builder.md)
 29. [Image Pull and Start Progress](user-stories/docker-runtime-api/runtime-image-pull-progress.md) (backend)
 
+Stories added during Phase 7 as the work surfaced them (2026-10-23/24): backend enablers the desktop stories turned out to need, and mockup screens that had no story.
+
+30. [Subnet Conflict Detection and Resolution](user-stories/docker-runtime-api/runtime-subnet-conflicts.md) (backend + gate)
+31. [Open a Shell on a Lab Node](user-stories/windows-desktop-application/windows-desktop-open-node-shell.md)
+32. [Restart a Lab and Start After Stop](user-stories/docker-runtime-api/runtime-lab-restart.md) (backend enabler for 26)
+33. [Delete a Lab Through the API](user-stories/docker-runtime-api/runtime-delete-lab.md) (backend enabler for 23)
+34. [Lab Origin and Activity Timestamps](user-stories/lab-spec-format/lab-origin-and-timestamps.md) (backend enabler for 23)
+35. [Desktop Visual Theme (Mockup Look and Feel)](user-stories/windows-desktop-application/windows-desktop-visual-theme.md)
+36. [Create New Lab Screen](user-stories/windows-desktop-application/windows-desktop-create-lab-screen.md)
+37. [Quick Start Lab from a Template](user-stories/designer-mode/designer-quick-start-lab.md)
+38. [Live Status Polling in the Running View](user-stories/windows-desktop-application/windows-desktop-status-polling.md)
+39. [Machine Catalogue for the Custom Lab Designer](user-stories/designer-mode/designer-node-catalog.md) (user feedback 2026-10-24)
+40. [Edit an Existing Lab](user-stories/designer-mode/designer-edit-existing-lab.md) (user feedback 2026-10-24; backend `PUT /labs/{id}`)
+
 ## First Product Slice
 
 The first complete slice should let an instructor create or export a JSON lab file, let a student import it into the Windows app, validate it, start Docker containers, open the lab manual flyout, and stop the lab when finished.

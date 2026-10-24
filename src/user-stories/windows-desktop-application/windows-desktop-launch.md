@@ -45,3 +45,7 @@ The application should feel approachable to students who may not be comfortable 
 - Treat this as the foundation for the desktop shell.
 - Startup checks should be refreshable from the UI.
 - Errors should be actionable and written for students.
+
+## Implementation Status (update 2026-10-24)
+
+The startup health check now retries timeouts with longer waits (3 s, 6 s, 10 s) before reporting Blocked, and a timed-out API is worded as "not answering in time … wait a moment and select Retry" rather than "start the API" (Tigre/06 #11). The readiness information lives in the title bar's status chip and a collapsible connection panel (API line, Docker line, next action, API base URL + Retry), opened automatically when Blocked.

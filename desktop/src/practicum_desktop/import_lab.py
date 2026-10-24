@@ -14,7 +14,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSettings, QSize, Qt
+from PySide6.QtCore import (
+    QModelIndex,
+    QPersistentModelIndex,
+    QRect,
+    QSettings,
+    QSize,
+    Qt,
+    QTimer,
+)
 from PySide6.QtGui import QCloseEvent, QColor, QFont, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,6 +49,7 @@ from practicum_desktop.api_client import (
     NetworkCheckResult,
     PortCheckResult,
     StartResult,
+    StatusResult,
 )
 from practicum_desktop.dialogs import COPYABLE_TEXT_FLAGS
 from practicum_desktop.lab_file import (
@@ -51,6 +60,7 @@ from practicum_desktop.lab_file import (
     read_lab_file,
     sample_lab_files,
 )
+from practicum_desktop.progress_panel import summarize_progress
 from practicum_desktop.workers import CallableWorker
 
 RECENT_FILES_KEY = "recent_lab_files"
@@ -64,6 +74,8 @@ STAGE_CHECKING_PORTS = "Checking host ports and networks…"
 STAGE_STARTING = "Starting containers…"
 STAGE_FAILED = "Import did not complete"
 STAGE_DONE = "Lab started"
+START_POLL_MS = 1000
+START_STAGE_BASE = 60  # the start stage spans 60 → 100 % of the bar
 
 START_HINT = (
     "The first start can take a few minutes while Docker downloads the lab's images. "
@@ -222,6 +234,9 @@ class ImportLabDialog(QDialog):
         # QThread that has not quite finished (Tigre/06 #6).
         self._workers: list[CallableWorker] = []
         self.outcome: ImportOutcome | None = None
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setSingleShot(True)
+        self._poll_timer.timeout.connect(self._poll_start_status)
 
         self._build_ui()
         self._populate_files()
@@ -255,7 +270,7 @@ class ImportLabDialog(QDialog):
         self.files_list = QListWidget()
         self.files_list.setItemDelegate(LabFileRowDelegate(self.files_list))
         self.files_list.currentRowChanged.connect(self._on_file_row_changed)
-        self.files_list.itemDoubleClicked.connect(lambda _item: self._on_open_clicked())
+        self.files_list.itemDoubleClicked.connect(self._on_file_double_clicked)
         layout.addWidget(self.files_list, 1)
 
         self.browse_button = QPushButton("Browse computer…")
@@ -351,6 +366,9 @@ class ImportLabDialog(QDialog):
         entry = self.selected_entry()
         self.open_button.setEnabled(self._api_available and entry is not None and entry.exists)
 
+    def _on_file_double_clicked(self, _item) -> None:
+        self._on_open_clicked()
+
     def _on_open_clicked(self) -> None:
         entry = self.selected_entry()
         if entry is None or not entry.exists or not self._api_available:
@@ -392,8 +410,8 @@ class ImportLabDialog(QDialog):
         self._set_stage(STAGE_READING, 10)
         self._run(read_lab_file, self._source_path, on_done=self._on_file_read)
 
-    def _run(self, func, *args, on_done) -> None:
-        worker = CallableWorker(func, *args)
+    def _run(self, func, *args, on_done, **kwargs) -> None:
+        worker = CallableWorker(func, *args, **kwargs)
         worker.finished_call.connect(on_done)
         self._workers.append(worker)
         worker.start()
@@ -411,7 +429,13 @@ class ImportLabDialog(QDialog):
             self._show_failure(result.error)
             return
         self._set_stage(STAGE_IMPORTING, 35)
-        self._run(self._api_client.import_lab, result.definition, on_done=self._on_imported)
+        assert self._source_path is not None
+        self._run(
+            self._api_client.import_lab,
+            result.definition,
+            self._source_path.name,
+            on_done=self._on_imported,
+        )
 
     def _on_imported(self, result: ImportLabResult) -> None:
         if not result.success or not result.lab_id:
@@ -443,9 +467,11 @@ class ImportLabDialog(QDialog):
             self._hand_over_to_gate()
             return
 
-        self._set_stage(STAGE_STARTING, 85)
+        self._set_stage(STAGE_STARTING, START_STAGE_BASE)
         self.detail_label.setText(START_HINT)
-        self._run(self._api_client.start_lab, self.outcome.lab_id, on_done=self._on_started)
+        self._run(
+            self._api_client.start_lab, self.outcome.lab_id, wait=False, on_done=self._on_started
+        )
 
     def _hand_over_to_gate(self) -> None:
         """Never start blind: with port/subnet conflicts (or no answer from a check) hand
@@ -457,7 +483,45 @@ class ImportLabDialog(QDialog):
 
     def _on_started(self, result: StartResult) -> None:
         assert self.outcome is not None
+        if result.success and result.pending:
+            # The API starts the lab in the background: follow the real per-node progress
+            # (image downloads, container creation) until its status settles.
+            self._poll_start_status()
+            return
+        self._finish_start(result.success, result.detail)
+
+    def _poll_start_status(self) -> None:
+        assert self.outcome is not None
+        if self._workers and self._workers[-1].isRunning():
+            self._poll_timer.start(START_POLL_MS)  # previous poll still running; try later
+            return
+        self._run(self._api_client.get_status, self.outcome.lab_id, on_done=self._on_start_polled)
+
+    def _on_start_polled(self, result: StatusResult) -> None:
+        if not self._busy:
+            return
         if result.success:
+            text, overall = summarize_progress(result.progress)
+            span = 100 - START_STAGE_BASE
+            self._set_stage(text, START_STAGE_BASE + round(overall * span / 100))
+        if not result.success or result.lab_status == "starting":
+            self._poll_timer.start(START_POLL_MS)
+            return
+        if result.lab_status == "running":
+            self._finish_start(True, "Lab started.")
+            return
+        failed = next((p for p in result.progress if p.step == "failed"), None)
+        detail = (
+            result.last_error
+            or (failed.detail if failed else None)
+            or "The lab failed to start."
+        )
+        self._finish_start(False, detail)
+
+    def _finish_start(self, success: bool, detail: str) -> None:
+        assert self.outcome is not None
+        self._poll_timer.stop()
+        if success:
             self.outcome.started = True
             self._set_stage(STAGE_DONE, 100)
             self._set_busy(False)
@@ -465,15 +529,15 @@ class ImportLabDialog(QDialog):
             return
 
         self._show_failure(
-            f"'{self.outcome.lab_name}' was imported but could not be started: {result.detail}",
+            f"'{self.outcome.lab_name}' was imported but could not be started: {detail}",
             hint=(
-                "The lab is in your lab list — select it and use Start once the problem is fixed."
+                "The lab is in your lab list — use Start on its card once the problem is fixed."
             ),
         )
 
     def _show_failure(self, message: str, issues: list[str] | None = None, hint: str = "") -> None:
         self._set_stage(STAGE_FAILED, self.progress_bar.value())
-        text = f"❌ {message}" if message else "❌ The import did not complete."
+        text = message if message else "The import did not complete."
         if hint:
             text = f"{text}\n\n{hint}"
         self.detail_label.setText(text)

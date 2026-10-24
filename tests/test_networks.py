@@ -141,3 +141,22 @@ def test_move_subnet_rejects_different_prefix_length(lab_definition: dict) -> No
 
     with pytest.raises(ValueError, match="same prefix length"):
         move_subnet(lab, "left", IPv4Network("10.90.0.0/25"))
+
+
+def test_move_subnet_rewrites_addresses_quoted_in_the_manual(lab_definition: dict) -> None:
+    lab_definition["manual"]["sections"][0]["content_markdown"] = (
+        "host-a is 10.0.1.10 and the router is 10.0.1.1 on 10.0.1.0/24; host-b is 10.0.2.10.\n"
+        "```\nping -c 3 10.0.1.10\n```\nAlso 10.0.1.10/24. Not touched: 10.0.1.100, 110.0.1.1."
+    )
+    lab_definition["manual"]["sections"][0]["tasks"][0]["text"] = "Ping 10.0.1.1 from host-a."
+    lab = _lab(lab_definition)
+
+    moved = move_subnet(lab, "left", IPv4Network("10.90.0.0/24"))
+
+    text = moved["manual"]["sections"][0]["content_markdown"]
+    assert "host-a is 10.90.0.10 and the router is 10.90.0.1 on 10.90.0.0/24" in text
+    assert "host-b is 10.0.2.10" in text  # other network untouched
+    assert "ping -c 3 10.90.0.10" in text
+    assert "Also 10.90.0.10/24." in text
+    assert "10.0.1.100" in text and "110.0.1.1" in text
+    assert moved["manual"]["sections"][0]["tasks"][0]["text"] == "Ping 10.90.0.1 from host-a."

@@ -45,6 +45,7 @@ Stored form `Lab` adds `id` (uuid4 string) and `status` (string; see Tigre/02 st
 | `shm_size_mb` | int? | > 0 → `--shm-size {n}m` |
 | `exposed_ports` | `list[int]` | each 1–65535, unique; each → `-p p:p` (tcp, host == container) |
 | `port_mappings` | `list[PortMapping]` | `{host, container, protocol="tcp"\|"udp"}`; `(host, protocol)` unique; may not overlap an exposed port (as tcp) |
+| `sysctls` | `dict[str, str]` | keys must be namespaced `net.*` / `kernel.*` / `fs.*` → `--sysctl k=v` (e.g. `net.ipv4.ip_forward: "1"` for the designer's Router preset; added 2026-10-24, schema still 1.x) |
 
 ## `Network` — `{id: ^[a-z][a-z0-9-]*$, subnet: IPv4Network}` (must be a proper network
 address; Pydantic/ipaddress strict). Gateway is chosen at runtime (highest free usable IP).

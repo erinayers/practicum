@@ -55,3 +55,7 @@ Docker refuses to create a bridge network whose subnet overlaps an existing one.
 - Recommendations come from `10.90.0.0/16` (D-17/D-24) so they never collide with the hand-authored `10.0.x` / `10.50.x` examples.
 - The runtime's older `_remove_empty_practicum_networks_with_subnet` (auto-removes *empty* leftovers with the exact same subnet at start) is kept; this story covers the cases it cannot: leftovers with containers, partial overlaps, listed labs, and foreign networks.
 - Proper fixes for the root causes remain separate: persistence/reconciliation of labs across API restarts (Tigre/11 S-1) and quick-start subnets allocated from the pool (Tigre/06 #1).
+
+## Implementation Status (update 2026-10-24)
+
+**Use &lt;subnet&gt;** now also rewrites the moved addresses inside the lab's manual (`networks.rewrite_addresses`: whole-token replacement of every interface address and the subnet, longest first, in section markdown and task texts). Before this, a student following "ping 10.93.1.20" after the gate had moved the lab to 10.90.x.x saw 100 % packet loss (user report, 2026-10-24). The running view's Lab nodes table now also shows each node's actual address, so the manual and the real topology can be compared at a glance.

@@ -53,3 +53,7 @@ Two pieces of this already exist at the API level: `GET /labs/{lab_id}/preview` 
 - Builds on existing, already-implemented endpoints: `GET /labs/{lab_id}/preview`, `GET /labs/{lab_id}/ports`, `POST /labs/{lab_id}/ports/apply-recommendation`. No new API work is expected; this is a desktop UI consolidation.
 - Reference design: `screen-preview` in the clickable mockup (`practicum-mockups.html`), including both the "has conflicts" and "zero conflicts" states.
 - Whether a freshly-imported lab always passes through this screen, or only when it has conflicts, is a product decision — see `windows-desktop-import-lab-file.md` for the proposed resolution.
+
+## Implementation Status (update 2026-10-24)
+
+Re-skinned to the mockup's `screen-preview` (title + status badge, Required images as chips, the schematic topology, manual preview list, Estimated resources tiles, Port conflicts / Network conflicts panels with ok/warn banners, bottom bar with a status pill — "Ready to start" / "Resolve conflicts to continue"). Start now requests a background start (`wait=false`) and polls `GET /status`, replacing the pill with the per-node `StartProgressPanel` (image download percentage, container creation) until the lab is running or failed; the dialog cannot be closed while a start is in flight. The gate is reused unchanged by the dashboard's Start, the running view's Start, Save & Start in the designer, Create Lab in the quick start form, and import (conflicts).

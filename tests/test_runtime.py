@@ -154,12 +154,18 @@ def test_docker_runtime_resets_containers_and_networks(monkeypatch, lab_definiti
 
 def test_docker_runtime_reports_resource_status(monkeypatch, lab_definition: dict) -> None:
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, timeout=None
     ) -> subprocess.CompletedProcess:
         if command[:3] == ["docker", "network", "inspect"]:
             return subprocess.CompletedProcess(command, 0, "", "")
         if command[:2] == ["docker", "inspect"]:
             return subprocess.CompletedProcess(command, 0, "running\n", "")
+        if command[:2] == ["docker", "exec"]:  # the self-reported status marker
+            if "host-a" in command[2]:
+                return subprocess.CompletedProcess(
+                    command, 0, "Practicum: installing packages (git) - wait\nmore\n", ""
+                )
+            return subprocess.CompletedProcess(command, 1, "", "cat: no such file")
         raise AssertionError(f"Unexpected command: {command}")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -175,6 +181,7 @@ def test_docker_runtime_reports_resource_status(monkeypatch, lab_definition: dic
         "exists": True,
         "status": "present",
         "error": None,
+        "note": None,
     }
     assert statuses[2].model_dump() == {
         "kind": "container",
@@ -183,7 +190,9 @@ def test_docker_runtime_reports_resource_status(monkeypatch, lab_definition: dic
         "exists": True,
         "status": "running",
         "error": None,
+        "note": "Practicum: installing packages (git) - wait",
     }
+    assert statuses[3].note is None  # no marker file in that container
 
 
 def test_docker_runtime_cleans_up_partial_start(monkeypatch, lab_definition: dict) -> None:
@@ -547,3 +556,249 @@ def test_docker_runtime_remove_network_tolerates_already_gone_resources(monkeypa
     network = DockerNetworkInfo(name="y", container_names=["x"])
 
     DockerRuntime().remove_network(network)  # must not raise
+
+
+# ----- start after stop, image pull progress (runtime-image-pull-progress) ------------------
+
+
+def _lab(lab_definition: dict) -> Lab:
+    definition = LabDefinition.model_validate(lab_definition)
+    return Lab(id="12345678-1234-1234-1234-123456789abc", **definition.model_dump())
+
+
+def test_docker_runtime_restarts_existing_containers_instead_of_recreating(
+    monkeypatch, lab_definition: dict
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        commands.append(command)
+        if command[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, "exited\n", "")  # left by Stop
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    DockerRuntime().start(_lab(lab_definition))
+
+    assert [c for c in commands if c[:2] == ["docker", "run"]] == []
+    assert [c for c in commands if c[:3] == ["docker", "network", "connect"]] == []
+    assert [c for c in commands if c[:2] == ["docker", "start"]] == [
+        ["docker", "start", "practicum-12345678-host-a"],
+        ["docker", "start", "practicum-12345678-router"],
+        ["docker", "start", "practicum-12345678-host-b"],
+    ]
+
+
+def test_docker_runtime_checks_image_locally_and_skips_pull_when_present(
+    monkeypatch, lab_definition: dict
+) -> None:
+    commands: list[list[str]] = []
+    popen_calls: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: popen_calls.append(a[0]))
+    steps: list[tuple[str, str]] = []
+
+    DockerRuntime().start(_lab(lab_definition), lambda p: steps.append((p.node_id, p.step)))
+
+    assert ["docker", "image", "inspect", "--format", "{{.Id}}", "alpine:3.21"] in commands
+    assert popen_calls == []  # no `docker pull`
+    assert steps == [
+        ("host-a", "checking_image"),
+        ("host-a", "creating_container"),
+        ("host-a", "ready"),
+        ("router", "checking_image"),
+        ("router", "creating_container"),
+        ("router", "connecting_networks"),
+        ("router", "ready"),
+        ("host-b", "checking_image"),
+        ("host-b", "creating_container"),
+        ("host-b", "ready"),
+    ]
+
+
+class FakePullProcess:
+    def __init__(self, lines: list[str], returncode: int = 0) -> None:
+        self.stdout = iter(line + "\n" for line in lines)
+        self.returncode = returncode
+
+    def wait(self) -> int:
+        return self.returncode
+
+
+def test_docker_runtime_pulls_missing_image_and_reports_layer_progress(
+    monkeypatch, lab_definition: dict
+) -> None:
+    lab_definition["nodes"] = [lab_definition["nodes"][0]]
+    lab_definition["networks"] = [lab_definition["networks"][0]]
+    lab_definition["interfaces"] = [lab_definition["interfaces"][0]]
+    pull_output = [
+        "3.21: Pulling from library/alpine",
+        "aaaaaaaaaaaa: Pulling fs layer",
+        "bbbbbbbbbbbb: Pulling fs layer",
+        "aaaaaaaaaaaa: Downloading [=====>                                             ]  1MB/2MB",
+        "aaaaaaaaaaaa: Download complete",
+        "aaaaaaaaaaaa: Pull complete",
+        "bbbbbbbbbbbb: Already exists",
+        "Digest: sha256:abc",
+        "Status: Downloaded newer image for alpine:3.21",
+    ]
+    popen_calls: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(command, 1, "", "Error: No such image: alpine:3.21")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append(command)
+        return FakePullProcess(pull_output)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    reports = []
+
+    DockerRuntime().start(_lab(lab_definition), lambda p: reports.append(p.model_copy()))
+
+    assert popen_calls == [["docker", "pull", "alpine:3.21"]]
+    pulling = [(r.percent, r.detail) for r in reports if r.step == "pulling_image"]
+    assert pulling[0] == (0, "starting download")
+    assert pulling[-1] == (100, "download complete")
+    percents = [p for p, _ in pulling]
+    assert percents == sorted(percents)  # never goes backwards
+    assert (18, "0 of 2 layers") in pulling  # 1MB/2MB of one of two layers, downloading = 70 %
+    assert (50, "1 of 2 layers") in pulling
+    assert reports[-1].step == "ready"
+
+
+def test_docker_runtime_attributes_pull_failure_to_the_node(
+    monkeypatch, lab_definition: dict
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        commands.append(command)
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(command, 1, "", "Error: No such image")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda command, **kwargs: FakePullProcess(
+            ["Error response from daemon: manifest for alpine:3.21 not found"], returncode=1
+        ),
+    )
+    reports = []
+
+    with pytest.raises(RuntimeFailure) as excinfo:
+        DockerRuntime().start(_lab(lab_definition), lambda p: reports.append(p.model_copy()))
+
+    assert excinfo.value.message == (
+        "node 'host-a' (alpine:3.21): could not pull image 'alpine:3.21': "
+        "Error response from daemon: manifest for alpine:3.21 not found"
+    )
+    assert excinfo.value.command == ["docker", "pull", "alpine:3.21"]
+    failed = [r for r in reports if r.step == "failed"]
+    assert [r.node_id for r in failed] == ["host-a"]
+    assert failed[0].detail.startswith("could not pull image")
+    # Cleanup still happens after an attributed failure.
+    assert ["docker", "network", "rm", "practicum-12345678-left"] in commands
+
+
+def test_docker_runtime_image_check_raises_when_docker_is_down(
+    monkeypatch, lab_definition: dict
+) -> None:
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(
+                command, 1, "", "Cannot connect to the Docker daemon at npipe:////./pipe/docker_engine"
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeFailure) as excinfo:
+        DockerRuntime().start(_lab(lab_definition))
+
+    assert "Cannot connect to the Docker daemon" in excinfo.value.message
+    assert excinfo.value.message.startswith("node 'host-a' (alpine:3.21): ")
+
+
+def test_docker_runtime_reset_tolerates_dockers_network_not_found_wording(
+    monkeypatch, lab_definition: dict
+) -> None:
+    """`docker network rm` says "network X not found" (not "No such network"); a reset of a
+    lab whose networks are already gone must still succeed."""
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        if command[:3] == ["docker", "network", "rm"]:
+            return subprocess.CompletedProcess(
+                command, 1, "", f"Error response from daemon: network {command[-1]} not found"
+            )
+        if command[:2] == ["docker", "rm"]:
+            return subprocess.CompletedProcess(
+                command, 1, "", f"Error response from daemon: No such container: {command[-1]}"
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    DockerRuntime().reset(_lab(lab_definition))  # must not raise
+
+
+def test_docker_runtime_passes_sysctls_for_router_nodes(monkeypatch, lab_definition: dict) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    lab_definition["nodes"][1]["resources"]["sysctls"] = {"net.ipv4.ip_forward": "1"}
+
+    DockerRuntime().start(_lab(lab_definition))
+
+    router_run = next(c for c in commands if c[:2] == ["docker", "run"] and "practicum-12345678-router" in c)
+    assert ["--sysctl", "net.ipv4.ip_forward=1"] in [
+        router_run[i : i + 2] for i in range(len(router_run) - 1)
+    ]
+    host_run = next(c for c in commands if c[:2] == ["docker", "run"] and "practicum-12345678-host-a" in c)
+    assert "--sysctl" not in host_run
+
+
+def test_docker_runtime_lists_practicum_containers_with_lab_ids(monkeypatch) -> None:
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        assert command[:4] == ["docker", "ps", "-a", "--filter"]
+        return subprocess.CompletedProcess(
+            command, 0, "practicum-aaaa-host\taaaa-1111\trunning\npracticum-bbbb-web\tbbbb-2222\texited\n", ""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    containers = DockerRuntime().list_practicum_containers()
+
+    assert [(c.name, c.lab_id, c.status) for c in containers] == [
+        ("practicum-aaaa-host", "aaaa-1111", "running"),
+        ("practicum-bbbb-web", "bbbb-2222", "exited"),
+    ]
+
+
+def test_docker_runtime_remove_container_tolerates_missing(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 1, "", "Error: No such container: gone")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    DockerRuntime().remove_container("gone")  # must not raise
+
+    assert commands == [["docker", "rm", "-f", "gone"]]

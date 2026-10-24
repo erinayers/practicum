@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+from collections.abc import Callable, Iterator
 from ipaddress import IPv4Address, IPv4Interface, IPv4Network
-from collections.abc import Iterator
 from typing import Protocol
 
 from practicum.models import (
@@ -12,8 +13,26 @@ from practicum.models import (
     Lab,
     Network,
     Node,
+    NodeStartProgress,
+    PracticumContainerInfo,
     RuntimeResourceStatus,
 )
+
+# Called by the runtime every time a node's start progress changes (runtime-image-pull-progress).
+ProgressCallback = Callable[[NodeStartProgress], None]
+
+# One `docker pull` output line per layer status change, e.g.
+#   "f18232174bc9: Downloading [=====>      ]  12.3MB/45.6MB"   (TTY-style, with a bar)
+#   "f18232174bc9: Download complete"                            (non-TTY: status only)
+_PULL_LAYER_LINE = re.compile(
+    r"^(?P<layer>[0-9a-f]{6,}): (?P<status>[A-Za-z ]+?)\s*"
+    r"(?:\[.*?\]\s*(?P<done>[\d.]+\s*[kMG]?B)/(?P<total>[\d.]+\s*[kMG]?B))?\s*$"
+)
+_LAYER_FINISHED = {"Pull complete", "Already exists"}
+# A running container may keep a one-line status marker here (written by the desktop's
+# quick-start install script); GET /status surfaces it as the container's `note`.
+CONTAINER_NOTE_FILE = "/run/practicum-packages.status"
+_SIZE_UNITS = {"B": 1, "kB": 1e3, "MB": 1e6, "GB": 1e9}
 
 
 def _docker_cli_error(exc: OSError) -> str:
@@ -21,6 +40,27 @@ def _docker_cli_error(exc: OSError) -> str:
     if isinstance(exc, FileNotFoundError):
         return "Docker CLI was not found"
     return f"Docker CLI could not be run: {exc}"
+
+
+_MISSING_RESOURCE = re.compile(
+    r"no such (container|network|object)|(container|network) \S+ not found"
+)
+
+
+def _is_missing_error(message: str) -> bool:
+    """True when a docker error only says the resource is already gone. Docker words it
+    differently per command: "No such container: x", "network x not found",
+    "No such network: x", "Error: No such object: x". (A missing docker *CLI* - "Docker CLI
+    was not found" - is deliberately not matched.)"""
+    return _MISSING_RESOURCE.search(message.lower()) is not None
+
+
+def _parse_size(text: str) -> float:
+    """'12.3MB' -> 12300000.0; tolerant of spaces and unknown units."""
+    match = re.match(r"([\d.]+)\s*([kMG]?B)", text.strip())
+    if match is None:
+        return 0.0
+    return float(match.group(1)) * _SIZE_UNITS.get(match.group(2), 1)
 
 
 class RuntimeFailure(Exception):
@@ -31,7 +71,7 @@ class RuntimeFailure(Exception):
 
 
 class LabRuntime(Protocol):
-    def start(self, lab: Lab) -> None:
+    def start(self, lab: Lab, on_progress: ProgressCallback | None = None) -> None:
         pass
 
     def stop(self, lab: Lab) -> None:
@@ -49,26 +89,158 @@ class LabRuntime(Protocol):
     def remove_network(self, network: DockerNetworkInfo) -> None:
         pass
 
+    def list_practicum_containers(self) -> list[PracticumContainerInfo]:
+        pass
+
+    def remove_container(self, name: str) -> None:
+        pass
+
 
 class DockerRuntime:
-    def start(self, lab: Lab) -> None:
+    def start(self, lab: Lab, on_progress: ProgressCallback | None = None) -> None:
+        """Creates the lab's networks, then brings up each node in spec order.
+
+        Per node: make sure the image is local (explicit `docker pull` with streamed progress
+        when it is not), then `docker start` a container left behind by an earlier Stop, or
+        `docker run` a fresh one and connect its extra interfaces. Every step is reported
+        through `on_progress` so a UI can show where a slow first start actually is.
+        A failure is attributed to its node, and everything created so far is removed.
+        """
+        progress = {
+            node.id: NodeStartProgress(node_id=node.id, image=node.image) for node in lab.nodes
+        }
+
+        def report(node: Node, step: str, percent: int | None = None, detail: str | None = None):
+            entry = progress[node.id]
+            entry.step = step
+            entry.percent = percent
+            entry.detail = detail
+            if on_progress is not None:
+                on_progress(entry.model_copy())
+
+        current: Node | None = None
         try:
             for network in lab.networks:
                 self._create_network(lab, network)
 
             for node in lab.nodes:
-                interfaces = [interface for interface in lab.interfaces if interface.node == node.id]
+                current = node
+                interfaces = [i for i in lab.interfaces if i.node == node.id]
                 if not interfaces:
                     raise RuntimeFailure(f"node '{node.id}' has no interfaces")
 
-                first_interface = interfaces[0]
-                self._run_container(lab, node, first_interface)
+                report(node, "checking_image")
+                if not self._image_present(node.image):
+                    report(node, "pulling_image", 0, "starting download")
+                    self._pull_image(
+                        node.image,
+                        lambda percent, detail, n=node: report(n, "pulling_image", percent, detail),
+                    )
 
-                for interface in interfaces[1:]:
-                    self._connect_network(lab, node, interface)
-        except RuntimeFailure:
+                report(node, "creating_container")
+                container_name = self._container_name(lab, node.id)
+                if self._container_state(container_name) is not None:
+                    # Left behind by Stop: restarting it keeps its filesystem and addresses.
+                    self._run(["docker", "start", container_name])
+                else:
+                    self._run_container(lab, node, interfaces[0])
+                    if len(interfaces) > 1:
+                        report(node, "connecting_networks")
+                    for interface in interfaces[1:]:
+                        self._connect_network(lab, node, interface)
+                report(node, "ready")
+            current = None
+        except RuntimeFailure as exc:
+            if current is not None:
+                report(current, "failed", None, exc.message)
+                exc.message = f"node '{current.id}' ({current.image}): {exc.message}"
+                exc.args = (exc.message,)
             self._cleanup_after_failed_start(lab)
             raise
+
+    def _image_present(self, image: str) -> bool:
+        """True when `image` is already in the local Docker image store."""
+        command = ["docker", "image", "inspect", "--format", "{{.Id}}", image]
+        try:
+            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), command) from exc
+        if completed.returncode == 0:
+            return True
+        message = (completed.stderr or completed.stdout or "").strip()
+        if "no such image" in message.lower() or "no such object" in message.lower():
+            return False
+        raise RuntimeFailure(message or "Docker command failed", command)
+
+    def _pull_image(self, image: str, report: Callable[[int, str], None]) -> None:
+        """Runs `docker pull` and reports progress as layers complete.
+
+        Docker's CLI prints one line per layer status change ("<layer>: Downloading",
+        "<layer>: Pull complete", ...). Without a TTY the byte counts are usually omitted, so
+        progress is measured in layers, refined with bytes when the bar is present.
+        """
+        command = ["docker", "pull", image]
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), command) from exc
+
+        layers: dict[str, float] = {}  # layer id -> fraction complete (0..1)
+        last_lines: list[str] = []
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+            last_lines = (last_lines + [line])[-3:]
+            match = _PULL_LAYER_LINE.match(line)
+            if match is None:
+                continue
+            layer, status = match.group("layer"), match.group("status").strip()
+            fraction = layers.get(layer, 0.0)
+            if status in _LAYER_FINISHED:
+                fraction = 1.0
+            elif status == "Download complete":
+                fraction = max(fraction, 0.7)
+            elif status in ("Downloading", "Extracting") and match.group("total"):
+                done = _parse_size(match.group("done"))
+                total = _parse_size(match.group("total"))
+                share = done / total if total else 0.0
+                fraction = share * 0.7 if status == "Downloading" else 0.7 + share * 0.3
+            elif status == "Extracting":
+                fraction = max(fraction, 0.7)
+            layers[layer] = max(layers.get(layer, 0.0), min(fraction, 1.0))
+
+            finished = sum(1 for value in layers.values() if value >= 1.0)
+            percent = round(100 * sum(layers.values()) / len(layers)) if layers else 0
+            report(min(percent, 99), f"{finished} of {len(layers)} layers")
+
+        returncode = process.wait()
+        if returncode != 0:
+            message = next(
+                (line for line in reversed(last_lines) if "error" in line.lower()),
+                last_lines[-1] if last_lines else "docker pull failed",
+            )
+            raise RuntimeFailure(f"could not pull image '{image}': {message}", command)
+        report(100, "download complete")
+
+    def _container_state(self, name: str) -> str | None:
+        """The container's Docker state ("running", "exited", ...); None when it does not exist."""
+        command = ["docker", "inspect", "--format", "{{.State.Status}}", name]
+        try:
+            completed = subprocess.run(command, capture_output=True, check=False, text=True)
+        except OSError as exc:
+            raise RuntimeFailure(_docker_cli_error(exc), command) from exc
+        if completed.returncode != 0:
+            return None
+        state = completed.stdout.strip()
+        return state or None
 
     def stop(self, lab: Lab) -> None:
         for node in lab.nodes:
@@ -76,8 +248,7 @@ class DockerRuntime:
             try:
                 self._run(command)
             except RuntimeFailure as exc:
-                message = exc.message.lower()
-                if "no such container" not in message:
+                if not _is_missing_error(exc.message):
                     raise
 
     def reset(self, lab: Lab) -> None:
@@ -86,8 +257,7 @@ class DockerRuntime:
             try:
                 self._run(command)
             except RuntimeFailure as exc:
-                message = exc.message.lower()
-                if "no such container" not in message:
+                if not _is_missing_error(exc.message):
                     raise
 
         for network in lab.networks:
@@ -95,8 +265,7 @@ class DockerRuntime:
             try:
                 self._run(command)
             except RuntimeFailure as exc:
-                message = exc.message.lower()
-                if "no such network" not in message:
+                if not _is_missing_error(exc.message):
                     raise
 
     def status(self, lab: Lab) -> list[RuntimeResourceStatus]:
@@ -116,16 +285,31 @@ class DockerRuntime:
 
         for node in lab.nodes:
             name = self._container_name(lab, node.id)
-            resources.append(
-                self._inspect_resource(
-                    kind="container",
-                    resource_id=node.id,
-                    name=name,
-                    command=["docker", "inspect", "--format", "{{.State.Status}}", name],
-                )
+            resource = self._inspect_resource(
+                kind="container",
+                resource_id=node.id,
+                name=name,
+                command=["docker", "inspect", "--format", "{{.State.Status}}", name],
             )
+            if resource.exists and resource.status == "running":
+                resource.note = self._container_note(name)
+            resources.append(resource)
 
         return resources
+
+    def _container_note(self, name: str) -> str | None:
+        """The first line of the container's self-reported status marker, if it keeps one."""
+        command = ["docker", "exec", name, "cat", CONTAINER_NOTE_FILE]
+        try:
+            completed = subprocess.run(
+                command, capture_output=True, check=False, text=True, timeout=5
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            return None
+        first_line = completed.stdout.strip().splitlines()
+        return first_line[0][:200] if first_line else None
 
     def list_networks(self) -> list[DockerNetworkInfo]:
         """Every network on the Docker host with its subnets, Practicum label (if any) and
@@ -169,6 +353,39 @@ class DockerRuntime:
             )
         return networks
 
+    def list_practicum_containers(self) -> list[PracticumContainerInfo]:
+        """Every container (running or not) created by Practicum, with its lab id label.
+        Raises RuntimeFailure when Docker cannot be queried."""
+        command = [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "label=practicum.lab_id",
+            "--format",
+            '{{.Names}}\t{{.Label "practicum.lab_id"}}\t{{.State}}',
+        ]
+        containers: list[PracticumContainerInfo] = []
+        for line in self._query(command).splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            containers.append(
+                PracticumContainerInfo(
+                    name=parts[0],
+                    lab_id=parts[1] if len(parts) > 1 and parts[1] else None,
+                    status=parts[2] if len(parts) > 2 and parts[2] else None,
+                )
+            )
+        return containers
+
+    def remove_container(self, name: str) -> None:
+        try:
+            self._run(["docker", "rm", "-f", name])
+        except RuntimeFailure as exc:
+            if not _is_missing_error(exc.message):
+                raise
+
     def remove_network(self, network: DockerNetworkInfo) -> None:
         """Force-removes the containers attached to `network`, then the network itself.
         Meant for Practicum-labelled leftovers whose lab is no longer known to the API."""
@@ -176,12 +393,12 @@ class DockerRuntime:
             try:
                 self._run(["docker", "rm", "-f", container])
             except RuntimeFailure as exc:
-                if "no such container" not in exc.message.lower():
+                if not _is_missing_error(exc.message):
                     raise
         try:
             self._run(["docker", "network", "rm", network.name])
         except RuntimeFailure as exc:
-            if "no such network" not in exc.message.lower():
+            if not _is_missing_error(exc.message):
                 raise
 
     def _query(self, command: list[str]) -> str:
@@ -285,6 +502,8 @@ class DockerRuntime:
                         f"{mapping.host}:{mapping.container}/{mapping.protocol}",
                     ]
                 )
+            for name, value in node.resources.sysctls.items():
+                command.extend(["--sysctl", f"{name}={value}"])
 
         for name, value in node.environment.items():
             command.extend(["-e", f"{name}={value}"])

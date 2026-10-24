@@ -14,7 +14,9 @@ import sys
 from dataclasses import dataclass
 
 # Prefer bash when the image has it (ubuntu, debian…), fall back to sh (alpine, busybox).
-SHELL_SELECTOR = "command -v bash >/dev/null 2>&1 && exec bash || exec sh"
+# Login shells (-l) so /etc/profile.d runs: quick-start nodes print their package-install
+# status there ("installing …" / "ready" / "FAILED").
+SHELL_SELECTOR = "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"
 
 LINUX_TERMINALS: tuple[tuple[str, ...], ...] = (
     ("x-terminal-emulator", "-e"),

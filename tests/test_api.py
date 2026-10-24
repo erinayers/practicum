@@ -1,8 +1,15 @@
 from fastapi.testclient import TestClient
 
 from practicum import ports
-from practicum.main import service
-from practicum.models import Lab, RuntimeResourceStatus
+from practicum.main import app, service
+from practicum.models import (
+    LAB_RUNTIME_FIELDS,
+    DockerNetworkInfo,
+    Lab,
+    NodeStartProgress,
+    PracticumContainerInfo,
+    RuntimeResourceStatus,
+)
 from practicum.runtime import RuntimeFailure
 
 
@@ -11,9 +18,30 @@ class RecordingRuntime:
         self.started_labs: list[Lab] = []
         self.stopped_labs: list[Lab] = []
         self.reset_labs: list[Lab] = []
+        self.containers: list[PracticumContainerInfo] = []
+        self.networks: list[DockerNetworkInfo] = []
+        self.removed_containers: list[str] = []
+        self.removed_networks: list[str] = []
 
-    def start(self, lab: Lab) -> None:
+    def list_practicum_containers(self) -> list[PracticumContainerInfo]:
+        return list(self.containers)
+
+    def remove_container(self, name: str) -> None:
+        self.removed_containers.append(name)
+
+    def list_networks(self) -> list[DockerNetworkInfo]:
+        return list(self.networks)
+
+    def remove_network(self, network: DockerNetworkInfo) -> None:
+        self.removed_networks.append(network.name)
+
+    def start(self, lab: Lab, on_progress=None) -> None:
         self.started_labs.append(lab.model_copy(deep=True))
+        if on_progress is not None:
+            for node in lab.nodes:
+                on_progress(
+                    NodeStartProgress(node_id=node.id, image=node.image, step="ready")
+                )
 
     def stop(self, lab: Lab) -> None:
         self.stopped_labs.append(lab.model_copy(deep=True))
@@ -41,7 +69,10 @@ class RecordingRuntime:
 
 
 class FailingRuntime:
-    def start(self, lab: Lab) -> None:
+    def start(self, lab: Lab, on_progress=None) -> None:
+        raise RuntimeFailure("Docker is unavailable", ["docker", "ps"])
+
+    def list_practicum_containers(self) -> list[PracticumContainerInfo]:
         raise RuntimeFailure("Docker is unavailable", ["docker", "ps"])
 
     def stop(self, lab: Lab) -> None:
@@ -114,9 +145,9 @@ def test_export_lab_returns_portable_spec(client: TestClient, lab_definition: di
 
     assert export_response.status_code == 200
     exported = export_response.json()
-    assert "id" not in exported
-    assert "status" not in exported
-    expected = {key: value for key, value in created.items() if key not in {"id", "status"}}
+    for field in LAB_RUNTIME_FIELDS:
+        assert field not in exported
+    expected = {key: value for key, value in created.items() if key not in LAB_RUNTIME_FIELDS}
     assert exported == expected
 
 
@@ -364,6 +395,7 @@ def test_lab_runtime_status_reports_resources(
             "exists": True,
             "status": "present",
             "error": None,
+            "note": None,
         },
         {
             "kind": "container",
@@ -372,6 +404,7 @@ def test_lab_runtime_status_reports_resources(
             "exists": True,
             "status": "running",
             "error": None,
+            "note": None,
         },
     ]
 
@@ -481,6 +514,7 @@ def test_validate_lab_accepts_docker_resource_requirements(
         "shm_size_mb": 1024,
         "exposed_ports": [80, 443],
         "port_mappings": [{"host": 8080, "container": 3000, "protocol": "tcp"}],
+        "sysctls": {},
     }
 
 
@@ -671,7 +705,7 @@ def test_get_lab_ports_missing_lab_returns_404(client: TestClient) -> None:
 def test_get_lab_ports_reports_no_conflicts_when_everything_is_free(
     monkeypatch, client: TestClient, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: True)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
     created = client.post("/labs", json=lab_definition).json()
 
     response = client.get(f"/labs/{created['id']}/ports")
@@ -686,7 +720,7 @@ def test_get_lab_ports_reports_no_conflicts_when_everything_is_free(
 def test_get_lab_ports_reports_conflict_with_recommendation(
     monkeypatch, client: TestClient, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: port != 2222)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
     created = client.post("/labs", json=lab_definition).json()
 
     response = client.get(f"/labs/{created['id']}/ports")
@@ -704,7 +738,7 @@ def test_get_lab_ports_reports_conflict_with_recommendation(
 def test_apply_port_recommendation_updates_mapping_and_rechecks(
     monkeypatch, client: TestClient, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: port != 2222)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
     created = client.post("/labs", json=lab_definition).json()
 
     response = client.post(
@@ -735,7 +769,7 @@ def test_apply_port_recommendation_missing_lab_returns_404(client: TestClient) -
 def test_apply_port_recommendation_without_conflict_returns_409(
     monkeypatch, client: TestClient, lab_definition: dict
 ) -> None:
-    monkeypatch.setattr(ports, "is_local_port_free", lambda port: True)
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
     created = client.post("/labs", json=lab_definition).json()
 
     response = client.post(
@@ -744,3 +778,361 @@ def test_apply_port_recommendation_without_conflict_returns_409(
     )
 
     assert response.status_code == 409
+
+
+# ----- lifecycle enablers: restart, delete, action lock, origin, progress -------------------
+
+
+def test_restart_running_lab_stops_then_starts(client: TestClient, lab_definition: dict) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+    client.post(f"/labs/{created['id']}/start")
+
+    response = client.post(f"/labs/{created['id']}/restart")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["lab"]["status"] == "running"
+    assert len(runtime.stopped_labs) == 1
+    assert len(runtime.started_labs) == 2
+
+
+def test_restart_stopped_lab_just_starts_it(client: TestClient, lab_definition: dict) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+
+    response = client.post(f"/labs/{created['id']}/restart")
+
+    assert response.status_code == 200
+    assert response.json()["lab"]["status"] == "running"
+    assert runtime.stopped_labs == []
+    assert len(runtime.started_labs) == 1
+
+
+def test_restart_missing_lab_returns_404(client: TestClient) -> None:
+    assert client.post("/labs/not-a-real-id/restart").status_code == 404
+
+
+def test_lifecycle_calls_are_rejected_while_lab_is_busy(
+    client: TestClient, lab_definition: dict
+) -> None:
+    service.runtime = RecordingRuntime()
+    created = client.post("/labs", json=lab_definition).json()
+    service.get(created["id"]).status = "starting"  # as if another request were mid-flight
+
+    for action in ("start", "stop", "restart", "reset"):
+        response = client.post(f"/labs/{created['id']}/{action}")
+        assert response.status_code == 409, action
+        assert "already starting" in response.json()["detail"]
+    assert client.delete(f"/labs/{created['id']}").status_code == 409
+
+
+def test_start_is_blocked_by_a_host_port_conflict_detected_at_start_time(
+    client: TestClient, lab_definition: dict, monkeypatch
+) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
+
+    response = client.post(f"/labs/{created['id']}/start")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["lab"]["status"] == "error"
+    assert body["errors"][0]["message"].startswith(
+        "host port conflict: router 2222/tcp: already in use on this machine"
+    )
+    assert body["lab"]["last_error"].startswith("router 2222/tcp")
+    assert runtime.started_labs == []  # Docker was never asked
+
+
+def test_delete_lab_removes_it_and_its_runtime_resources(
+    client: TestClient, lab_definition: dict
+) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+    client.post(f"/labs/{created['id']}/start")
+
+    response = client.delete(f"/labs/{created['id']}")
+
+    assert response.status_code == 204
+    assert client.get(f"/labs/{created['id']}").status_code == 404
+    assert client.get("/labs").json() == []
+    assert len(runtime.reset_labs) == 1
+
+
+def test_delete_never_started_lab_succeeds_even_when_docker_is_down(
+    client: TestClient, lab_definition: dict
+) -> None:
+    service.runtime = FailingRuntime()  # reset raises; nothing to clean anyway
+    created = client.post("/labs", json=lab_definition).json()
+
+    response = client.delete(f"/labs/{created['id']}")
+
+    assert response.status_code == 204
+    assert client.get("/labs").json() == []
+
+
+def test_delete_always_sweeps_the_labs_docker_names(
+    client: TestClient, lab_definition: dict
+) -> None:
+    """Even a lab the API believes never started gets `docker rm -f` / `network rm` for its
+    names, so a container can never outlive its lab card."""
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+
+    assert client.delete(f"/labs/{created['id']}").status_code == 204
+    assert len(runtime.reset_labs) == 1
+
+
+# ----- leftover sweep -------------------------------------------------------------------------
+
+
+def test_sweep_removes_resources_of_unknown_labs_only(
+    client: TestClient, lab_definition: dict
+) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    kept = client.post("/labs", json=lab_definition).json()
+    runtime.containers = [
+        PracticumContainerInfo(name=f"practicum-{kept['id'][:8]}-host-a", lab_id=kept["id"]),
+        PracticumContainerInfo(name="practicum-deadbeef-ubuntu", lab_id="dead-beef", status="running"),
+        PracticumContainerInfo(name="practicum-cafebabe-router", lab_id="cafe-babe", status="exited"),
+    ]
+    runtime.networks = [
+        DockerNetworkInfo(name=f"practicum-{kept['id'][:8]}-left", lab_id=kept["id"]),
+        DockerNetworkInfo(name="practicum-deadbeef-lab-net", lab_id="dead-beef"),
+        DockerNetworkInfo(name="bridge"),  # not Practicum's: never touched
+    ]
+
+    response = client.post("/docker/sweep-leftovers")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert sorted(body["removed_containers"]) == [
+        "practicum-cafebabe-router",
+        "practicum-deadbeef-ubuntu",
+    ]
+    assert body["removed_networks"] == ["practicum-deadbeef-lab-net"]
+    assert body["errors"] == [] and body["error"] is None
+    assert runtime.removed_containers == ["practicum-deadbeef-ubuntu", "practicum-cafebabe-router"]
+
+
+def test_sweep_reports_docker_unavailable_instead_of_failing(client: TestClient) -> None:
+    service.runtime = FailingRuntime()
+
+    response = client.post("/docker/sweep-leftovers")
+
+    assert response.status_code == 200
+    assert response.json()["error"] == "Docker is unavailable"
+
+
+def test_api_startup_sweeps_leftovers(lab_definition: dict) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    runtime.containers = [PracticumContainerInfo(name="practicum-old-ubuntu", lab_id="old")]
+
+    with TestClient(app) as started_client:  # the context manager runs the lifespan
+        assert started_client.get("/health").status_code == 200
+
+    assert runtime.removed_containers == ["practicum-old-ubuntu"]
+
+
+def test_delete_keeps_lab_when_its_resources_cannot_be_removed(
+    client: TestClient, lab_definition: dict
+) -> None:
+    service.runtime = RecordingRuntime()
+    created = client.post("/labs", json=lab_definition).json()
+    client.post(f"/labs/{created['id']}/start")
+    service.runtime = FailingRuntime()
+
+    response = client.delete(f"/labs/{created['id']}")
+
+    assert response.status_code == 409
+    assert "Resource cleanup failed" in response.json()["detail"]
+    assert client.get(f"/labs/{created['id']}").status_code == 200
+
+
+def test_delete_missing_lab_returns_404(client: TestClient) -> None:
+    assert client.delete("/labs/not-a-real-id").status_code == 404
+
+
+def test_created_lab_records_origin_and_creation_time(
+    client: TestClient, lab_definition: dict
+) -> None:
+    designed = client.post("/labs", json=lab_definition).json()
+    quick = client.post("/labs", params={"origin": "quick_start"}, json=lab_definition).json()
+    imported = client.post(
+        "/labs/import", params={"source_file": "static-routing.json"}, json=lab_definition
+    ).json()["lab"]
+
+    assert designed["origin"] == "designer"
+    assert designed["source_file"] is None
+    assert designed["created_at"] is not None
+    assert designed["last_started_at"] is None
+    assert quick["origin"] == "quick_start"
+    assert imported["origin"] == "imported"
+    assert imported["source_file"] == "static-routing.json"
+    assert client.post("/labs", params={"origin": "bogus"}, json=lab_definition).status_code == 422
+
+
+def test_successful_start_records_last_started_at_and_clears_last_error(
+    client: TestClient, lab_definition: dict
+) -> None:
+    service.runtime = FailingRuntime()
+    created = client.post("/labs", json=lab_definition).json()
+    failed = client.post(f"/labs/{created['id']}/start").json()["lab"]
+    assert failed["last_error"] == "Docker is unavailable"
+    assert failed["last_started_at"] is None
+
+    service.runtime = RecordingRuntime()
+    started = client.post(f"/labs/{created['id']}/start").json()["lab"]
+
+    assert started["last_error"] is None
+    assert started["last_started_at"] is not None
+    listed = client.get("/labs").json()[0]
+    assert listed["last_started_at"] == started["last_started_at"]
+
+
+def test_port_recommendation_keeps_origin_and_timestamps(
+    client: TestClient, lab_definition: dict, monkeypatch
+) -> None:
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
+    created = client.post(
+        "/labs/import", params={"source_file": "a.json"}, json=lab_definition
+    ).json()["lab"]
+
+    client.post(
+        f"/labs/{created['id']}/ports/apply-recommendation",
+        json={"node_id": "router", "host_port": 2222, "protocol": "tcp"},
+    )
+
+    updated = client.get(f"/labs/{created['id']}").json()
+    assert updated["origin"] == "imported"
+    assert updated["source_file"] == "a.json"
+    assert updated["created_at"] == created["created_at"]
+
+
+def test_status_reports_per_node_start_progress(client: TestClient, lab_definition: dict) -> None:
+    service.runtime = RecordingRuntime()
+    created = client.post("/labs", json=lab_definition).json()
+    assert client.get(f"/labs/{created['id']}/status").json()["progress"] == []
+
+    client.post(f"/labs/{created['id']}/start")
+
+    progress = client.get(f"/labs/{created['id']}/status").json()["progress"]
+    assert [(p["node_id"], p["step"]) for p in progress] == [
+        ("host-a", "ready"),
+        ("router", "ready"),
+        ("host-b", "ready"),
+    ]
+    assert progress[0]["image"] == "alpine:3.21"
+
+
+def test_async_start_returns_202_and_completes_in_background(
+    client: TestClient, lab_definition: dict
+) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+
+    response = client.post(f"/labs/{created['id']}/start", params={"wait": "false"})
+
+    assert response.status_code == 202
+    assert response.json()["success"] is True
+    assert response.json()["pending"] is True
+    thread = service._background_starts.get(created["id"])
+    if thread is not None:
+        thread.join(timeout=5)
+    final = client.get(f"/labs/{created['id']}/status").json()
+    assert final["lab"]["status"] == "running"
+    assert all(p["step"] == "ready" for p in final["progress"])
+    assert len(runtime.started_labs) == 1
+
+
+def test_async_start_failure_is_visible_in_status(
+    client: TestClient, lab_definition: dict
+) -> None:
+    service.runtime = FailingRuntime()
+    created = client.post("/labs", json=lab_definition).json()
+
+    response = client.post(f"/labs/{created['id']}/start", params={"wait": "false"})
+
+    assert response.status_code == 202
+    thread = service._background_starts.get(created["id"])
+    if thread is not None:
+        thread.join(timeout=5)
+    final = client.get(f"/labs/{created['id']}/status").json()
+    assert final["lab"]["status"] == "error"
+    assert final["lab"]["last_error"] == "Docker is unavailable"
+
+
+# ----- edit an existing lab (PUT) ------------------------------------------------------------
+
+
+def test_put_replaces_definition_and_keeps_identity(client: TestClient, lab_definition: dict) -> None:
+    created = client.post(
+        "/labs/import", params={"source_file": "routing.json"}, json=lab_definition
+    ).json()["lab"]
+    lab_definition["name"] = "Static Routing v2"
+    lab_definition["nodes"][0]["image"] = "ubuntu:22.04"
+
+    response = client.put(f"/labs/{created['id']}", json=lab_definition)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created["id"]
+    assert body["name"] == "Static Routing v2"
+    assert body["nodes"][0]["image"] == "ubuntu:22.04"
+    assert body["origin"] == "imported"
+    assert body["source_file"] == "routing.json"
+    assert body["created_at"] == created["created_at"]
+    assert body["status"] == "defined"
+    assert client.get(f"/labs/{created['id']}").json()["name"] == "Static Routing v2"
+
+
+def test_put_validates_like_create(client: TestClient, lab_definition: dict) -> None:
+    created = client.post("/labs", json=lab_definition).json()
+    lab_definition["interfaces"][0]["address"] = "10.9.9.9/24"  # outside its network
+
+    response = client.put(f"/labs/{created['id']}", json=lab_definition)
+
+    assert response.status_code == 422
+    assert client.get(f"/labs/{created['id']}").json()["name"] == created["name"]
+
+
+def test_put_refuses_a_running_lab(client: TestClient, lab_definition: dict) -> None:
+    service.runtime = RecordingRuntime()
+    created = client.post("/labs", json=lab_definition).json()
+    client.post(f"/labs/{created['id']}/start")
+
+    response = client.put(f"/labs/{created['id']}", json=lab_definition)
+
+    assert response.status_code == 409
+    assert "stop it before editing" in response.json()["detail"]
+
+
+def test_put_on_a_stopped_lab_resets_its_resources_first(
+    client: TestClient, lab_definition: dict
+) -> None:
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+    client.post(f"/labs/{created['id']}/start")
+    client.post(f"/labs/{created['id']}/stop")
+
+    response = client.put(f"/labs/{created['id']}", json=lab_definition)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "defined"
+    assert len(runtime.reset_labs) == 1
+
+
+def test_put_missing_lab_returns_404(client: TestClient, lab_definition: dict) -> None:
+    assert client.put("/labs/not-a-real-id", json=lab_definition).status_code == 404

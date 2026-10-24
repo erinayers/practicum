@@ -9,13 +9,17 @@ from practicum_desktop.api_client import (
     ManualSectionInfo,
     ManualTaskInfo,
     NetworkCheckResult,
+    NodeProgressInfo,
     PortCheckResult,
     PortConflict,
     PreviewResult,
     StartResult,
+    StatusResult,
     SubnetConflict,
     TopologyInfo,
     TopologyInterfaceInfo,
+    TopologyNetworkInfo,
+    TopologyNodeInfo,
 )
 from practicum_desktop.prestart_gate import PreStartGateDialog
 
@@ -35,6 +39,9 @@ class ImmediateWorker(QObject):
     def start(self) -> None:
         self.finished_call.emit(self._func(*self._args, **self._kwargs))
 
+    def isRunning(self) -> bool:
+        return False
+
 
 class FakeApiClient:
     def __init__(self, preview=None, ports=None, start=None, networks=None) -> None:
@@ -48,6 +55,9 @@ class FakeApiClient:
         self.remove_leftover_calls: list[tuple[str, str]] = []
         self.reset_calls: list[str] = []
         self.reset_result = StartResult(success=True, detail="Lab reset.")
+        self.start_waits: list[bool] = []
+        self.status_calls: list[str] = []
+        self.statuses: list[StatusResult] = []
 
     def check_networks(self, lab_id: str) -> NetworkCheckResult:
         return self._networks
@@ -76,9 +86,16 @@ class FakeApiClient:
         self.apply_calls.append((lab_id, node_id, host_port, protocol))
         return self._ports
 
-    def start_lab(self, lab_id: str) -> StartResult:
+    def start_lab(self, lab_id: str, wait: bool = True) -> StartResult:
         self.start_calls.append(lab_id)
+        self.start_waits.append(wait)
         return self._start
+
+    def get_status(self, lab_id: str) -> StatusResult:
+        self.status_calls.append(lab_id)
+        if self.statuses:
+            return self.statuses.pop(0)
+        return StatusResult(success=True, lab_status="running")
 
 
 def _preview(
@@ -106,7 +123,11 @@ def _preview(
         required_images=list(images),
         estimated_resources=EstimatedResourcesInfo(total_cpu=cpu, total_memory_mb=memory),
         topology=TopologyInfo(
-            interfaces=[TopologyInterfaceInfo(node="client", network="lan", address="10.0.1.10/24")]
+            nodes=[TopologyNodeInfo(id="client", image="alpine")],
+            networks=[TopologyNetworkInfo(id="lan", subnet="10.0.1.0/24")],
+            interfaces=[
+                TopologyInterfaceInfo(node="client", network="lan", address="10.0.1.10/24")
+            ],
         ),
         manual_sections=sections,
     )
@@ -122,11 +143,13 @@ def test_dialog_shows_preview_details(monkeypatch) -> None:
     dialog = PreStartGateDialog(api, "lab-1")
 
     assert dialog.name_label.text() == "Static Routing"
-    assert "ubuntu:22.04" in dialog.images_label.text()
+    assert [chip.text() for chip in dialog.image_chips] == ["ubuntu:22.04"]
     assert dialog.cpu_label.text() == "1.0 vCPU"
     assert dialog.memory_label.text() == "512 MB"
-    assert dialog.topology_table.rowCount() == 1
+    assert len(dialog.topology_canvas.view.links_of("client")) == 1
+    assert dialog.topology_canvas.view.connector_network("client", "client").id == "lan"
     assert "2 steps" in dialog.manual_label.text()
+    assert dialog.status_pill.text_label.text() == "Ready to start"
 
 
 def test_dialog_shows_no_manual_message_when_lab_has_none(monkeypatch) -> None:
@@ -370,7 +393,8 @@ def test_failed_owner_reset_keeps_conflict_and_explains(monkeypatch) -> None:
 
     dialog._on_reset_owner_lab(_other_lab_conflict())
 
-    assert dialog.networks_banner.text() == "❌ Docker is unavailable"
+    assert dialog.networks_banner.text() == "Docker is unavailable"
+    assert dialog.networks_banner.property("banner") == "error"  # colour, not an emoji
     assert dialog.networks_table.rowCount() == 1
     assert dialog.start_button.isEnabled() is False
 
@@ -429,3 +453,98 @@ def test_foreign_docker_network_only_offers_subnet_change(monkeypatch) -> None:
 
     assert _buttons(dialog, 0) == ["Use 10.90.0.0/24"]
     assert "not created by Practicum" in dialog.networks_table.item(0, 2).text()
+
+
+# ----- start with real progress (runtime-image-pull-progress) ------------------------------
+
+
+def test_start_asks_for_a_background_start_and_polls_until_running(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        start=StartResult(success=True, detail="Start requested.", pending=True),
+    )
+    api.statuses = [
+        StatusResult(
+            success=True,
+            lab_status="starting",
+            progress=[
+                NodeStartProgressFixture.pulling("client"),
+            ],
+        ),
+        StatusResult(
+            success=True,
+            lab_status="running",
+            progress=[NodeProgressInfo("client", "alpine", "ready")],
+        ),
+    ]
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    dialog._on_start_clicked()  # start → pending → first poll → still starting
+
+    assert api.start_waits == [False]
+    assert api.status_calls == ["lab-1"]
+    assert dialog.footer_stack.currentIndex() == 1  # progress panel replaces the pill
+    assert "Downloading alpine" in dialog.progress_panel.summary_label.text()
+    assert dialog.cancel_button.isEnabled() is False
+    assert dialog.result() != QDialog.DialogCode.Accepted
+
+    dialog._poll_status()  # the timer's next tick
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_background_start_failure_shows_the_node_error_and_reenables_start(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        start=StartResult(success=True, detail="Start requested.", pending=True),
+    )
+    api.statuses = [
+        StatusResult(
+            success=True,
+            lab_status="error",
+            last_error="node 'client' (alpine): could not pull image 'alpine': not found",
+            progress=[NodeProgressInfo("client", "alpine", "failed", detail="could not pull")],
+        )
+    ]
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    dialog._on_start_clicked()
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "could not pull image 'alpine'" in dialog.status_label.text()
+    assert dialog.footer_stack.currentIndex() == 0
+    assert dialog.start_button.isEnabled() is True
+    assert dialog.cancel_button.isEnabled() is True
+
+
+def test_gate_cannot_be_closed_while_a_start_is_in_flight(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        start=StartResult(success=True, detail="Start requested.", pending=True),
+    )
+    api.statuses = [StatusResult(success=True, lab_status="starting")]
+    dialog = PreStartGateDialog(api, "lab-1")
+    dialog.show()
+    dialog._on_start_clicked()
+
+    dialog.reject()
+
+    assert dialog.isVisible() is True  # still open: the outcome must not be lost
+    assert dialog._starting is True
+    dialog._finish_start(False, "stopped for the test")
+    dialog.reject()
+    assert dialog.isVisible() is False
+
+
+class NodeStartProgressFixture:
+    @staticmethod
+    def pulling(node_id: str) -> NodeProgressInfo:
+        return NodeProgressInfo(
+            node_id, "alpine", "pulling_image", percent=40, detail="2 of 5 layers"
+        )

@@ -32,28 +32,28 @@ the desktop mirrors the core's ID regex and rules by convention (keep in sync ma
 The desktop app contains **no lab/Docker business logic**; all validation, orchestration and
 port-conflict logic is server-side. The desktop only renders and relays.
 
-## Repository layout (as of the 2026-10-23 snapshot)
+## Repository layout (as of the 2026-10-24 snapshot)
 
 ```
 eduLabs - Copy/
 ├── README.md                   # API list + dev setup (accurate for API surface)
-├── HANDOFF.md                  # Human handoff doc — STALE (pre-Phase-7, see Tigre/06)
+├── HANDOFF.md                  # Human handoff doc — refreshed 2026-10-24, points here for detail
 ├── .gitignore                  # __pycache__, .pytest_cache, .venv, dist, build, egg-info
 ├── pyproject.toml              # core package
 ├── src/
 │   ├── practicum/              # core: __init__ main models service runtime ports networks
 │   ├── user-stories.md         # vision, personas, phases 1-7 recommended order
 │   ├── user-story-status.json  # CANONICAL machine-readable status of every story
-│   ├── user-stories/<epic>/    # one .md per story (6 epics, 40 stories)
+│   ├── user-stories/<epic>/    # one .md per story (6 epics, 47 stories)
 │   ├── future-roadmap/<epic>/  # paid-tier ideas, NOT built, 6 epics
 │   └── postman/practicum-api.postman_collection.json
-├── tests/                      # core pytest suite (132 tests)
+├── tests/                      # core pytest suite (159 tests)
 ├── examples/                   # 3 sample labs + import-probes/ (7 manual-test files + README)
 ├── design/practicum-mockups.html   # clickable HTML mockups driving Phase 7
 ├── desktop/
 │   ├── pyproject.toml
-│   ├── src/practicum_desktop/  # 16 modules + samples/ (see Tigre/03)
-│   └── tests/                  # 134 tests (+ qt_helpers.py)
+│   ├── src/practicum_desktop/  # 24 modules + samples/ (see Tigre/03)
+│   └── tests/                  # 270 tests (+ qt_helpers.py)
 └── Tigre/                      # THIS FOLDER — living memory
 ```
 

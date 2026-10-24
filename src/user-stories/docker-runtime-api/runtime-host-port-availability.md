@@ -46,3 +46,9 @@ Browser-accessible labs depend on host port mappings. If a requested host port i
 - This likely needs both API validation and desktop UI support.
 - The backend should expose a port availability check so the Windows app does not need to implement OS-specific probing alone.
 - Port availability should be checked again immediately before runtime start.
+
+## Implementation Status (update 2026-10-24)
+
+- `POST /labs/{lab_id}/start` now re-checks the host ports immediately before starting and returns a structured `host port conflict: <node> <port>/<protocol>: <reason> (try <port>)` failure (status `error`, `last_error` set) without calling Docker, so the "UI prevents start" half of the last AC holds even when conditions changed after the gate.
+- UDP mappings are now probed with a UDP socket (Tigre/06 #4).
+- Export is deliberately **not** blocked by host-port conflicts (decision D-30, Tigre/09 Q-2): host ports are machine-specific and the exported spec is portable; the last AC's wording is narrowed to start (the desktop has no export action yet — Tigre/11 S-10).

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import httpx
 
@@ -18,6 +19,15 @@ class HealthStatus:
     reachable: bool
     healthy: bool
     detail: str
+    timed_out: bool = False  # unreachable because the API was slow, not because it refused
+
+
+# How a lab came to exist on this machine, as recorded by the API (dashboard meta line).
+ORIGIN_LABELS = {
+    "designer": "Custom lab",
+    "imported": "Imported",
+    "quick_start": "Quick start",
+}
 
 
 @dataclass
@@ -25,6 +35,14 @@ class LabSummary:
     id: str
     name: str
     status: str
+    origin: str = "designer"
+    source_file: str | None = None
+    created_at: datetime | None = None
+    last_started_at: datetime | None = None
+    last_error: str | None = None
+    node_count: int = 0
+    network_count: int = 0
+    description: str = ""
 
 
 @dataclass
@@ -61,8 +79,20 @@ class PortCheckResult:
 
 @dataclass
 class StartResult:
-    """Outcome of a lifecycle call (start/reset): success plus a human-readable detail."""
+    """Outcome of a lifecycle call (start/stop/restart/reset): success plus a human-readable
+    detail. `pending` is True when the API accepted the action and continues in the
+    background (start with wait=False) - poll `get_status` until `lab_status` settles.
+    `busy` is True when the API refused because another lifecycle action is in flight."""
 
+    success: bool
+    detail: str = ""
+    lab_status: str = ""
+    pending: bool = False
+    busy: bool = False
+
+
+@dataclass
+class DeleteResult:
     success: bool
     detail: str = ""
 
@@ -75,20 +105,50 @@ class ResourceStatusInfo:
     exists: bool
     status: str | None = None  # e.g. "running", "exited", "present"
     error: str | None = None
+    note: str | None = None  # the container's own one-line status (package install marker)
+
+
+@dataclass
+class NodeProgressInfo:
+    """One node's position in the most recent start sequence (runtime-image-pull-progress)."""
+
+    node_id: str
+    image: str
+    step: str  # waiting | checking_image | pulling_image | creating_container | ready | failed
+    percent: int | None = None
+    detail: str | None = None
+
+
+NODE_STEP_LABELS = {
+    "waiting": "Waiting…",
+    "checking_image": "Checking image…",
+    "pulling_image": "Downloading image…",
+    "creating_container": "Starting container…",
+    "connecting_networks": "Connecting networks…",
+    "ready": "Ready",
+    "failed": "Failed",
+}
 
 
 @dataclass
 class StatusResult:
-    """Outcome of GET /labs/{id}/status: the lab's status plus one entry per Docker resource."""
+    """Outcome of GET /labs/{id}/status: the lab's status plus one entry per Docker resource,
+    and the per-node progress of the latest start (empty until a start was requested)."""
 
     success: bool
     lab_status: str = ""
     resources: list[ResourceStatusInfo] = field(default_factory=list)
+    progress: list[NodeProgressInfo] = field(default_factory=list)
+    last_error: str | None = None
     detail: str = ""
 
     @property
     def containers(self) -> list[ResourceStatusInfo]:
         return [r for r in self.resources if r.kind == "container"]
+
+    @property
+    def running_container_count(self) -> int:
+        return sum(1 for c in self.containers if c.exists and c.status == "running")
 
 
 @dataclass
@@ -144,6 +204,18 @@ class CreateLabResult:
     success: bool
     lab_id: str | None = None
     errors: list[FieldIssue] = field(default_factory=list)
+    detail: str = ""
+
+
+@dataclass
+class LabDefinitionResult:
+    """Outcome of GET /labs/{id} or GET /labs/{id}/export: the lab's definition as a dict
+    (exactly what the API returned) plus its name for messages."""
+
+    success: bool
+    definition: dict[str, object] = field(default_factory=dict)
+    name: str = ""
+    status: str = ""
     detail: str = ""
 
 
@@ -221,6 +293,7 @@ class EstimatedResourcesInfo:
 class PreviewResult:
     success: bool
     name: str = ""
+    status: str = ""
     description: str = ""
     author: str = ""
     version: str = ""
@@ -245,16 +318,19 @@ class ApiClient:
         self.timeout = timeout
         self.lifecycle_timeout = lifecycle_timeout
 
-    def check_health(self) -> HealthStatus:
+    def check_health(self, timeout: float | None = None) -> HealthStatus:
         try:
-            response = httpx.get(f"{self.base_url}/health", timeout=self.timeout)
+            response = httpx.get(f"{self.base_url}/health", timeout=timeout or self.timeout)
         except httpx.ConnectError:
             return HealthStatus(
                 reachable=False, healthy=False, detail="Could not connect to the Practicum API."
             )
         except httpx.TimeoutException:
             return HealthStatus(
-                reachable=False, healthy=False, detail="The Practicum API did not respond in time."
+                reachable=False,
+                healthy=False,
+                detail="The Practicum API did not respond in time.",
+                timed_out=True,
             )
         except httpx.HTTPError as exc:
             return HealthStatus(
@@ -304,7 +380,19 @@ class ApiClient:
             return LabsResult(success=False, detail="The Practicum API returned an unexpected labs response.")
 
         labs = [
-            LabSummary(id=item.get("id", ""), name=item.get("name", ""), status=item.get("status", ""))
+            LabSummary(
+                id=item.get("id", ""),
+                name=item.get("name", ""),
+                status=item.get("status", ""),
+                origin=item.get("origin") or "designer",
+                source_file=item.get("source_file"),
+                created_at=_parse_timestamp(item.get("created_at")),
+                last_started_at=_parse_timestamp(item.get("last_started_at")),
+                last_error=item.get("last_error"),
+                node_count=len(item.get("nodes") or []),
+                network_count=len(item.get("networks") or []),
+                description=item.get("description") or "",
+            )
             for item in body
         ]
         return LabsResult(success=True, labs=labs)
@@ -397,9 +485,16 @@ class ApiClient:
         ]
         return ValidateLabResult(success=True, valid=body.get("valid", False), errors=errors)
 
-    def create_lab(self, definition: dict[str, object]) -> CreateLabResult:
+    def create_lab(
+        self, definition: dict[str, object], origin: str = "designer"
+    ) -> CreateLabResult:
         try:
-            response = httpx.post(f"{self.base_url}/labs", json=definition, timeout=self.timeout)
+            response = httpx.post(
+                f"{self.base_url}/labs",
+                json=definition,
+                timeout=self.timeout,
+                params={"origin": origin},
+            )
         except httpx.HTTPError as exc:
             return CreateLabResult(success=False, detail=f"Could not save the lab: {exc}")
 
@@ -423,10 +518,78 @@ class ApiClient:
             success=False, detail=f"Could not save the lab (status {response.status_code})."
         )
 
-    def import_lab(self, definition: dict[str, object]) -> ImportLabResult:
+    def get_lab(self, lab_id: str) -> LabDefinitionResult:
+        """GET /labs/{id}: the stored lab (definition + bookkeeping) for editing."""
+        return self._get_definition(f"/labs/{lab_id}", "load the lab")
+
+    def export_lab(self, lab_id: str) -> LabDefinitionResult:
+        """GET /labs/{id}/export: the portable spec without id/status/bookkeeping."""
+        return self._get_definition(f"/labs/{lab_id}/export", "export the lab")
+
+    def _get_definition(self, path: str, verb: str) -> LabDefinitionResult:
+        try:
+            response = httpx.get(f"{self.base_url}{path}", timeout=self.timeout)
+        except httpx.HTTPError as exc:
+            return LabDefinitionResult(success=False, detail=f"Could not {verb}: {exc}")
+        if response.status_code == 404:
+            return LabDefinitionResult(success=False, detail="That lab is no longer in the list.")
+        if response.status_code != 200:
+            return LabDefinitionResult(
+                success=False, detail=f"Could not {verb} (status {response.status_code})."
+            )
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return LabDefinitionResult(
+                success=False, detail="The Practicum API returned an unexpected lab response."
+            )
+        return LabDefinitionResult(
+            success=True,
+            definition=body,
+            name=str(body.get("name") or ""),
+            status=str(body.get("status") or ""),
+        )
+
+    def update_lab(self, lab_id: str, definition: dict[str, object]) -> CreateLabResult:
+        """PUT /labs/{id}: replaces the definition (edit). 409 = running/busy/cleanup failed."""
+        try:
+            response = httpx.put(
+                f"{self.base_url}/labs/{lab_id}", json=definition, timeout=self.lifecycle_timeout
+            )
+        except httpx.HTTPError as exc:
+            return CreateLabResult(success=False, detail=f"Could not save the lab: {exc}")
+
+        if response.status_code == 200:
+            body = response.json()
+            return CreateLabResult(success=True, lab_id=body.get("id"))
+        if response.status_code == 422:
+            body = response.json()
+            errors = [
+                FieldIssue(
+                    location=[str(part) for part in item.get("loc", [])],
+                    message=item.get("msg", ""),
+                    issue_type=item.get("type", ""),
+                )
+                for item in body.get("detail", [])
+            ]
+            return CreateLabResult(success=False, errors=errors, detail="The lab is invalid.")
+        detail = _json_detail(response)
+        return CreateLabResult(
+            success=False,
+            detail=detail or f"Could not save the lab (status {response.status_code}).",
+        )
+
+    def import_lab(
+        self, definition: dict[str, object], source_file: str | None = None
+    ) -> ImportLabResult:
         try:
             response = httpx.post(
-                f"{self.base_url}/labs/import", json=definition, timeout=self.timeout
+                f"{self.base_url}/labs/import",
+                json=definition,
+                timeout=self.timeout,
+                params={"source_file": source_file} if source_file else None,
             )
         except httpx.ConnectError:
             return ImportLabResult(
@@ -481,52 +644,124 @@ class ApiClient:
             detail="The lab file is not a valid Practicum lab." if errors else "The import was rejected.",
         )
 
-    def start_lab(self, lab_id: str) -> StartResult:
-        try:
-            response = httpx.post(
-                f"{self.base_url}/labs/{lab_id}/start", timeout=self.lifecycle_timeout
-            )
-        except httpx.TimeoutException:
-            return StartResult(
-                success=False,
-                detail=(
-                    "The Practicum API did not finish starting the lab in time. It may still "
-                    "be pulling images; check the lab's status before trying again."
-                ),
-            )
-        except httpx.HTTPError as exc:
-            return StartResult(success=False, detail=f"Could not start the lab: {exc}")
+    def start_lab(self, lab_id: str, wait: bool = True) -> StartResult:
+        """POST /start. With `wait=False` the API answers at once (`pending=True`) and the
+        lab's progress is read from `get_status` until its status leaves "starting"."""
+        return self._lifecycle_call(
+            lab_id,
+            "start",
+            verb="start",
+            timeout_text=(
+                "The Practicum API did not finish starting the lab in time. It may still "
+                "be pulling images; check the lab's status before trying again."
+            ),
+            params=None if wait else {"wait": "false"},
+            success_text="Lab started." if wait else "Start requested.",
+        )
 
-        if response.status_code != 200:
-            return StartResult(success=False, detail=f"Could not start the lab (status {response.status_code}).")
+    def stop_lab(self, lab_id: str) -> StartResult:
+        return self._lifecycle_call(
+            lab_id,
+            "stop",
+            verb="stop",
+            timeout_text="The Practicum API did not finish stopping the lab in time.",
+            success_text="Lab stopped.",
+        )
 
-        body = response.json()
-        if body.get("success"):
-            return StartResult(success=True, detail="Lab started.")
-
-        errors = body.get("errors") or []
-        detail = errors[0]["message"] if errors else "The lab failed to start."
-        return StartResult(success=False, detail=detail)
+    def restart_lab(self, lab_id: str) -> StartResult:
+        return self._lifecycle_call(
+            lab_id,
+            "restart",
+            verb="restart",
+            timeout_text=(
+                "The Practicum API did not finish restarting the lab in time. Check the "
+                "lab's status before trying again."
+            ),
+            success_text="Lab restarted.",
+        )
 
     def reset_lab(self, lab_id: str) -> StartResult:
+        return self._lifecycle_call(
+            lab_id,
+            "reset",
+            verb="reset",
+            timeout_text="The Practicum API did not finish resetting the lab in time.",
+            success_text="Lab reset.",
+        )
+
+    def _lifecycle_call(
+        self,
+        lab_id: str,
+        action: str,
+        *,
+        verb: str,
+        timeout_text: str,
+        success_text: str,
+        params: dict[str, str] | None = None,
+    ) -> StartResult:
+        """Shared shape of start/stop/restart/reset: long timeout (D-22), 409 = busy,
+        structured `success=false` + `errors[]` on runtime failures (D-15)."""
         try:
             response = httpx.post(
-                f"{self.base_url}/labs/{lab_id}/reset", timeout=self.lifecycle_timeout
+                f"{self.base_url}/labs/{lab_id}/{action}",
+                timeout=self.lifecycle_timeout,
+                params=params,
+            )
+        except httpx.TimeoutException:
+            return StartResult(success=False, detail=timeout_text)
+        except httpx.HTTPError as exc:
+            return StartResult(success=False, detail=f"Could not {verb} the lab: {exc}")
+
+        if response.status_code == 409:
+            detail = _json_detail(response) or f"The lab is busy; could not {verb} it right now."
+            return StartResult(success=False, detail=detail, busy=True)
+        if response.status_code not in (200, 202):
+            return StartResult(
+                success=False,
+                detail=f"Could not {verb} the lab (status {response.status_code}).",
+            )
+
+        try:
+            body = response.json()
+        except ValueError:
+            return StartResult(
+                success=False, detail="The Practicum API returned an unexpected response."
+            )
+        lab_status = (body.get("lab") or {}).get("status", "")
+        if body.get("success"):
+            return StartResult(
+                success=True,
+                detail=success_text,
+                lab_status=lab_status,
+                pending=bool(body.get("pending")),
+            )
+        errors = body.get("errors") or []
+        detail = errors[0]["message"] if errors else f"The lab failed to {verb}."
+        return StartResult(success=False, detail=detail, lab_status=lab_status)
+
+    def delete_lab(self, lab_id: str) -> DeleteResult:
+        """DELETE /labs/{id}: the API removes the lab's Docker resources first and answers
+        409 (kept) when that is not possible."""
+        try:
+            response = httpx.delete(
+                f"{self.base_url}/labs/{lab_id}", timeout=self.lifecycle_timeout
+            )
+        except httpx.TimeoutException:
+            return DeleteResult(
+                success=False, detail="The Practicum API did not finish deleting the lab in time."
             )
         except httpx.HTTPError as exc:
-            return StartResult(success=False, detail=f"Could not reset the lab: {exc}")
+            return DeleteResult(success=False, detail=f"Could not delete the lab: {exc}")
 
-        if response.status_code != 200:
-            return StartResult(
-                success=False, detail=f"Could not reset the lab (status {response.status_code})."
-            )
-
-        body = response.json()
-        if body.get("success"):
-            return StartResult(success=True, detail="Lab reset.")
-        errors = body.get("errors") or []
-        detail = errors[0]["message"] if errors else "The lab failed to reset."
-        return StartResult(success=False, detail=detail)
+        if response.status_code == 204:
+            return DeleteResult(success=True, detail="Lab deleted.")
+        if response.status_code == 404:
+            return DeleteResult(success=True, detail="The lab was already gone.")
+        detail = _json_detail(response)
+        return DeleteResult(
+            success=False,
+            detail=detail or f"Could not delete the lab (status {response.status_code}).",
+        )
 
     def get_status(self, lab_id: str) -> StatusResult:
         try:
@@ -555,14 +790,28 @@ class ApiClient:
                 exists=bool(item.get("exists")),
                 status=item.get("status"),
                 error=item.get("error"),
+                note=item.get("note"),
             )
             for item in body.get("resources", [])
         ]
+        progress = [
+            NodeProgressInfo(
+                node_id=item.get("node_id", ""),
+                image=item.get("image", ""),
+                step=item.get("step", "waiting"),
+                percent=item.get("percent"),
+                detail=item.get("detail"),
+            )
+            for item in body.get("progress", [])
+        ]
         errors = body.get("errors") or []
+        lab = body.get("lab") or {}
         return StatusResult(
             success=True,
-            lab_status=(body.get("lab") or {}).get("status", ""),
+            lab_status=lab.get("status", ""),
             resources=resources,
+            progress=progress,
+            last_error=lab.get("last_error"),
             detail=errors[0]["message"] if errors else "",
         )
 
@@ -696,6 +945,7 @@ class ApiClient:
         return PreviewResult(
             success=True,
             name=body.get("name", ""),
+            status=body.get("status") or "",
             description=body.get("description") or "",
             author=body.get("author") or "",
             version=body.get("version") or "",
@@ -708,3 +958,24 @@ class ApiClient:
             manual_sections=sections,
             port_mappings=port_mappings,
         )
+
+
+def _json_detail(response: httpx.Response) -> str | None:
+    """The `detail` of a JSON error body, or None when the body is not JSON / has none."""
+    if not response.headers.get("content-type", "").startswith("application/json"):
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return detail if isinstance(detail, str) else None
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)  # py3.11+ accepts a trailing Z
+    except ValueError:
+        return None

@@ -192,3 +192,14 @@ def test_manual_section_rejects_duplicate_task_ids() -> None:
 def test_manual_task_rejects_invalid_id_pattern() -> None:
     with pytest.raises(ValidationError):
         ManualTask(id="Task1", text="Do something")
+
+
+def test_resource_requirements_accept_namespaced_sysctls_only() -> None:
+    from practicum.models import ResourceRequirements
+
+    ok = ResourceRequirements(sysctls={"net.ipv4.ip_forward": "1"})
+    assert ok.sysctls == {"net.ipv4.ip_forward": "1"}
+    with pytest.raises(ValidationError):
+        ResourceRequirements(sysctls={"vm.swappiness": "1"})
+    with pytest.raises(ValidationError):
+        ResourceRequirements(sysctls={"net.ipv4.ip_forward=1": "1"})

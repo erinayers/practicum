@@ -52,3 +52,18 @@ The desktop app currently has no home screen for returning users — it only off
 - Backed entirely by existing, already-implemented endpoints (`GET /labs`, `GET /labs/{lab_id}/status`); this story is desktop UI only.
 - Reference design: the "Your Labs" screen in the clickable mockup (`practicum-mockups.html`, `screen-dashboard`).
 - Delete and any other destructive action must use the in-app confirmation modal described in `windows-desktop-in-app-dialogs.md`, not a native OS dialog.
+
+## Implementation Status
+
+Done 2026-10-24 (Session 5) in `desktop/src/practicum_desktop/dashboard.py` (`WelcomeScreen`, `DashboardScreen`, `LabCard`) and `main_window.py`.
+
+- Zero labs (or API unreachable) → the welcome screen; one or more labs → the dashboard. The welcome screen offers "You have N labs · View your labs dashboard →" when labs exist. A status refresh never switches screens while the user is in the designer, the quick start form or a running lab.
+- Cards: origin icon, name, meta line (`labels.origin_meta`: "Imported from x.json" / "Quick start · single host" / "Custom lab · 3 machines · 2 networks"), status badge, activity line ("Started 12 minutes ago", "Last run yesterday", "Created 20 minutes ago"), and per-status actions: Running → **Open** (no Start call); Stopped/Ready → **Delete**, **Start** (gate); Error → **Delete**, **Reset** (red, confirmed), **Start**, with `last_error` shown on the card; Starting/Stopping → **Open**.
+- Delete asks through `dialogs.confirm(destructive=True)` ("Delete <name>?") and calls `DELETE /labs/{id}`; cancel leaves the list unchanged; a 409 (resources could not be removed) keeps the card and explains. Deleting the last lab returns to the welcome screen with a note.
+- Status mapping (D-26): `defined` is shown as **Ready** rather than the mockup's "Draft" — every stored lab is validated, so an un-validated draft cannot exist (Tigre/11 C3). "Edit" is not offered (no `PUT /labs/{id}`; Tigre/11 S-7).
+- Backend enablers built alongside: `runtime-delete-lab.md`, `lab-origin-and-timestamps.md`.
+- Tests: `desktop/tests/test_dashboard.py` (11), `desktop/tests/test_main_window.py` (24), `desktop/tests/test_labels.py`. Verified end-to-end with the fake `docker` CLI; Windows run pending.
+
+## Update 2026-10-24 (user feedback on the delete note)
+
+Transient notes (dashboard and welcome screen) are now a dismissible `NoteBanner` (× button, fixed readable width on the welcome screen, wrapping text) and the delete message describes the event: "Deleted '<name>'. Its containers and networks were removed from Docker; any lab file you imported or exported is untouched. You have no labs left - create a new lab or import one to get started." (the last sentence only when the list is empty).

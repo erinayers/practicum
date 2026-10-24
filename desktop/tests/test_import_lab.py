@@ -13,9 +13,11 @@ from practicum_desktop.api_client import (
     FieldIssue,
     ImportLabResult,
     NetworkCheckResult,
+    NodeProgressInfo,
     PortCheckResult,
     PortConflict,
     StartResult,
+    StatusResult,
     SubnetConflict,
 )
 from practicum_desktop.import_lab import (
@@ -52,25 +54,37 @@ class FakeApiClient:
         self._networks = networks or NetworkCheckResult(success=True, has_conflicts=False)
         self._start = start or StartResult(success=True, detail="Lab started.")
         self.import_calls: list[dict] = []
+        self.source_files: list[str | None] = []
         self.ports_calls: list[str] = []
         self.networks_calls: list[str] = []
         self.start_calls: list[str] = []
+        self.start_waits: list[bool] = []
+        self.status_calls: list[str] = []
+        self._statuses: list[StatusResult] = []
 
     def check_networks(self, lab_id: str) -> NetworkCheckResult:
         self.networks_calls.append(lab_id)
         return self._networks
 
-    def import_lab(self, definition: dict) -> ImportLabResult:
+    def import_lab(self, definition: dict, source_file: str | None = None) -> ImportLabResult:
         self.import_calls.append(definition)
+        self.source_files.append(source_file)
         return self._import_result
 
     def check_ports(self, lab_id: str) -> PortCheckResult:
         self.ports_calls.append(lab_id)
         return self._ports
 
-    def start_lab(self, lab_id: str) -> StartResult:
+    def start_lab(self, lab_id: str, wait: bool = True) -> StartResult:
         self.start_calls.append(lab_id)
+        self.start_waits.append(wait)
         return self._start
+
+    def get_status(self, lab_id: str) -> StatusResult:
+        self.status_calls.append(lab_id)
+        if self._statuses:
+            return self._statuses.pop(0)
+        return StatusResult(success=True, lab_status="running")
 
 
 @pytest.fixture
@@ -450,10 +464,85 @@ def test_start_failure_keeps_imported_lab_and_explains(
     assert dialog.outcome.gate_required is False
     assert dialog.result() != QDialog.DialogCode.Accepted
     assert "could not be started: Docker is not running." in dialog.detail_label.text()
-    assert "select it and use Start" in dialog.detail_label.text()
+    assert "use Start on its card" in dialog.detail_label.text()
     assert dialog.back_button.isHidden() is True
     assert dialog.close_button.isEnabled() is True
     assert RecentLabFiles(settings).paths() == [lab_file.resolve()]
+
+
+def test_import_passes_the_file_name_and_starts_without_waiting(
+    settings: QSettings, lab_file: Path, monkeypatch, immediate
+) -> None:
+    _pick_file(monkeypatch, lab_file)
+    api = FakeApiClient()
+    dialog = ImportLabDialog(api, settings)
+
+    dialog.browse_button.click()
+
+    assert api.source_files == ["static-routing.json"]
+    assert api.start_waits == [False]
+
+
+def test_pending_start_polls_status_and_renders_real_progress(
+    settings: QSettings, lab_file: Path, monkeypatch, immediate
+) -> None:
+    _pick_file(monkeypatch, lab_file)
+    api = FakeApiClient(start=StartResult(success=True, detail="Start requested.", pending=True))
+    pulling = StatusResult(
+        success=True,
+        lab_status="starting",
+        progress=[
+            NodeProgressInfo(
+                "a", "alpine:3.21", "pulling_image", percent=50, detail="2 of 4 layers"
+            )
+        ],
+    )
+    done = StatusResult(
+        success=True,
+        lab_status="running",
+        progress=[NodeProgressInfo("a", "alpine:3.21", "ready")],
+    )
+    api._statuses = [pulling, done]
+    dialog = ImportLabDialog(api, settings)
+
+    dialog.browse_button.click()  # start → pending → first poll (pulling) → timer armed
+
+    assert api.status_calls == ["lab-1"]
+    assert "Downloading alpine:3.21" in dialog.stage_label.text()
+    assert "50%" in dialog.stage_label.text()
+    assert 60 < dialog.progress_bar.value() < 100
+    assert dialog.close_button.isEnabled() is False  # still busy
+    assert dialog.outcome.started is False
+
+    dialog._poll_start_status()  # what the timer would do next
+
+    assert api.status_calls == ["lab-1", "lab-1"]
+    assert dialog.outcome.started is True
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.progress_bar.value() == 100
+
+
+def test_pending_start_failure_is_attributed_to_the_node(
+    settings: QSettings, lab_file: Path, monkeypatch, immediate
+) -> None:
+    _pick_file(monkeypatch, lab_file)
+    api = FakeApiClient(start=StartResult(success=True, detail="Start requested.", pending=True))
+    api._statuses = [
+        StatusResult(
+            success=True,
+            lab_status="error",
+            last_error="node 'a' (alpine:3.21): could not pull image 'alpine:3.21': not found",
+            progress=[NodeProgressInfo("a", "alpine:3.21", "failed", detail="could not pull")],
+        )
+    ]
+    dialog = ImportLabDialog(api, settings)
+
+    dialog.browse_button.click()
+
+    assert dialog.outcome.started is False
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "could not pull image 'alpine:3.21'" in dialog.detail_label.text()
+    assert dialog.close_button.isEnabled() is True
 
 
 def test_choose_another_file_returns_to_chooser(

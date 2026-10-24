@@ -8,3 +8,4 @@ Define a portable lab specification that can represent instructional content, to
 
 - [Define Lab Metadata](lab-spec-metadata.md)
 - [Define Docker Resource Requirements](lab-spec-docker-resources.md)
+- [Lab Origin and Activity Timestamps](lab-origin-and-timestamps.md)

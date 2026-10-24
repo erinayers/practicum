@@ -44,3 +44,11 @@ Most lab nodes are plain Linux containers with no web interface and no SSH serve
 - Implemented 2026-10-23 (MVP via an external console, as proposed in Tigre/11 S-11): `desktop/src/practicum_desktop/node_shell.py` (`shell_command`, `open_node_shell` → `ShellLaunchResult`), `ApiClient.get_status` → `StatusResult{lab_status, resources, containers}`, and the **Lab Nodes** table in `main_window.py` (`_refresh_nodes`, `_on_status_loaded`, `_on_open_shell_clicked`).
 - An in-app terminal widget (instead of a separate console window) and the running view's node picker from `windows-desktop-embedded-lab-view.md` should share this "node" concept later; the embedded-lab-view / lifecycle-controls stories own that screen.
 - Not yet manually verified on Windows: the exact behaviour of `CREATE_NEW_CONSOLE` + `cmd /k` with Docker Desktop's `docker.exe`.
+
+## Implementation Status (update 2026-10-24)
+
+The Lab nodes table (Node / Container / State / Open shell) moved into the running view (`running_view.py`), under the embedded lab view, and is refreshed by the status polling. A container that does not exist (never created, or removed by Reset) is shown as "not created" rather than Docker's "No such object" error.
+
+## Update 2026-10-24
+
+The Lab nodes table gained an **Address** column (`10.93.1.10 (probe-lan)`, one entry per interface) so students can see each node's real address next to Open shell — the first thing to compare with the manual when a ping fails.

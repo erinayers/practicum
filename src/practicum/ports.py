@@ -13,14 +13,31 @@ def api_reserved_port() -> int:
     return int(os.environ.get("PRACTICUM_API_PORT", "8000"))
 
 
-def is_local_port_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+CONFLICT_REASON_TEXT = {
+    "duplicate_in_spec": "duplicate host port in this lab",
+    "reserved_by_practicum_api": "reserved by the Practicum API",
+    "in_use_on_host": "already in use on this machine",
+}
+
+
+def is_local_port_free(port: int, protocol: str = "tcp") -> bool:
+    """Bind probe on the loopback address; UDP mappings are probed with a UDP socket."""
+    kind = socket.SOCK_DGRAM if protocol == "udp" else socket.SOCK_STREAM
+    with socket.socket(socket.AF_INET, kind) as sock:
         sock.settimeout(0.2)
         try:
             sock.bind(("127.0.0.1", port))
         except OSError:
             return False
         return True
+
+
+def describe_conflict(conflict: PortConflict) -> str:
+    """One human-readable line per conflict, e.g. "router 2222/tcp: already in use on this
+    machine (try 2223)"."""
+    reason = CONFLICT_REASON_TEXT.get(conflict.reason, conflict.reason)
+    hint = f" (try {conflict.recommended_port})" if conflict.recommended_port else ""
+    return f"{conflict.node_id} {conflict.host_port}/{conflict.protocol}: {reason}{hint}"
 
 
 def find_available_port(
@@ -65,7 +82,7 @@ def check_lab_ports(lab: Lab) -> list[PortConflict]:
             reason = "duplicate_in_spec"
         elif host == reserved_port:
             reason = "reserved_by_practicum_api"
-        elif not is_local_port_free(host):
+        elif not is_local_port_free(host, protocol):
             reason = "in_use_on_host"
         else:
             continue

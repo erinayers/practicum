@@ -78,22 +78,78 @@ Format: D-<n> · date (if known) · decision · source.
   → never touched, offer a free subnet only. Recommendations come from `10.90.0.0/16`, same
   prefix length, avoiding all Docker networks and all known labs. Moving a subnet keeps each
   interface's host offset and warns that the manual may be stale. Source: `runtime-subnet-conflicts.md`.
-- **D-17 · Quick-start subnets should come from `10.90.0.0/16`** to avoid colliding with
-  hand-authored labs (intended; not yet wired — see Tigre/06 #1).
+- **D-17 · Quick-start subnets come from `10.90.0.0/16`** to avoid colliding with hand-authored
+  labs — wired 2026-10-24 (`quickstart.build_quick_start_lab` avoids every known lab's subnets).
+- **D-25 · 2026-10-24 · Delete resets Docker resources first.** `DELETE /labs/{id}` removes the
+  lab's containers/networks (unless it never started) and only then forgets it; if cleanup fails the
+  lab is kept (status `error`, `last_error`) and the API answers 409. Nothing is orphaned silently.
+  Source: `runtime-delete-lab.md`.
+- **D-26 · 2026-10-24 · Status → badge mapping** (resolves Tigre/11 C3): `running` Running,
+  `stopped` Stopped, `defined` **Ready** (not "Draft": every stored lab is validated), `error`
+  Error (+ `last_error` shown, Reset offered), `starting`/`stopping` Starting…/Stopping… (busy;
+  only Open). `theme.STATUS_BADGES`.
+- **D-27 · 2026-10-24 · Node "role" is derived, not stored** (resolves C12): 0 interfaces
+  "unconnected", 1 "host", ≥2 "gateway" (`widgets.node_role`). No data-model change.
+- **D-28 · 2026-10-24 · The embedded view trusts self-signed certificates for localhost only**
+  (`LocalLabPage.certificateError`), and probes `http://` before `https://` per published port.
+- **D-29 · 2026-10-24 · Designer Save does not start** (resolves C2): **Save Lab** stores and
+  returns to the dashboard; **Save & Start** stores and opens the gate. Quick start's **Create
+  Lab** = save + gate (the mockup's straight-to-running is replaced by the gate, per D-4).
+- **D-30 · 2026-10-24 · Export is not blocked by host-port conflicts** (resolves Q-2 / C11): the
+  exported spec is portable and host ports are machine-specific. Start re-checks ports
+  server-side instead (`runtime-host-port-availability` last AC narrowed to Start).
+- **D-31 · 2026-10-24 · Start stays synchronous by default; `?wait=false` is the async variant.**
+  `POST /start` without the flag blocks as before (existing tests/Postman unchanged); the desktop
+  always uses `wait=false` + `GET /status` polling for real progress. Lifecycle calls on a lab that
+  is `starting`/`stopping` are refused with 409 (action lock).
+- **D-32 · 2026-10-24 · Quick start packages become the node command**
+  (`bash -c "apt-get update && apt-get install -y … || warn; exec sleep infinity"`) and steps
+  become one manual section each with a single "Done: <title>" task — no spec changes for either.
+  The Windows template is listed but disabled until Windows-container mode is supported.
+- **D-33 · 2026-10-24 · Origin/timestamps live on the stored `Lab`, never in the exported spec**
+  (resolves Q-6): `origin`, `source_file`, `created_at`, `last_started_at`, `last_error` =
+  `LAB_RUNTIME_FIELDS`, stripped by export and preserved by definition rewrites.
+- **D-35 · 2026-10-24 · Quick start defaults to the Ubuntu *Desktop* template** (user request: "a
+  simple image for simple or non-IT related labs"). `lscr.io/linuxserver/webtop:ubuntu-xfce` on
+  3000/3001 with `command: null`, `TITLE`, and packages via the LinuxServer
+  `universal-package-install` mod (`DOCKER_MODS` + `INSTALL_PACKAGES=a|b|c`); the terminal-only
+  `ubuntu:22.04` template stays one click away (apt-get command path). Flip `DEFAULT_TEMPLATE`
+  in `quickstart.py` if the user prefers the terminal as default.
+- **D-36 · 2026-10-24 · Machine presets are desktop-side.** `node_catalog.PRESETS` produce ordinary
+  nodes; the API/spec know nothing about presets (the designer re-derives them for display when
+  editing). The only spec change they needed is `resources.sysctls` (namespaced keys only).
+- **D-37 · 2026-10-24 · Editing replaces the definition and resets the lab.** `PUT /labs/{id}`
+  refuses running labs (409), removes a stopped lab's containers/networks, keeps id/origin/
+  timestamps, returns the lab to `defined`. Manual progress (keyed by lab id) survives.
+- **D-38 · 2026-10-24 · No emoji in the UI** (user feedback); status = words + colour, icons =
+  geometric glyphs. The app forces the Fusion style and a light palette regardless of the OS theme.
+- **D-39 · 2026-10-24 · Export uses the system save picker** — the second (and last) sanctioned
+  native dialog (D-3 amended).
+- **D-40 · 2026-10-24 · Practicum resources of unknown labs are removed at API startup.** Labs are
+  in memory only, so after a restart the previous session's containers/networks can never be
+  used again; the API sweeps everything carrying a `practicum.lab_id` label it does not know
+  (never other Docker resources). Revisit when persistence (S-1) lands: then the sweep must only
+  remove resources of labs that were deleted, and reconcile the rest.
+- **D-41 · 2026-10-24 · Worker threads are self-registering (`ManagedThread`).** Screens may keep
+  single worker attributes again; a running thread cannot be destroyed by losing its reference.
+- **D-34 · 2026-10-24 · No lambdas capturing `self` on child-widget signals** (engineering rule
+  from Tigre/06 #15); `widgets.bind()` is the sanctioned way to pass a payload with a click.
 
 ## Open questions (need the user)
 
 - **Q-1** Duplicate import: importing the same file twice → duplicate lab, or detect and offer
   resume? (`windows-desktop-import-lab-file.md` edge case.) *Interim behaviour = duplicate lab
   (D-19); still needs a real decision.*
-- **Q-2** Export + port conflicts: block export, warn, or ignore? Host-port conflicts are
-  machine-specific, so blocking a portable export seems wrong; suggest "warn only" and close the
-  AC that way. (`runtime-host-port-availability` last AC.)
-- **Q-3** Should labs persist across API restarts before the Dashboard ships? (Dashboard UX
-  assumes "returning users see their labs".)
-- **Q-4** Stop → Start semantics: `docker start` existing containers (preserves container state)
-  vs recreate. Affects Tigre/06 #2 and the Restart control.
+- ~~**Q-2** Export + port conflicts~~ → resolved by D-30 (not blocked).
+- **Q-3** Should labs persist across API restarts? The dashboard now exists and is empty after
+  every API restart — persistence (Tigre/11 S-1) is the most visible remaining gap. Still needs
+  the user's go-ahead on *where* (per-user data dir, e.g. `%LOCALAPPDATA%\Practicum`).
+- ~~**Q-4** Stop → Start semantics~~ → resolved: `docker start` of the existing containers
+  (`runtime-lab-restart`), container state preserved; Reset is the way to recreate.
 - **Q-5** Repo/product naming: keep "eduLabs" as the folder/workspace and "Practicum" as the
   product, or unify?
-- **Q-6** Lab "origin" (imported / quick start / custom) for dashboard cards: add to the spec,
-  or track desktop-side only?
+- ~~**Q-6** Lab "origin"~~ → resolved by D-33 (API-side bookkeeping on the stored lab).
+- **Q-7** (new) Should the quick start's **Instructor setup** toggle do more than reveal
+  author/version/description — e.g. hide the step editor for students? Today it only reveals the
+  metadata fields.
+- ~~**Q-8** Edit lab before/after persistence~~ → done before (user request, `designer-edit-existing-lab`).

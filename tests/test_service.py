@@ -2,7 +2,7 @@ import pytest
 
 from practicum.models import LabDefinition
 from practicum.runtime import DockerRuntime
-from practicum.service import LabNotFoundError, LabService
+from practicum.service import LabBusyError, LabNotFoundError, LabService
 
 
 @pytest.fixture
@@ -85,3 +85,46 @@ def test_preview_estimates_resources_across_nodes(
     assert preview.required_images == ["alpine:3.21"]
     assert preview.estimated_resources.total_cpu == 2.0
     assert preview.estimated_resources.total_memory_mb == 512
+
+
+def test_delete_missing_lab_raises_not_found(service: LabService) -> None:
+    with pytest.raises(LabNotFoundError):
+        service.delete("missing")
+
+
+def test_delete_forgets_a_never_started_lab_without_docker(
+    service: LabService, lab_definition: dict
+) -> None:
+    lab = service.create(LabDefinition.model_validate(lab_definition))
+
+    service.delete(lab.id)
+
+    assert service.list() == []
+
+
+def test_restart_missing_lab_raises_not_found(service: LabService) -> None:
+    with pytest.raises(LabNotFoundError):
+        service.restart("missing")
+
+
+def test_busy_lab_rejects_every_lifecycle_action(service: LabService, lab_definition: dict) -> None:
+    lab = service.create(LabDefinition.model_validate(lab_definition))
+    lab.status = "stopping"
+
+    for action in (service.start, service.stop, service.restart, service.reset, service.delete):
+        with pytest.raises(LabBusyError):
+            action(lab.id)
+    assert lab.status == "stopping"
+
+
+def test_export_strips_local_bookkeeping_fields(service: LabService, lab_definition: dict) -> None:
+    lab = service.create(
+        LabDefinition.model_validate(lab_definition), origin="imported", source_file="x.json"
+    )
+    lab.last_error = "boom"
+
+    exported = service.export(lab.id).model_dump()
+
+    for field in ("id", "status", "origin", "source_file", "created_at", "last_started_at", "last_error"):
+        assert field not in exported
+    assert exported["name"] == lab_definition["name"]
