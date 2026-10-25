@@ -15,5 +15,7 @@ Give instructors a guided workspace for creating lab specifications, defining to
 - [Export Lab Spec](designer-export-spec.md)
 - [Visual Topology Builder (Basic)](designer-visual-topology-builder.md)
 - [Quick Start Lab from a Template](designer-quick-start-lab.md)
+- [Windows Quick Start Template](designer-windows-quick-start.md)
+- [Choose Windows Tools in Quick Start](designer-windows-quick-start-packages.md)
 - [Machine Catalogue for the Custom Lab Designer](designer-node-catalog.md)
 - [Edit an Existing Lab](designer-edit-existing-lab.md)

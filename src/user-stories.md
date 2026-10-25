@@ -119,6 +119,19 @@ Stories added during Phase 7 as the work surfaced them (2026-10-23/24): backend 
 39. [Machine Catalogue for the Custom Lab Designer](user-stories/designer-mode/designer-node-catalog.md) (user feedback 2026-10-24)
 40. [Edit an Existing Lab](user-stories/designer-mode/designer-edit-existing-lab.md) (user feedback 2026-10-24; backend `PUT /labs/{id}`)
 
+### Phase 8: Add Windows Quick Start Support
+
+Windows Quick Start is a separate, future capability from the existing Linux-container templates.
+It starts with host readiness, then a PowerShell-based Windows Server Core lab, shell integration,
+and an optional catalog of compatible command-line tools. Practicum must not silently switch
+Docker Desktop's global engine mode.
+
+41. [Windows Container Readiness for Quick Start](user-stories/windows-desktop-application/windows-desktop-windows-container-readiness.md)
+42. [Windows Quick Start Template](user-stories/designer-mode/designer-windows-quick-start.md)
+43. [Open a PowerShell Shell on a Windows Lab Node](user-stories/windows-desktop-application/windows-desktop-open-windows-shell.md)
+44. [Choose Windows Tools in Quick Start](user-stories/designer-mode/designer-windows-quick-start-packages.md)
+45. [Use Design Icons Across the Desktop UI](user-stories/windows-desktop-application/windows-desktop-design-icons.md)
+
 ## First Product Slice
 
 The first complete slice should let an instructor create or export a JSON lab file, let a student import it into the Windows app, validate it, start Docker containers, open the lab manual flyout, and stop the lab when finished.

@@ -19,7 +19,7 @@ The mockup's `screen-quickstart` ("Configure your Quick start lab": lab name, te
 
 ## Functional Requirements
 
-- Templates: **Ubuntu Desktop** (`lscr.io/linuxserver/webtop:ubuntu-xfce`, 2 vCPU / 2 GB / 1 GB shm, host ports 3000 (http) and 3001 (https), `TITLE` = lab name, image command kept so its own init runs) — the default; **Ubuntu** (`ubuntu:22.04`, 1 vCPU / 1 GB); Windows listed but disabled with the reason.
+- Templates: **Ubuntu Desktop** (`lscr.io/linuxserver/webtop:ubuntu-xfce`, 2 vCPU / 2 GB / 1 GB shm, host ports 3000 (http) and 3001 (https), `TITLE` = lab name, image command kept so its own init runs) — the default; **Ubuntu** (`ubuntu:22.04`, 1 vCPU / 1 GB); Windows listed but disabled until the Windows Quick Start stories are complete.
 - Packages are validated as Debian package names (lowercase letters, digits, `+ . -`) and de-duplicated. Terminal template: they become the node command `apt-get update && apt-get install -y <packages>` followed by `sleep infinity` (a failed install is logged but leaves the shell usable; no packages → the spec default command). Desktop template: they are installed by the image's own init through the LinuxServer `universal-package-install` mod (`DOCKER_MODS=linuxserver/mods:universal-package-install`, `INSTALL_PACKAGES=a|b|c`); the desktop ships with a browser, file manager and terminal, so its package list is empty by default.
 - The running view's embedded lab view loads the desktop template's port 3000 automatically once the container answers; the terminal template has no browser port and points the student at Open shell.
 - Each titled step becomes one manual section (title, Markdown details, one "Done: <title>" task) so the flyout shows numbered, checkable steps; untitled steps are ignored.
@@ -48,7 +48,7 @@ The mockup's `screen-quickstart` ("Configure your Quick start lab": lab name, te
 
 - `desktop/src/practicum_desktop/quickstart.py` (`QuickStartTemplate` with `kind` desktop|terminal, `TEMPLATES`, `QuickStartDraft`, `build_quick_start_lab`, `package_install_command`, `desktop_package_environment`, `steps_to_manual`, `create_quick_start_lab`), `create_lab.py` (`CreateLabScreen` template radios in a `QButtonGroup`, `QuickStartScreen`, `StepRow`), wiring in `main_window.py::_on_quick_start_create`.
 - Decision D-35 (Tigre/09): the desktop template is the default because it is the friendliest start for the non-IT audience; the terminal template stays one click away.
-- Absorbs the second half of Tigre/11 S-15 and fixes Tigre/06 #1 (D-17 now wired). The Windows template stays disabled until Practicum drives Docker's Windows-container mode.
+- Absorbs the second half of Tigre/11 S-15 and fixes Tigre/06 #1 (D-17 now wired). Windows support is planned in `designer-windows-quick-start.md`, `windows-desktop-windows-container-readiness.md`, `windows-desktop-open-windows-shell.md`, and `designer-windows-quick-start-packages.md`. Practicum must check readiness and guide the user; it must not silently switch Docker Desktop's global engine mode.
 - Reference design: `screen-quickstart` in `design/practicum-mockups.html`.
 
 ## Implementation Status

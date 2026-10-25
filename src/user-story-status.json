@@ -104,6 +104,18 @@
         "designer-node-catalog",
         "designer-edit-existing-lab"
       ]
+    },
+    {
+      "id": "phase-8",
+      "title": "Add Windows Quick Start Support",
+      "status": "not_started",
+      "stories": [
+        "windows-desktop-windows-container-readiness",
+        "designer-windows-quick-start",
+        "windows-desktop-open-windows-shell",
+        "designer-windows-quick-start-packages",
+        "windows-desktop-design-icons"
+      ]
     }
   ],
   "status_values": [
@@ -1444,6 +1456,71 @@
           "text": "The lab's manual is unchanged after an edit that only touched the topology.",
           "complete": true
         }
+      ]
+    },
+    {
+      "id": "windows-desktop-windows-container-readiness",
+      "epic": "Windows Desktop Application",
+      "title": "Windows Container Readiness for Quick Start",
+      "status": "not_started",
+      "notes": "New 2026-10-24. Read-only Docker engine/host preflight for Windows Quick Start. Practicum guides the user to meet Docker Desktop's current requirements and switch modes manually; it never changes the global daemon mode itself.",
+      "acceptance_criteria": [
+        { "text": "The app distinguishes an unavailable Docker daemon, a Linux-container daemon, and a Windows-container daemon.", "complete": false },
+        { "text": "Windows Quick Start stays disabled until Windows-container readiness passes, with actionable requirements and a Retry action.", "complete": false },
+        { "text": "Linux Quick Start remains available in normal Linux-container mode.", "complete": false },
+        { "text": "Practicum does not switch Docker Desktop's engine automatically.", "complete": false }
+      ]
+    },
+    {
+      "id": "designer-windows-quick-start",
+      "epic": "Designer Mode",
+      "title": "Windows Quick Start Template",
+      "status": "not_started",
+      "notes": "New 2026-10-24. Single Windows Server Core command-line sandbox with a versioned, host-compatible image and PowerShell; not a full Windows desktop or VM. Depends on windows-desktop-windows-container-readiness and Windows shell support.",
+      "acceptance_criteria": [
+        { "text": "The Windows template is selectable only when Windows-container readiness passes.", "complete": false },
+        { "text": "Create produces a valid one-node lab with a pinned, compatible Windows Server Core image and the user's manual steps.", "complete": false },
+        { "text": "The node starts a persistent PowerShell process and follows the existing pre-start, progress, and lifecycle flows.", "complete": false },
+        { "text": "A host engine-mode change after lab creation is detected before start and explained to the user.", "complete": false }
+      ]
+    },
+    {
+      "id": "windows-desktop-open-windows-shell",
+      "epic": "Windows Desktop Application",
+      "title": "Open a PowerShell Shell on a Windows Lab Node",
+      "status": "not_started",
+      "notes": "New 2026-10-24. Extend Open shell so Windows nodes use PowerShell while Linux nodes retain bash/sh. The lab spec needs an explicit shell/OS hint if it cannot be derived reliably.",
+      "acceptance_criteria": [
+        { "text": "Open shell on a running Windows Quick Start node opens an interactive PowerShell prompt inside that container.", "complete": false },
+        { "text": "Open shell on Linux nodes continues to prefer bash and fall back to sh.", "complete": false },
+        { "text": "Stopped or missing Windows containers show an actionable error instead of a silent terminal failure.", "complete": false },
+        { "text": "The shell hint survives lab export and import.", "complete": false }
+      ]
+    },
+    {
+      "id": "designer-windows-quick-start-packages",
+      "epic": "Designer Mode",
+      "title": "Choose Windows Tools in Quick Start",
+      "status": "not_started",
+      "notes": "New 2026-10-24. Add a curated Windows-container-compatible command-line tool catalog with Windows-specific installation, reproducibility, and startup progress; do not reuse apt-get or LinuxServer package installation.",
+      "acceptance_criteria": [
+        { "text": "Catalog tools and custom package IDs are available for Windows Quick Start and validated before creation.", "complete": false },
+        { "text": "The generated lab installs selected tools through a documented, repeatable Windows-specific mechanism.", "complete": false },
+        { "text": "Package installation progress and failures are visible in the existing node progress/status UI.", "complete": false },
+        { "text": "Ubuntu terminal and desktop package behavior remains unchanged.", "complete": false }
+      ]
+    },
+    {
+      "id": "windows-desktop-design-icons",
+      "epic": "Windows Desktop Application",
+      "title": "Use Design Icons Across the Desktop UI",
+      "status": "not_started",
+      "notes": "Use the supplied design/icons.png artwork for common status and action cues through shared desktop icon handling, with accessible labels and Windows release asset resolution.",
+      "acceptance_criteria": [
+        { "text": "The supplied icons are mapped to their intended meanings in shared icon definitions.", "complete": false },
+        { "text": "Check/success, error/warning, and terminal/shell cues use the corresponding icons consistently.", "complete": false },
+        { "text": "Status and action meaning remains clear without color alone, and icon-only controls expose an accessible name or tooltip.", "complete": false },
+        { "text": "Icons render legibly in the packaged Windows app and missing assets do not prevent launch or primary workflows.", "complete": false }
       ]
     }
   ]
