@@ -13,7 +13,7 @@ def test_docker_runtime_creates_networks_and_containers(
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -58,7 +58,7 @@ def test_docker_runtime_supports_browser_desktop_options(
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -110,7 +110,7 @@ def test_docker_runtime_stops_containers(monkeypatch, lab_definition: dict) -> N
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -132,7 +132,7 @@ def test_docker_runtime_resets_containers_and_networks(monkeypatch, lab_definiti
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -154,7 +154,7 @@ def test_docker_runtime_resets_containers_and_networks(monkeypatch, lab_definiti
 
 def test_docker_runtime_reports_resource_status(monkeypatch, lab_definition: dict) -> None:
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool, timeout=None
+        command: list[str], capture_output: bool, check: bool, text: bool, timeout=None, **kwargs
     ) -> subprocess.CompletedProcess:
         if command[:3] == ["docker", "network", "inspect"]:
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -199,7 +199,7 @@ def test_docker_runtime_cleans_up_partial_start(monkeypatch, lab_definition: dic
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:2] == ["docker", "run"] and "practicum-12345678-router" in command:
@@ -235,7 +235,7 @@ def test_docker_runtime_removes_empty_practicum_network_with_same_subnet(
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:3] == ["docker", "network", "ls"]:
@@ -265,7 +265,7 @@ def test_docker_runtime_reuses_existing_network_for_same_lab(
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:3] == ["docker", "network", "ls"] and "name=^practicum-12345678-left$" in command:
@@ -288,7 +288,7 @@ def test_docker_runtime_raises_actionable_error_on_pool_overlap(
     monkeypatch, lab_definition: dict
 ) -> None:
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         if command[:3] == ["docker", "network", "create"]:
             return subprocess.CompletedProcess(
@@ -382,7 +382,7 @@ def test_docker_runtime_stop_ignores_already_removed_containers(
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 1, "", "Error: No such container: missing")
@@ -402,7 +402,7 @@ def test_docker_runtime_reset_ignores_already_removed_resources(
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:2] == ["docker", "rm"]:
@@ -422,7 +422,7 @@ def test_docker_runtime_raises_when_no_gateway_address_available(monkeypatch) ->
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -470,7 +470,7 @@ def test_docker_runtime_lists_networks_with_subnets_labels_and_containers(monkey
     commands: list[list[str]] = []
 
     def fake_run(
-        command: list[str], capture_output: bool, check: bool, text: bool
+        command: list[str], capture_output: bool, check: bool, text: bool, **kwargs
     ) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:3] == ["docker", "network", "ls"]:
@@ -500,7 +500,7 @@ def test_docker_runtime_lists_networks_with_subnets_labels_and_containers(monkey
 
 
 def test_docker_runtime_list_networks_is_empty_when_docker_has_none(monkeypatch) -> None:
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -509,7 +509,7 @@ def test_docker_runtime_list_networks_is_empty_when_docker_has_none(monkeypatch)
 
 
 def test_docker_runtime_list_networks_raises_when_docker_unavailable(monkeypatch) -> None:
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(
             command, 1, "", "error during connect: Docker Desktop is not running"
         )
@@ -525,7 +525,7 @@ def test_docker_runtime_list_networks_raises_when_docker_unavailable(monkeypatch
 def test_docker_runtime_remove_network_removes_containers_then_network(monkeypatch) -> None:
     commands: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -547,7 +547,7 @@ def test_docker_runtime_remove_network_removes_containers_then_network(monkeypat
 
 
 def test_docker_runtime_remove_network_tolerates_already_gone_resources(monkeypatch) -> None:
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         if command[:2] == ["docker", "rm"]:
             return subprocess.CompletedProcess(command, 1, "", "Error: No such container: x")
         return subprocess.CompletedProcess(command, 1, "", "Error: No such network: y")
@@ -571,7 +571,7 @@ def test_docker_runtime_restarts_existing_containers_instead_of_recreating(
 ) -> None:
     commands: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:2] == ["docker", "inspect"]:
             return subprocess.CompletedProcess(command, 0, "exited\n", "")  # left by Stop
@@ -596,7 +596,7 @@ def test_docker_runtime_checks_image_locally_and_skips_pull_when_present(
     commands: list[list[str]] = []
     popen_calls: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -650,7 +650,7 @@ def test_docker_runtime_pulls_missing_image_and_reports_layer_progress(
     ]
     popen_calls: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         if command[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(command, 1, "", "Error: No such image: alpine:3.21")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -681,7 +681,7 @@ def test_docker_runtime_attributes_pull_failure_to_the_node(
 ) -> None:
     commands: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         commands.append(command)
         if command[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(command, 1, "", "Error: No such image")
@@ -715,7 +715,7 @@ def test_docker_runtime_attributes_pull_failure_to_the_node(
 def test_docker_runtime_image_check_raises_when_docker_is_down(
     monkeypatch, lab_definition: dict
 ) -> None:
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         if command[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(
                 command, 1, "", "Cannot connect to the Docker daemon at npipe:////./pipe/docker_engine"
@@ -737,7 +737,7 @@ def test_docker_runtime_reset_tolerates_dockers_network_not_found_wording(
     """`docker network rm` says "network X not found" (not "No such network"); a reset of a
     lab whose networks are already gone must still succeed."""
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         if command[:3] == ["docker", "network", "rm"]:
             return subprocess.CompletedProcess(
                 command, 1, "", f"Error response from daemon: network {command[-1]} not found"
@@ -756,7 +756,7 @@ def test_docker_runtime_reset_tolerates_dockers_network_not_found_wording(
 def test_docker_runtime_passes_sysctls_for_router_nodes(monkeypatch, lab_definition: dict) -> None:
     commands: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -774,7 +774,7 @@ def test_docker_runtime_passes_sysctls_for_router_nodes(monkeypatch, lab_definit
 
 
 def test_docker_runtime_lists_practicum_containers_with_lab_ids(monkeypatch) -> None:
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         assert command[:4] == ["docker", "ps", "-a", "--filter"]
         return subprocess.CompletedProcess(
             command, 0, "practicum-aaaa-host\taaaa-1111\trunning\npracticum-bbbb-web\tbbbb-2222\texited\n", ""
@@ -793,7 +793,7 @@ def test_docker_runtime_lists_practicum_containers_with_lab_ids(monkeypatch) -> 
 def test_docker_runtime_remove_container_tolerates_missing(monkeypatch) -> None:
     commands: list[list[str]] = []
 
-    def fake_run(command, capture_output, check, text) -> subprocess.CompletedProcess:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
         commands.append(command)
         return subprocess.CompletedProcess(command, 1, "", "Error: No such container: gone")
 
