@@ -1,10 +1,18 @@
 """Create New Lab chooser and Quick start configuration screens
-(windows-desktop-create-lab-screen, designer-quick-start-lab).
+(windows-desktop-create-lab-screen, designer-quick-start-lab, designer-windows-quick-start,
+windows-desktop-windows-container-readiness).
 
 `CreateLabScreen` mirrors the mockup's `screen-create`: two choice cards - Quick start
-(single host from an OS template) and Custom Lab (the designer). `QuickStartScreen` mirrors
-`screen-quickstart`: lab name, the chosen template, "What's included" package chips and a
-step editor for the instructions, with an "Instructor setup" toggle that reveals the
+(single host from an OS template) and Custom Lab (the designer). Which templates can be
+chosen follows the Docker engine mode the owner pushes in with `set_docker_status()`: the
+Ubuntu templates while Docker Desktop serves Linux containers, the Windows template while it
+serves Windows containers. The Windows readiness panel under the templates explains the
+detected blocker (no Docker / Linux engine), links to Docker's and Microsoft's current
+requirements and offers Retry; Practicum never switches the engine itself.
+
+`QuickStartScreen` mirrors `screen-quickstart`: lab name, the chosen template, "What's
+included" package chips (apt packages, or Chocolatey tool ids for Windows) and a step editor
+for the instructions, with an "Instructor setup" toggle that reveals the
 author/version/description fields. The screen only assembles a `QuickStartDraft`; the
 owner turns it into a lab through `quickstart.create_quick_start_lab` and then routes the
 new lab through the pre-start gate like any other Start (D-4).
@@ -21,15 +29,21 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QRadioButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
+from practicum_desktop.docker_status import (
+    DOCKER_WINDOWS_INSTALL_URL,
+    WINDOWS_CONTAINER_COMPATIBILITY_URL,
+    DockerStatus,
+    WindowsContainerReadiness,
+    windows_container_readiness,
+)
+from practicum_desktop.manual_editor import ManualStepsEditor, StepRow
 from practicum_desktop.quickstart import (
     DEFAULT_TEMPLATE,
     TEMPLATES,
@@ -37,7 +51,6 @@ from practicum_desktop.quickstart import (
     QuickStartStep,
     QuickStartTemplate,
     catalog_for,
-    catalog_option,
     packages_for_options,
     template_by_key,
     validate_package_name,
@@ -57,13 +70,11 @@ from practicum_desktop.widgets import (
     bind,
     bottom_bar,
     copyable_label,
-    discard,
     make_button,
     page_container,
     payload_of,
     powered_by_docker,
     role_label,
-    style_frame,
 )
 
 MINI_TOPOLOGY = (
@@ -94,7 +105,11 @@ class ChoiceCard(QFrame):
         layout.setSpacing(8)
 
         top = QHBoxLayout()
-        icon_label = QLabel(icon)
+        if icon in icons.ICONS and icons.icon_available(icon):
+            icon_label = icons.icon_label(icon, 22, title)
+        else:
+            icon_label = QLabel(icon)
+            icon_label.setAccessibleName(title)
         icon_label.setFixedSize(38, 38)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon_label.setStyleSheet(
@@ -110,56 +125,167 @@ class ChoiceCard(QFrame):
         self.body_layout = QVBoxLayout()
         self.body_layout.setSpacing(8)
         layout.addLayout(self.body_layout, 1)
-        self.button = make_button(f"{cta} \u2192", kind="primary")
+        if icons.icon_available("forward"):
+            self.button = make_button(cta, kind="primary", icon="forward", icon_trailing=True)
+        else:
+            self.button = make_button(f"{cta} \u2192", kind="primary")
         self.button.clicked.connect(self.chosen.emit)
         layout.addWidget(self.button)
 
 
 class TemplateOption(QFrame):
-    """.template-option: a radio row 'Ubuntu / Linux template'."""
+    """.template-option: a radio row 'Ubuntu / Terminal only'. Availability is set at runtime
+    from the Docker engine mode (`set_available`); an unavailable row keeps its tooltip and
+    still reacts to a click by emitting `inspected`, so the user can ask why."""
+
+    inspected = Signal(str)  # template key - clicked (even when unavailable)
 
     def __init__(self, template: QuickStartTemplate, parent=None) -> None:
         super().__init__(parent)
         self.template = template
+        self.available = True
+        self.unavailable_reason = ""
         self.setProperty("panel", "true")
-        self.setCursor(
-            Qt.CursorShape.PointingHandCursor
-            if template.available
-            else Qt.CursorShape.ForbiddenCursor
-        )
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 8, 8, 8)
         row.setSpacing(8)
-        icon = QLabel(template.icon)
-        icon.setStyleSheet("font-size: 15px;")
+        if icons.icon_available(template.icon_name):
+            icon = icons.icon_label(template.icon_name, 16, template.title)
+        else:
+            icon = QLabel(template.icon)
+            icon.setStyleSheet("font-size: 15px;")
         row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         texts = QVBoxLayout()
         texts.setSpacing(0)
         texts.addWidget(role_label(template.title, "label"))
-        caption = template.caption if template.available else f"{template.caption} \u00b7 soon"
-        caption_label = role_label(caption, "hint", wrap=True)
-        texts.addWidget(caption_label)
+        self.caption_label = role_label(template.caption, "hint", wrap=True)
+        texts.addWidget(self.caption_label)
         row.addLayout(texts, 1)
         self.radio = QRadioButton()
-        self.radio.setEnabled(template.available)
+        self.radio.setAccessibleName(f"{template.title} template")
         row.addWidget(self.radio)
-        if not template.available:
-            self.setToolTip(template.unavailable_reason)
-            self.radio.setToolTip(template.unavailable_reason)
+        self.set_available(True, "")
+
+    def set_available(self, available: bool, reason: str = "") -> None:
+        self.available = available
+        self.unavailable_reason = reason
+        self.radio.setEnabled(available)
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor if available else Qt.CursorShape.ForbiddenCursor
+        )
+        suffix = "" if available else " \u00b7 unavailable"
+        self.caption_label.setText(f"{self.template.caption}{suffix}")
+        self.setToolTip(reason)
+        self.radio.setToolTip(reason)
 
     def mousePressEvent(self, event) -> None:
-        if self.template.available:
+        if self.available:
             self.radio.setChecked(True)
+        self.inspected.emit(self.template.key)
         super().mousePressEvent(event)
+
+
+def template_availability(
+    template: QuickStartTemplate, docker: DockerStatus | None
+) -> tuple[bool, str]:
+    """(available, reason) for `template` given the last Docker probe. Unknown Docker state
+    (None) leaves the Linux templates usable - Docker is only needed at Start - while the
+    Windows template waits for a positive readiness check."""
+    if template.os == "windows":
+        if docker is None:
+            return False, "Checking whether Docker Desktop serves Windows containers\u2026"
+        readiness = windows_container_readiness(docker)
+        if readiness.ready:
+            return True, ""
+        return False, f"{readiness.detail} {readiness.next_action}"
+    if docker is not None and docker.available and docker.os_type == "windows":
+        return False, (
+            "Docker Desktop is serving Windows containers, so this Linux template cannot "
+            "start. Right-click the Docker whale icon and choose 'Switch to Linux "
+            "containers...', then select Retry."
+        )
+    return True, ""
+
+
+class WindowsReadinessPanel(QFrame):
+    """The Windows-container readiness verdict under the templates: state line with the
+    design icon, the next action in plain words, links to the current Docker Desktop and
+    Microsoft requirements, and Retry (windows-desktop-windows-container-readiness)."""
+
+    retry_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("panel", "soft")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(6)
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self.state_icon = icons.icon_label("warning", 16, "Windows containers")
+        head.addWidget(self.state_icon, 0, Qt.AlignmentFlag.AlignTop)
+        self.state_label = role_label("", "label", wrap=True)
+        head.addWidget(self.state_label, 1)
+        self.retry_button = make_button("Retry", small=True)
+        self.retry_button.setToolTip(
+            "Check again whether Docker Desktop is reachable and which containers it serves"
+        )
+        self.retry_button.clicked.connect(self.retry_requested.emit)
+        head.addWidget(self.retry_button, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(head)
+        self.action_label = copyable_label("", role="muted")
+        layout.addWidget(self.action_label)
+        self.links_label = QLabel(
+            f'<a href="{DOCKER_WINDOWS_INSTALL_URL}">Docker Desktop Windows requirements '
+            "and how to switch container mode</a> \u00b7 "
+            f'<a href="{WINDOWS_CONTAINER_COMPATIBILITY_URL}">Windows host / container '
+            "image compatibility</a>"
+        )
+        self.links_label.setProperty("role", "hint")
+        self.links_label.setOpenExternalLinks(True)
+        self.links_label.setWordWrap(True)
+        self.links_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        layout.addWidget(self.links_label)
+        self.readiness: WindowsContainerReadiness | None = None
+        self.set_checking()
+
+    def set_checking(self) -> None:
+        self.readiness = None
+        icons.set_label_icon(self.state_icon, "warning", 16)
+        self.state_label.setText("Windows containers: checking Docker Desktop\u2026")
+        self.action_label.setText("")
+        self.action_label.hide()
+        self.links_label.hide()
+        self.retry_button.setEnabled(False)
+
+    def set_readiness(self, readiness: WindowsContainerReadiness) -> None:
+        self.readiness = readiness
+        self.retry_button.setEnabled(True)
+        icon_name = {"ready": "success", "linux_engine": "warning"}.get(readiness.state, "error")
+        icons.set_label_icon(self.state_icon, icon_name, 16)
+        if readiness.ready:
+            self.state_label.setText(f"Windows containers: ready. {readiness.detail}")
+            self.action_label.setText(
+                "The Windows template can be used. The Ubuntu templates and other Linux labs "
+                "stay unavailable until Docker Desktop is switched back to Linux containers."
+            )
+        else:
+            self.state_label.setText(f"Windows template unavailable: {readiness.detail}")
+            self.action_label.setText(readiness.next_action)
+        self.action_label.show()
+        self.links_label.show()
 
 
 class CreateLabScreen(QWidget):
     back_requested = Signal()
     quick_start_requested = Signal(str)  # template key
     custom_requested = Signal()
+    readiness_retry_requested = Signal()  # re-probe Docker (owner runs it off-thread)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._docker: DockerStatus | None = None
+        self._inspected_key: str | None = None
         self.setObjectName("screen")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -187,7 +313,7 @@ class CreateLabScreen(QWidget):
 
         self.quick_card = ChoiceCard(
             "Single host",
-            "\u25b6",
+            "play",
             "Quick start",
             "Start a basic lab with one host. Choose an operating system to generate your "
             "image template.",
@@ -197,6 +323,9 @@ class CreateLabScreen(QWidget):
         templates_row.setSpacing(8)
         self.template_hint = role_label("", "hint", wrap=True)
         self.template_description = role_label("", "muted", wrap=True)
+        self.readiness_panel = WindowsReadinessPanel()
+        self.readiness_panel.retry_requested.connect(self._on_readiness_retry)
+        self.readiness_panel.hide()
         # The radios live in separate frames, so Qt would not make them exclusive by itself.
         self._template_group = QButtonGroup(self)
         self._template_group.setExclusive(True)
@@ -205,6 +334,7 @@ class CreateLabScreen(QWidget):
             option = TemplateOption(template)
             self._template_group.addButton(option.radio)
             option.radio.toggled.connect(self._on_template_toggled)
+            option.inspected.connect(self._on_template_inspected)
             templates_row.addWidget(option, 1)
             self.template_options.append(option)
         default_index = next(
@@ -219,13 +349,14 @@ class CreateLabScreen(QWidget):
         self.quick_card.body_layout.addLayout(templates_row)
         self.quick_card.body_layout.addWidget(self.template_description)
         self.quick_card.body_layout.addWidget(self.template_hint)
+        self.quick_card.body_layout.addWidget(self.readiness_panel)
         self.quick_card.body_layout.addStretch(1)
         self.quick_card.chosen.connect(self._on_quick_start_chosen)
         choices.addWidget(self.quick_card, 1)
 
         self.custom_card = ChoiceCard(
             "Multiple images",
-            "\u25c6",
+            "tools",
             "Custom Lab",
             "Build an advanced networking lab with multiple Docker images and connections "
             "between hosts.",
@@ -245,10 +376,76 @@ class CreateLabScreen(QWidget):
         choices.addWidget(self.custom_card, 1)
         layout.addLayout(choices, 1)
         outer.addWidget(powered_by_docker())
+        self._apply_availability()
         self._on_template_toggled()
 
+    # ----- engine mode / readiness ----------------------------------------------------------
+
+    @property
+    def docker_status(self) -> DockerStatus | None:
+        return self._docker
+
+    def windows_readiness(self) -> WindowsContainerReadiness | None:
+        return windows_container_readiness(self._docker) if self._docker is not None else None
+
+    def set_docker_status(self, docker: DockerStatus | None) -> None:
+        """Applies a fresh Docker probe: enables the templates the engine mode can run,
+        updates the readiness panel. None = a check is in progress."""
+        self._docker = docker
+        self._apply_availability()
+        if docker is None:
+            self.readiness_panel.set_checking()
+        else:
+            self.readiness_panel.set_readiness(windows_container_readiness(docker))
+        self._update_readiness_panel_visibility()
+        self._on_template_toggled()
+
+    def set_checking(self) -> None:
+        self.readiness_panel.set_checking()
+        self.readiness_panel.retry_button.setEnabled(False)
+
+    def _apply_availability(self) -> None:
+        for option in self.template_options:
+            available, reason = template_availability(option.template, self._docker)
+            option.set_available(available, reason)
+        current = next((o for o in self.template_options if o.radio.isChecked()), None)
+        if current is None or not current.available:
+            # The selection became unavailable (engine switched): move to the first usable
+            # template - the exclusive group unchecks the old one.
+            fallback = next((o for o in self.template_options if o.available), None)
+            if fallback is not None:
+                fallback.radio.setChecked(True)
+
+    def template_option(self, key: str) -> TemplateOption:
+        return next(o for o in self.template_options if o.template.key == key)
+
+    def _on_template_inspected(self, key: str) -> None:
+        self._inspected_key = key
+        self._update_readiness_panel_visibility()
+
+    def _on_readiness_retry(self) -> None:
+        self.set_checking()
+        self.readiness_retry_requested.emit()
+
+    def _update_readiness_panel_visibility(self) -> None:
+        """The panel is shown when the Windows template is what the user is looking at
+        (selected or clicked while unavailable) and whenever Docker is in Windows mode (then
+        it explains why the Ubuntu templates are off)."""
+        windows_selected = self.selected_template().os == "windows"
+        docker = self._docker
+        windows_engine = docker is not None and docker.available and docker.os_type == "windows"
+        inspected = self._inspected_key == "windows"
+        self.readiness_panel.setVisible(windows_selected or windows_engine or inspected)
+
+    # ----- choice ---------------------------------------------------------------------------
+
     def _on_quick_start_chosen(self) -> None:
-        self.quick_start_requested.emit(self.selected_template().key)
+        option = self.template_option(self.selected_template().key)
+        if not option.available:
+            self._inspected_key = option.template.key
+            self._update_readiness_panel_visibility()
+            return
+        self.quick_start_requested.emit(option.template.key)
 
     def selected_template(self) -> QuickStartTemplate:
         for option in self.template_options:
@@ -258,66 +455,20 @@ class CreateLabScreen(QWidget):
 
     def _on_template_toggled(self, _checked: bool = False) -> None:
         template = self.selected_template()
-        self.template_hint.setText(f"{template.title} selected \u00b7 {template.hint}")
+        option = self.template_option(template.key)
+        if option.available:
+            self.template_hint.setText(f"{template.title} selected \u00b7 {template.hint}")
+        else:
+            self.template_hint.setText(
+                f"{template.title} selected \u00b7 unavailable: {option.unavailable_reason}"
+            )
         self.template_description.setText(template.description)
-        for option in self.template_options:
-            option.setProperty("selected", option.radio.isChecked())
-            theme.restyle(option)
-
-
-class StepRow(QFrame):
-    """One editable instruction step: number, title, details, remove."""
-
-    changed = Signal()
-    removed = Signal(object)
-
-    def __init__(self, number: int, step: QuickStartStep | None = None, parent=None) -> None:
-        super().__init__(parent)
-        style_frame(self, f"border-bottom: 1px dashed {theme.LINE_SOFT};")
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 6, 0, 8)
-        row.setSpacing(8)
-        self.number_label = QLabel(str(number))
-        self.number_label.setFixedSize(18, 18)
-        self.number_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.number_label.setStyleSheet(
-            f"background: {theme.LINE_SOFT}; color: {theme.MUTED}; border-radius: 9px;"
-            " font-size: 10px;"
-        )
-        row.addWidget(self.number_label, 0, Qt.AlignmentFlag.AlignTop)
-        fields = QVBoxLayout()
-        fields.setSpacing(4)
-        self.title_field = QLineEdit(step.title if step else "")
-        self.title_field.setPlaceholderText("Step title, e.g. Install dependencies")
-        self.title_field.textChanged.connect(self._on_title_changed)
-        fields.addWidget(self.title_field)
-        self.details_field = QPlainTextEdit(step.details if step else "")
-        self.details_field.setPlaceholderText(
-            "What the student does (Markdown; use ``` for commands)"
-        )
-        self.details_field.setFixedHeight(56)
-        self.details_field.textChanged.connect(self.changed.emit)
-        fields.addWidget(self.details_field)
-        row.addLayout(fields, 1)
-        remove = make_button("\u00d7", kind="ghost")
-        remove.setToolTip("Remove this step")
-        remove.setStyleSheet("padding: 0 6px; font-size: 15px;")
-        remove.clicked.connect(self._on_remove_clicked)
-        row.addWidget(remove, 0, Qt.AlignmentFlag.AlignTop)
-
-    def _on_title_changed(self, _text: str) -> None:
-        self.changed.emit()
-
-    def _on_remove_clicked(self) -> None:
-        self.removed.emit(self)
-
-    def set_number(self, number: int) -> None:
-        self.number_label.setText(str(number))
-
-    def step(self) -> QuickStartStep:
-        return QuickStartStep(
-            title=self.title_field.text().strip(), details=self.details_field.toPlainText()
-        )
+        self.quick_card.button.setEnabled(option.available)
+        self.quick_card.button.setToolTip("" if option.available else option.unavailable_reason)
+        for opt in self.template_options:
+            opt.setProperty("selected", opt.radio.isChecked())
+            theme.restyle(opt)
+        self._update_readiness_panel_visibility()
 
 
 class QuickStartScreen(QWidget):
@@ -330,10 +481,10 @@ class QuickStartScreen(QWidget):
         super().__init__(parent)
         self._template = TEMPLATES[0]
         self._selected_options: list[str] = []  # PACKAGE_CATALOG keys, in catalogue order
-        self._custom_packages: list[str] = []  # free-form apt names
+        self._custom_packages: list[str] = []  # free-form apt names / Chocolatey ids
+        self._windows_host_build: int | None = None
         self._option_chips: dict[str, ToggleChip] = {}
         self._package_chips: list[RemovableChip] = []
-        self._step_rows: list[StepRow] = []
         self._build_ui()
         self.reset(TEMPLATES[0].key)
 
@@ -411,6 +562,9 @@ class QuickStartScreen(QWidget):
         template_bar.setProperty("panel", "soft")
         template_row = QHBoxLayout(template_bar)
         template_row.setContentsMargins(14, 8, 14, 8)
+        template_row.setSpacing(8)
+        self.template_icon = icons.icon_label("terminal", 16, "Template")
+        template_row.addWidget(self.template_icon)
         self.template_label = QLabel("")
         template_row.addWidget(self.template_label)
         template_row.addStretch(1)
@@ -430,16 +584,19 @@ class QuickStartScreen(QWidget):
         self.base_layout = base_host.flow
         self._base_host = base_host
         self.included_panel.body_layout.addWidget(base_host)
-        self.included_panel.body_layout.addWidget(role_label("Popular software", "label"))
-        self.included_panel.body_layout.addWidget(
-            role_label("Tick what the lab should come with - installed at first start.", "hint")
+        self.catalog_title = role_label("Popular software", "label")
+        self.included_panel.body_layout.addWidget(self.catalog_title)
+        self.catalog_hint = role_label(
+            "Tick what the lab should come with - installed at first start.", "hint", wrap=True
         )
+        self.included_panel.body_layout.addWidget(self.catalog_hint)
         catalog_host = FlowHost()
         self.catalog_layout = catalog_host.flow
         self._catalog_host = catalog_host
         self.included_panel.body_layout.addWidget(catalog_host)
         self.included_panel.body_layout.addStretch(1)
-        self.included_panel.body_layout.addWidget(role_label("Other packages", "label"))
+        self.other_packages_title = role_label("Other packages", "label")
+        self.included_panel.body_layout.addWidget(self.other_packages_title)
         chips_host = FlowHost()
         self.chips_layout = chips_host.flow
         self._chips_host = chips_host
@@ -457,12 +614,7 @@ class QuickStartScreen(QWidget):
         self.add_package_button.clicked.connect(self._on_add_package)
         add_row.addWidget(self.add_package_button)
         self.included_panel.body_layout.addLayout(add_row)
-        self.install_note = role_label(
-            "Installing takes a minute or two after the lab starts; the Lab nodes table and the "
-            "node's shell show when the packages are ready.",
-            "hint",
-            wrap=True,
-        )
+        self.install_note = role_label("", "hint", wrap=True)
         self.included_panel.body_layout.addWidget(self.install_note)
         columns.addWidget(self.included_panel, 1)
 
@@ -471,19 +623,10 @@ class QuickStartScreen(QWidget):
         self.steps_panel.body_layout.addWidget(
             role_label("Steps students complete, shown in the instructions flyout.", "muted")
         )
-        self.steps_scroll = QScrollArea()
-        self.steps_scroll.setWidgetResizable(True)
-        self.steps_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        steps_host = QWidget()
-        self.steps_layout = QVBoxLayout(steps_host)
-        self.steps_layout.setContentsMargins(0, 0, 6, 0)
-        self.steps_layout.setSpacing(0)
-        self.steps_layout.addStretch(1)
-        self.steps_scroll.setWidget(steps_host)
-        self.steps_panel.body_layout.addWidget(self.steps_scroll, 1)
-        self.add_step_button = make_button("+ Add step", small=True)
-        self.add_step_button.clicked.connect(self._on_add_step_clicked)
-        self.steps_panel.body_layout.addWidget(self.add_step_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.manual_editor = ManualStepsEditor()
+        self.manual_editor.changed.connect(self._update_status)
+        self.steps_panel.body_layout.addWidget(self.manual_editor, 1)
+        self.add_step_button = self.manual_editor.add_button
         columns.addWidget(self.steps_panel, 1)
         layout.addLayout(columns, 1)
 
@@ -509,13 +652,26 @@ class QuickStartScreen(QWidget):
         self.version_field.clear()
         self.description_field.clear()
         self.instructor_toggle.setChecked(False)
+        glyph = ""
+        if icons.icon_available(draft.template.icon_name):
+            icons.set_label_icon(self.template_icon, draft.template.icon_name, 16)
+            self.template_icon.setToolTip(f"{draft.template.title} template")
+            self.template_icon.show()
+        else:
+            self.template_icon.hide()
+            glyph = f"{draft.template.icon} "
         self.template_label.setText(
-            f"{draft.template.icon} <b>{draft.template.title}</b> "
+            f"{glyph}<b>{draft.template.title}</b> "
             f'<span style="color:{theme.MUTED}">{draft.template.caption} \u00b7 Single host</span>'
         )
+        self.manual_editor.clear()
         self.included_caption.setText(draft.template.packages_caption)
-        for row in list(self._step_rows):
-            self._remove_step_row(row)
+        self.catalog_title.setText(draft.template.catalog_title)
+        self.catalog_hint.setText(draft.template.catalog_hint)
+        self.other_packages_title.setText(draft.template.other_packages_title)
+        self.package_field.setPlaceholderText(draft.template.package_placeholder)
+        self.install_note.setText(draft.template.install_note)
+        self._windows_host_build = None
         self._selected_options = list(draft.template.default_options)
         self._custom_packages = []
         self._rebuild_catalog()
@@ -525,21 +681,32 @@ class QuickStartScreen(QWidget):
         self.set_busy(False)
         self._update_status()
 
+    def set_windows_host_build(self, build: int | None) -> None:
+        """The Docker host's Windows build (from the readiness check) - picks the pinned
+        Server Core tag for a Windows draft."""
+        self._windows_host_build = build
+
     def draft(self) -> QuickStartDraft:
         return QuickStartDraft(
             name=self.name_field.text().strip() or self._template.default_name,
             template=self._template,
             packages=self.packages,
-            steps=[row.step() for row in self._step_rows if row.step().title],
+            steps=[step for step in self.manual_editor.steps() if step.title],
             author=self.author_field.text(),
             version=self.version_field.text(),
             description=self.description_field.text(),
+            windows_host_build=self._windows_host_build,
         )
 
     @property
+    def template(self) -> QuickStartTemplate:
+        return self._template
+
+    @property
     def packages(self) -> list[str]:
-        """Apt package names: the ticked catalogue entries (expanded) plus custom names."""
-        names = packages_for_options(self._selected_options)
+        """Package names (apt) or ids (Chocolatey): the ticked catalogue entries (expanded)
+        plus custom names."""
+        names = packages_for_options(self._selected_options, self._template.kind)
         for name in self._custom_packages:
             if name not in names:
                 names.append(name)
@@ -611,8 +778,8 @@ class QuickStartScreen(QWidget):
     def add_package(self, name: str) -> bool:
         """Adds a free-form apt package; a catalogue key ticks its chip instead."""
         name = name.strip().lower()
-        error = validate_package_name(name)
-        if error is None and catalog_option(name) is not None and name in self._option_chips:
+        error = validate_package_name(name, self._template.kind)
+        if error is None and name in self._option_chips:
             self.set_option(name, True)
             self.package_error.hide()
             return True
@@ -637,37 +804,24 @@ class QuickStartScreen(QWidget):
 
     # ----- steps -----------------------------------------------------------------------
 
+    @property
+    def _step_rows(self) -> list[StepRow]:
+        return self.manual_editor.rows
+
     def add_step(self, step: QuickStartStep | None = None) -> StepRow:
-        row = StepRow(len(self._step_rows) + 1, step)
-        row.changed.connect(self._update_status)
-        row.removed.connect(self._remove_step_row)
-        self.steps_layout.insertWidget(self.steps_layout.count() - 1, row)
-        self._step_rows.append(row)
-        self._update_status()
-        if step is None:
-            row.title_field.setFocus()
-        return row
+        return self.manual_editor.add_step(step)
 
     def _remove_step_row(self, row: StepRow) -> None:
-        if row in self._step_rows:
-            self._step_rows.remove(row)
-        self.steps_layout.removeWidget(row)
-        discard(row)
-        for number, remaining in enumerate(self._step_rows, start=1):
-            remaining.set_number(number)
-        self._update_status()
+        self.manual_editor.remove_row(row)
 
     @property
     def steps(self) -> list[QuickStartStep]:
-        return [row.step() for row in self._step_rows]
+        return self.manual_editor.steps()
 
     # ----- status / create ---------------------------------------------------------------
 
     def _on_name_changed(self, _text: str) -> None:
         self._update_status()
-
-    def _on_add_step_clicked(self) -> None:
-        self.add_step()
 
     def _on_instructor_toggled(self, checked: bool) -> None:
         self.instructor_panel.setVisible(checked)
@@ -682,7 +836,7 @@ class QuickStartScreen(QWidget):
         count = len(self.packages)
         if count:
             parts.append(f"{count} package{'s' if count != 1 else ''}")
-        titled = sum(1 for row in self._step_rows if row.step().title)
+        titled = self.manual_editor.titled_count()
         if titled:
             parts.append(f"{titled} step{'s' if titled != 1 else ''}")
         self.status_pill.set_state(" \u00b7 ".join(parts), theme.GREEN)

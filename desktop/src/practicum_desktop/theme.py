@@ -67,6 +67,37 @@ BADGE_RULES = "\n".join(
     for role, (background, colour) in BADGE_COLOURS.items()
 )
 
+# Banner palettes (.banner.*): kind -> (background, text colour, border, bold text)
+BANNER_COLOURS = {
+    "ok": ("#f0fdf4", "#15803d", "#bbf7d0", True),
+    "warn": ("#fffbeb", "#92400e", "#fde68a", True),
+    "error": ("#fef2f2", "#991b1b", "#fecaca", True),
+    "info": ("#f8fafc", INK_SOFT, LINE, False),
+}
+
+
+def _banner_rules() -> str:
+    """Rules for the `banner` role on both shapes it comes in: a plain QLabel (padding from
+    the style sheet) and `widgets.MessageBanner`, a QFrame with an icon label and a text
+    label inside (padding from its layout; the children take the text colour explicitly
+    because the global `QWidget {{ color }}` rule would otherwise win)."""
+    rules = []
+    for kind, (background, colour, border, bold) in BANNER_COLOURS.items():
+        weight = "font-weight: 600;" if bold else "font-weight: 400;"
+        rules.append(
+            f'QFrame[banner="{kind}"] {{ background: {background}; color: {colour}; '
+            f"border: 1px solid {border}; border-radius: {RADIUS_SM}px; }}\n"
+            f'QLabel[banner="{kind}"] {{ padding: 8px 12px; font-size: 12.5px; {weight} }}\n'
+            f'QFrame[banner="{kind}"] QLabel {{ color: {colour}; font-size: 12.5px; {weight} '
+            "background: transparent; border: none; padding: 0; }\n"
+            f'QFrame[banner="{kind}"] QPushButton#bannerDismiss {{ background: transparent; '
+            f"border: none; color: {colour}; font-size: 15px; font-weight: 700; padding: 0; }}"
+        )
+    return "\n".join(rules)
+
+
+BANNER_RULES = _banner_rules()
+
 
 def badge_for_status(status: str) -> tuple[str, str]:
     """(badge role, label) for an API lab status; unknown statuses show as-is, muted."""
@@ -185,22 +216,7 @@ QLabel[chip="muted"] {{
 QLabel[chip="count"] {{
     background: {LINE_SOFT}; color: {MUTED}; font-size: 11px; padding: 1px 8px; border-radius: 9px;
 }}
-QLabel[banner="warn"] {{
-    background: #fffbeb; color: #92400e; border: 1px solid #fde68a; border-radius: {RADIUS_SM}px;
-    padding: 8px 12px; font-weight: 600; font-size: 12.5px;
-}}
-QLabel[banner="ok"] {{
-    background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; border-radius: {RADIUS_SM}px;
-    padding: 8px 12px; font-weight: 600; font-size: 12.5px;
-}}
-QLabel[banner="error"] {{
-    background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: {RADIUS_SM}px;
-    padding: 8px 12px; font-weight: 600; font-size: 12.5px;
-}}
-QLabel[banner="info"] {{
-    background: #f8fafc; color: {INK_SOFT}; border: 1px solid {LINE}; border-radius: {RADIUS_SM}px;
-    padding: 8px 12px; font-size: 12.5px;
-}}
+{BANNER_RULES}
 QLabel#urlBar {{
     background: #f3f4f6; border-radius: 13px; padding: 5px 12px; font-size: 12px; color: {MUTED};
 }}

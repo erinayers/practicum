@@ -8,17 +8,28 @@ from datetime import UTC, datetime
 
 from practicum_desktop.api_client import LabSummary
 
-# Plain geometric glyphs (no emoji): they render the same everywhere and don't read as
-# "status" the way coloured emoji do.
+# Plain geometric glyphs (no emoji): the text fallback when the design icon assets are not
+# available. They render the same everywhere and don't read as "status" like emoji do.
 ORIGIN_ICONS = {
     "imported": "\u2193",  # ↓ brought in from a file
     "quick_start": "\u25b6",  # ▶ ready-made template
     "designer": "\u25c6",  # ◆ built by hand
 }
+# The design icon (icons.ICONS name) that stands for each origin on lab cards.
+ORIGIN_ICON_NAMES = {
+    "imported": "desktop",  # a ready lab environment received from an instructor
+    "quick_start": "play",  # ready-made: just run it
+    "designer": "tools",  # built by hand in the designer
+}
+OS_LABELS = {"linux": "Linux", "windows": "Windows"}
 
 
 def lab_icon(origin: str) -> str:
     return ORIGIN_ICONS.get(origin, ORIGIN_ICONS["designer"])
+
+
+def lab_icon_name(origin: str) -> str:
+    return ORIGIN_ICON_NAMES.get(origin, ORIGIN_ICON_NAMES["designer"])
 
 
 def plural(count: int, noun: str) -> str:
@@ -32,12 +43,16 @@ def origin_meta(lab: LabSummary) -> str:
         return f"Imported from {lab.source_file}" if lab.source_file else "Imported lab"
     if lab.origin == "quick_start":
         parts = ["Quick start"]
+        if lab.container_os == "windows":
+            parts.append("Windows")
         if lab.node_count == 1:
             parts.append("single host")
         elif lab.node_count:
             parts.append(plural(lab.node_count, "machine"))
         return " \u00b7 ".join(parts)
     parts = ["Custom lab"]
+    if lab.container_os == "windows":
+        parts.append("Windows")
     if lab.node_count:
         parts.append(plural(lab.node_count, "machine"))
     if lab.network_count:

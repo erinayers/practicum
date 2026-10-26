@@ -5,7 +5,11 @@ from qt_helpers import ImmediateWorker
 
 from practicum_desktop import designer
 from practicum_desktop.api_client import CreateLabResult, FieldIssue, ValidateLabResult
+from PySide6.QtWidgets import QLabel
+
 from practicum_desktop.designer import DesignerView
+from practicum_desktop.manual import StepMarker
+from practicum_desktop.quickstart import QuickStartStep
 
 
 class FakeApiClient:
@@ -390,7 +394,11 @@ def test_load_lab_enters_edit_mode_and_saves_with_put(view: DesignerView) -> Non
     assert [n["id"] for n in view.nodes] == ["host"]
     assert view.nodes[0]["preset"] == "ubuntu-host"
     assert view.connections_table.rowCount() == 1
-    assert view.status_pill.text_label.text() == "Draft valid \u00b7 1 machine \u00b7 1 network"
+    assert (
+        view.status_pill.text_label.text()
+        == "Draft valid \u00b7 1 machine \u00b7 1 network \u00b7 1 step"
+    )
+    assert [row.title_field.text() for row in view.manual_editor.rows] == ["T"]
 
     _select_preset(view, "router")
     view._on_add_node_clicked()
@@ -400,7 +408,7 @@ def test_load_lab_enters_edit_mode_and_saves_with_put(view: DesignerView) -> Non
     assert view.api.created == []
     lab_id, definition = view.api.updated[0]
     assert lab_id == "lab-7"
-    assert definition["manual"] == stored["manual"]  # carried through untouched
+    assert definition["manual"] == stored["manual"]  # loaded into the editor, saved as it was
     assert definition["schema_version"] == "1.0"
     assert "id" not in definition and "status" not in definition and "origin" not in definition
     assert [n["id"] for n in definition["nodes"]] == ["host", "router-1"]
@@ -410,3 +418,235 @@ def test_load_lab_enters_edit_mode_and_saves_with_put(view: DesignerView) -> Non
     view.reset()
     assert view.editing_lab_id is None
     assert view.title_label.text() == "Build your Custom Lab"
+
+
+def test_editing_a_windows_lab_keeps_os_and_shell(view: DesignerView) -> None:
+    """windows-desktop-open-windows-shell: the declared shell survives a designer edit too
+    (the designer passes through node fields it does not edit)."""
+    stored = {
+        "id": "lab-w",
+        "status": "defined",
+        "origin": "quick_start",
+        "schema_version": "1.0",
+        "name": "Windows Quick Start",
+        "nodes": [
+            {
+                "id": "host",
+                "image": "mcr.microsoft.com/windows/servercore:ltsc2022",
+                "os": "windows",
+                "shell": "powershell",
+                "command": ["powershell.exe", "-NoLogo"],
+                "environment": {"PRACTICUM_PACKAGES": "git"},
+                "resources": {"cpu": 2, "memory_mb": 2048},
+            }
+        ],
+        "networks": [{"id": "lab-net", "subnet": "10.90.0.0/24"}],
+        "interfaces": [{"node": "host", "network": "lab-net", "address": "10.90.0.10/24"}],
+    }
+
+    view.load_lab("lab-w", stored)
+    view.name_field.setText("Windows Quick Start (edited)")
+    view.api.create_result = CreateLabResult(success=True, lab_id="lab-w")
+    view.save_button.click()
+
+    (lab_id, definition), = view.api.updated
+    assert lab_id == "lab-w"
+    node = definition["nodes"][0]
+    assert node["os"] == "windows" and node["shell"] == "powershell"
+    assert node["command"] == ["powershell.exe", "-NoLogo"]
+    assert node["environment"] == {"PRACTICUM_PACKAGES": "git"}
+    assert "preset" not in node
+
+
+def test_machine_rows_carry_the_design_icon_for_their_preset(view: DesignerView) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    _build_static_routing(view)
+
+    icons_by_id = {}
+    for row in view._machine_rows:
+        label = next(
+            lab for lab in row.findChildren(QLabel) if lab.property("icon") or lab.pixmap()
+        )
+        icons_by_id[row.findChildren(QLabel)[1].text()] = label.property("icon")
+    assert icons_by_id["router"] == "forward"
+    assert icons_by_id["client"] == "desktop" and icons_by_id["server"] == "desktop"
+
+
+def test_preset_picker_shows_design_icons(view: DesignerView) -> None:
+    combo = view.preset_combo
+    titles = [combo.itemText(i) for i in range(combo.count())]
+    assert titles == [
+        "Ubuntu host",
+        "Alpine host (tiny)",
+        "Router",
+        "Web server",
+        "Ubuntu Desktop",
+        "Custom image",
+    ]
+    assert all(not combo.itemIcon(i).isNull() for i in range(combo.count()))
+    assert not any(t.startswith(("\u25a0", "\u25c6", "\u25cc")) for t in titles)  # no glyphs
+
+
+# ----- lab instructions (designer-author-manual) ----------------------------------------------
+
+
+def test_designer_saves_the_steps_as_the_labs_manual(view: DesignerView) -> None:
+    _build_static_routing(view)
+    assert view.manual is None  # no steps → no manual key
+    assert view.instructions_panel.count_label.text() == "0"
+
+    first = view.manual_editor.add_step()
+    first.title_field.setText("Check connectivity")
+    first.details_field.setPlainText("From client:\n\n```\nping 10.0.2.10\n```")
+    second = view.manual_editor.add_step()
+    second.title_field.setText("Add the route")
+    view.manual_editor.add_step()  # untitled: ignored
+
+    assert view.instructions_panel.count_label.text() == "2"
+    assert view.status_pill.text_label.text().endswith("\u00b7 2 networks \u00b7 2 steps")
+    view.api.create_result = CreateLabResult(success=True, lab_id="lab-9")
+    view.save_button.click()
+
+    definition = view.api.created[0]
+    assert definition["manual"] == {
+        "sections": [
+            {
+                "id": "step-1",
+                "title": "Check connectivity",
+                "content_markdown": "From client:\n\n```\nping 10.0.2.10\n```",
+                "tasks": [{"id": "done", "text": "Done: Check connectivity"}],
+            },
+            {
+                "id": "step-2",
+                "title": "Add the route",
+                "content_markdown": "Add the route",
+                "tasks": [{"id": "done", "text": "Done: Add the route"}],
+            },
+        ]
+    }
+
+    view.reset()
+    assert view.manual_editor.rows == [] and view.manual is None
+
+
+def test_editing_keeps_hand_authored_tasks_and_regenerates_only_generated_ones(
+    view: DesignerView,
+) -> None:
+    stored = {
+        "id": "lab-8",
+        "status": "defined",
+        "schema_version": "1.0",
+        "name": "Static Routing Fundamentals",
+        "manual": {
+            "sections": [
+                {
+                    "id": "overview",
+                    "title": "Overview",
+                    "content_markdown": "## Goal\n\nReach host-b.",
+                    "tasks": [
+                        {"id": "verify-topology", "text": "Review the topology."},
+                        {"id": "note-addresses", "text": "Note both addresses."},
+                    ],
+                },
+                {
+                    "id": "step-2",
+                    "title": "Ping",
+                    "content_markdown": "ping 10.0.2.10",
+                    "tasks": [{"id": "done", "text": "Done: Ping"}],
+                },
+                {"id": "reading", "title": "Reading", "content_markdown": "RFC 1812", "tasks": []},
+            ]
+        },
+        "nodes": [{"id": "host", "image": "alpine:3.21"}],
+        "networks": [{"id": "lan", "subnet": "10.0.1.0/24"}],
+        "interfaces": [{"node": "host", "network": "lan", "address": "10.0.1.10/24"}],
+    }
+    view.load_lab("lab-8", stored)
+
+    rows = view.manual_editor.rows
+    assert rows[0].tasks == stored["manual"]["sections"][0]["tasks"]  # custom tasks kept
+    assert rows[1].tasks is None  # the generated task is regenerated from the title
+    assert rows[2].tasks == []  # "no tasks" is a choice, kept as such
+    assert [r.title_field.text() for r in rows] == ["Overview", "Ping", "Reading"]
+
+    rows[1].title_field.setText("Ping host-b")
+    view.api.create_result = CreateLabResult(success=True, lab_id="lab-8")
+    view.save_button.click()
+
+    (_lab_id, definition), = view.api.updated
+    sections = definition["manual"]["sections"]
+    assert sections[0]["id"] == "overview"
+    assert sections[0]["tasks"] == stored["manual"]["sections"][0]["tasks"]
+    assert sections[1]["id"] == "step-2"
+    assert sections[1]["tasks"] == [{"id": "done", "text": "Done: Ping host-b"}]
+    assert sections[2] == stored["manual"]["sections"][2]
+
+    for row in list(view.manual_editor.rows):
+        view.manual_editor.remove_row(row)
+    assert view.manual is None  # all steps removed → the saved lab has no manual
+
+
+def test_manual_preview_renders_steps_like_the_flyout(view: DesignerView) -> None:
+    editor = view.manual_editor
+    editor.add_step()
+    editor.rows[0].title_field.setText("Install")
+    editor.rows[0].details_field.setPlainText("Run:\n\n```\napt-get install -y git\n```")
+
+    editor.preview_button.click()
+
+    assert editor.previewing is True
+    assert editor.preview_button.text() == "Edit"
+    assert editor.preview.empty_label.isHidden()
+    labels = [w.text() for w in editor.preview.findChildren(QLabel)]
+    assert "Install" in labels
+    assert any("apt-get install -y git" in t for t in labels)
+    assert "Done: Install" in labels
+    assert [m.state for m in editor.preview.findChildren(StepMarker)] == ["active"]
+
+    editor.preview_button.click()
+    assert editor.previewing is False and editor.preview_button.text() == "Preview"
+    editor.clear()
+    editor.preview_button.click()
+    assert editor.preview.empty_label.isHidden() is False
+
+
+def test_instructions_panel_collapses_to_its_header_and_keeps_the_steps(
+    view: DesignerView,
+) -> None:
+    view.manual_editor.add_step(QuickStartStep("Keep me"))
+    view.show()
+
+    view.instructions_toggle.click()  # Hide
+    assert view.instructions_panel.body.isHidden()
+    assert view.instructions_toggle.text() == "Show"
+    assert view.instructions_panel.maximumHeight() < 80
+    assert view.instructions_panel.count_label.text() == "1"  # still visible in the header
+
+    view.instructions_toggle.click()  # Show
+    assert view.instructions_panel.body.isHidden() is False
+    assert view.instructions_toggle.text() == "Hide"
+    assert view.manual_editor.steps()[0].title == "Keep me"
+    view.close()
+
+
+def test_second_desktop_gets_free_host_ports_instead_of_clashing(view: DesignerView) -> None:
+    """Two Ubuntu Desktop machines: the second one is published on the next free ports, so
+    the lab validates and starts without a port-conflict fix in the gate."""
+    _select_preset(view, "ubuntu-desktop")
+    view._on_add_node_clicked()
+    _select_preset(view, "ubuntu-desktop")
+    view._on_add_node_clicked()
+    _select_preset(view, "web-server")
+    view._on_add_node_clicked()
+
+    ports = {
+        n["id"]: [m["host"] for m in n["resources"].get("port_mappings", [])] for n in view.nodes
+    }
+    assert ports["desktop-1"] == [3000, 3001]
+    assert ports["desktop-2"] == [3002, 3003]
+    assert ports["web-1"] == [8080]  # untouched: not taken
+
+    _select_preset(view, "web-server")
+    view._on_add_node_clicked()
+    assert [m["host"] for m in view.nodes[-1]["resources"]["port_mappings"]] == [8081]

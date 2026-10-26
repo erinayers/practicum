@@ -46,9 +46,14 @@ Format: D-<n> · date (if known) · decision · source.
 - **D-9 · Docker via CLI subprocess, not the SDK.** `DockerRuntime` builds `docker …` argv and
   runs it; tests assert argv. Keep it that way unless a story needs streamed output (image pull
   progress story suggests parsing `docker pull` output — still CLI).
-- **D-10 · In-memory lab store.** No DB; everything lost on API restart. Persistence is not in
-  scope for any current story (the Labs Dashboard story implicitly assumes labs survive — note
-  this when building it; may need a simple JSON-file store eventually).
+- **D-10 ? Original in-memory lab store.** The initial service kept labs in memory, so restarts
+  lost the dashboard contents. Superseded for planned work by D-51.
+- **D-51 ? 2026-10-26 ? Local persistence uses SQLite.** The embedded database file ships as app
+  data and runs in the Practicum process; it is not a Docker container or separate server.
+  Packaged Windows use stores it in the per-user local application-data directory; development
+  can override the path. Docker remains authoritative for runtime state and is reconciled on API
+  startup. Source: user preference in persistence planning; stories in
+  `src/user-stories/backend-storage/`.
 - **D-11 · Polling over push.** Progress/status will be exposed through a richer
   `GET /labs/{id}/status` polled by the desktop, not SSE/WebSockets. Source:
   `runtime-image-pull-progress.md`.
@@ -134,6 +139,76 @@ Format: D-<n> · date (if known) · decision · source.
   single worker attributes again; a running thread cannot be destroyed by losing its reference.
 - **D-34 · 2026-10-24 · No lambdas capturing `self` on child-widget signals** (engineering rule
   from Tigre/06 #15); `widgets.bind()` is the sanctioned way to pass a payload with a click.
+- **D-42 · 2026-10-25 · Practicum reads Docker Desktop's engine mode, never switches it.** The
+  switch (Linux ↔ Windows containers) is machine-wide, restarts the engine, may stop other
+  people's containers and may need elevation, so every surface (Create screen panel, gate
+  "Container engine" check, import flow, `POST /start`) only *reports* the mode with the Docker
+  Desktop instructions and a Retry. Two read-only probes exist on purpose: the desktop's own
+  `docker info` (works when the API is down; status chip + Create screen) and `GET /docker/engine`
+  (server-authoritative for Start). Source: `windows-desktop-windows-container-readiness.md`.
+- **D-43 · 2026-10-25 · A node's OS and shell are declared in the spec, not derived.**
+  `Node.os` (`linux` default, `windows`) and `Node.shell` (None = OS default) are portable spec
+  fields: the runtime picks the network driver (`bridge`/`nat`), the start-time engine check and
+  the status-note command from `os`; Open shell picks bash→sh / PowerShell / cmd from `shell`.
+  One OS per lab (Docker serves one kind at a time). Guessing from image names was rejected as
+  unreliable (custom registries, tags). Source: `windows-desktop-open-windows-shell.md`.
+- **D-44 · 2026-10-25 · Windows Server Core tags are pinned from a host-build matrix.**
+  `quickstart.WINDOWS_IMAGES` (ltsc2025 ≥ 26100, ltsc2022 ≥ 20348, ltsc2019 ≥ 17763) and
+  `windows_image_for_host(build)` = the newest tag ≤ the daemon host's build (from `docker info`
+  `KernelVersion`); unknown build → ltsc2022; older hosts are refused. Never a floating tag.
+  Revisit when Microsoft publishes a new LTSC or if process isolation on client builds bites
+  (Tigre/06 #26 f).
+- **D-45 · 2026-10-25 · Windows tools come from Chocolatey, installed by a PowerShell init passed
+  as `-EncodedCommand`.** winget is not available in Server Core; Chocolatey is the documented,
+  unattended path. The script (`WINDOWS_INIT_SCRIPT`) is generic — the package list is in the
+  node's `environment.PRACTICUM_PACKAGES` so exported specs stay readable — installs one package
+  at a time (failures name the package), keeps the same status-marker contract as the Ubuntu
+  script (`C:\practicum\packages.status`, read by `GET /status`, printed by the PowerShell
+  profile) and ends in a keep-alive loop. `-EncodedCommand` because a multi-line script with
+  quotes cannot be passed reliably through Docker's Windows command-line escaping.
+- **D-46 · 2026-10-25 · Icons are requested by meaning from one module.** `icons.py` owns the
+  file names and meanings of `design/icons.png`; screens ask for `success`/`error`/`warning`/
+  `back`/`forward`/`play`/`terminal`/`desktop`/`tools` and never load files themselves. Black
+  icons are shipped as ink masks and tinted per context (white on primary buttons, muted when
+  disabled); the coloured status icons are never tinted. Missing assets degrade to null icons /
+  text glyphs, never to a failure. Every icon-only control has a tooltip and accessible name, and
+  every state is also worded (D-38 amended: icons join words + colour; still no emoji).
+- **D-48 · 2026-10-25 · A port or subnet fix recreates the lab's machines.** Stop keeps
+  containers so Start can `docker start` them (D-4/Q-4: state preserved). But a container
+  carries its port mappings and addresses from creation, so after the gate moves a port or a
+  subnet, reusing it would bring back the *old* mapping - and the old session data the user
+  saw as "persisting". `LabService._store_rewritten_definition` therefore resets the lab's
+  Docker resources (status → `defined`) whenever a rewrite lands on a lab that has run, and
+  the result says so (`machines_reset`) so the gate can tell the user the machines start
+  fresh. A never-started lab is rewritten without touching Docker; a cleanup failure keeps the
+  old definition (409). Edit (`PUT`) already behaved this way (D-37). Source: user report.
+- **D-50 · 2026-10-25 · Windows (and macOS) guest labs are a paid-tier capability; Linux labs stay
+  the free core.** Rationale: Docker's Windows-container mode needs Windows
+  Pro/Enterprise/Education (Hyper-V + Containers), which Windows Home students do not have;
+  macOS guests need Apple hardware under Apple's licence. The Phase 8 implementation stays as
+  built; gating, an edition/eligibility check, a hosted runtime and the macOS counterpart are
+  *stories only* for now (`src/future-roadmap/premium-lab-platforms/`). Authoring, validating,
+  importing and exporting such labs remain free (open-core boundary addendum). Source: user
+  scope change 2026-10-25.
+- **D-49 · 2026-10-25 · Screenshot evidence is per step, local, and part of the results.**
+  The instructor flags a step (`requires_screenshot`); the student captures the embedded lab
+  view (what Practicum renders — never the whole screen, which could expose unrelated windows)
+  or uploads an image; the PNG lives under the app's data folder and is referenced from the
+  same local progress store as the ticks, so it is never in the spec and leaves the machine
+  only inside the exported results (embedded in JSON, copied beside Markdown, bundled in ZIP).
+  A requested screenshot counts as a progress item, so "all complete" means evidence attached.
+  Source: user request; `manual-track-progress.md` addendum.
+- **D-47 · 2026-10-25 · The manual is authored as steps, in one shared editor.** Both the quick
+  start and the Custom Lab designer use `manual_editor.ManualStepsEditor`: a step = one manual
+  section (title + Markdown details) with one generated "Done: <title>" task, which is what
+  the instructions flyout renders. Hand-authored specs that carry richer sections survive an
+  edit untouched (`QuickStartStep.section_id` / `tasks` ride along; only the task the editor
+  generated itself is regenerated on rename). Rationale: one mental model for instructors, one
+  rendering for students, no second spec shape. Source: `designer-author-manual.md`.
+  Addendum (user review): when a needed meaning has no artwork on the sheet, the slicing tool
+  may *derive* an icon in the sheet's own language (measured geometry of the black discs) and
+  mark it `derived=True` — today `refresh` and `stop` — rather than fall back to a text glyph
+  beside real icons; real artwork replaces it when supplied.
 
 ## Open questions (need the user)
 
@@ -141,9 +216,8 @@ Format: D-<n> · date (if known) · decision · source.
   resume? (`windows-desktop-import-lab-file.md` edge case.) *Interim behaviour = duplicate lab
   (D-19); still needs a real decision.*
 - ~~**Q-2** Export + port conflicts~~ → resolved by D-30 (not blocked).
-- **Q-3** Should labs persist across API restarts? The dashboard now exists and is empty after
-  every API restart — persistence (Tigre/11 S-1) is the most visible remaining gap. Still needs
-  the user's go-ahead on *where* (per-user data dir, e.g. `%LOCALAPPDATA%\Practicum`).
+- ~~**Q-3** Persistence format and location~~ ? resolved 2026-10-26: SQLite in per-user local
+  application data for packaged Windows use, with a development path override (D-51).
 - ~~**Q-4** Stop → Start semantics~~ → resolved: `docker start` of the existing containers
   (`runtime-lab-restart`), container state preserved; Reset is the way to recreate.
 - **Q-5** Repo/product naming: keep "eduLabs" as the folder/workspace and "Practicum" as the
@@ -152,4 +226,15 @@ Format: D-<n> · date (if known) · decision · source.
 - **Q-7** (new) Should the quick start's **Instructor setup** toggle do more than reveal
   author/version/description — e.g. hide the step editor for students? Today it only reveals the
   metadata fields.
+- ~~**Q-7**~~ partly answered by usage: the step editor is the manual editor everywhere
+  (quick start and designer) since 2026-10-25; the Instructor setup toggle still only reveals
+  metadata.
+- **Q-10** (new, 2026-10-25) Plan shape for premium platforms: per-student licence, an
+  instructor/course licence that covers students, or institution capacity on the hosted runtime?
+  Also: should a free install keep the Windows template *visible with a Pro chip* (the stories
+  assume yes) or hide it entirely?
+- **Q-9** (new, 2026-10-25) Windows quick start on a Windows 10 host: `ltsc2019` is what the
+  matrix picks (build 19045 < 20348). Is Windows 10 a target at all, or can the template require
+  Windows 11 / Server 2022 and always use `ltsc2022`? Also: should the Custom Lab designer get a
+  "Windows host" preset (today a Windows lab can only be edited, not composed, there)?
 - ~~**Q-8** Edit lab before/after persistence~~ → done before (user request, `designer-edit-existing-lab`).

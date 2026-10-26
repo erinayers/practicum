@@ -94,6 +94,46 @@
       ]
     },
     {
+      "name": "Get Docker Engine Mode",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/docker/engine",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "docker",
+            "engine"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Reports whether Docker serves linux or windows containers (read-only)', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.available).to.be.a('boolean');",
+              "  if (body.available) {",
+              "    pm.expect(['linux', 'windows']).to.include(body.os_type);",
+              "  } else {",
+              "    pm.expect(body.detail).to.be.a('string');",
+              "  }",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Validate Lab Definition",
       "request": {
         "method": "POST",
@@ -1252,6 +1292,63 @@
       ]
     },
     {
+      "name": "Apply Port Recommendation - Chosen Port Refused (409)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"node_id\": \"router\",\n  \"host_port\": 2222,\n  \"protocol\": \"tcp\",\n  \"new_host_port\": 8000\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/{{labId}}/ports/apply-recommendation",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "{{labId}}",
+            "ports",
+            "apply-recommendation"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('labId')) {",
+              "  throw new Error('No labId found. Run the Create Lab request first.');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 409', function () {",
+              "  pm.response.to.have.status(409);",
+              "});",
+              "",
+              "pm.test('Explains why the chosen port cannot be used (no conflict, or the API port)', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.detail).to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "Apply Port Recommendation - Missing Lab",
       "request": {
         "method": "POST",
@@ -1587,6 +1684,97 @@
               "  const body = pm.response.json();",
               "  pm.expect(body.valid).to.eql(false);",
               "  pm.expect(body.errors[0].message).to.include('outside network');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate Windows Quick Start Lab",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Windows Quick Start\",\n  \"description\": \"A single Windows Server Core container with a PowerShell command line - a sandbox for Windows command-line tasks. Needs Docker Desktop switched to Windows containers.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"manual\": {\n    \"sections\": [\n      {\n        \"id\": \"step-1\",\n        \"title\": \"Open PowerShell\",\n        \"content_markdown\": \"Start the lab, wait until the host node shows `running`, then use **Open PowerShell** in the Lab nodes table. The prompt prints the tool-install status: wait for `Practicum: tools ready`.\",\n        \"tasks\": [\n          {\n            \"id\": \"done\",\n            \"text\": \"Done: Open PowerShell\"\n          }\n        ]\n      },\n      {\n        \"id\": \"step-2\",\n        \"title\": \"Explore the sandbox\",\n        \"content_markdown\": \"Try a few commands:\\n\\n```\\nGet-ComputerInfo | Select-Object WindowsProductName, OsVersion\\ngit --version\\n7z\\n```\",\n        \"tasks\": [\n          {\n            \"id\": \"done\",\n            \"text\": \"Done: Explore the sandbox\"\n          }\n        ]\n      }\n    ]\n  },\n  \"nodes\": [\n    {\n      \"id\": \"host\",\n      \"image\": \"mcr.microsoft.com/windows/servercore:ltsc2022\",\n      \"resources\": {\n        \"cpu\": 2,\n        \"memory_mb\": 2048\n      },\n      \"os\": \"windows\",\n      \"shell\": \"powershell\",\n      \"command\": [\n        \"powershell.exe\",\n        \"-NoLogo\",\n        \"-NoProfile\",\n        \"-NonInteractive\",\n        \"-ExecutionPolicy\",\n        \"Bypass\",\n        \"-EncodedCommand\",\n        \"JABFAHIAcgBvAHIAQQBjAHQAaQBvAG4AUAByAGUAZgBlAHIAZQBuAGMAZQAgAD0AIAAnAEMAbwBuAHQAaQBuAHUAZQAnAAoAJABkAGkAcgAgAD0AIAAnAEMAOgBcAHAAcgBhAGMAdABpAGMAdQBtACcACgAkAHMAdABhAHQAdQBzACAAPQAgACcAQwA6AFwAcAByAGEAYwB0AGkAYwB1AG0AXABwAGEAYwBrAGEAZwBlAHMALgBzAHQAYQB0AHUAcwAnAAoAJABsAG8AZwAgAD0AIAAnAEMAOgBcAHAAcgBhAGMAdABpAGMAdQBtAFwAcABhAGMAawBhAGcAZQBzAC4AbABvAGcAJwAKAE4AZQB3AC0ASQB0AGUAbQAgAC0ASQB0AGUAbQBUAHkAcABlACAARABpAHIAZQBjAHQAbwByAHkAIAAtAEYAbwByAGMAZQAgAC0AUABhAHQAaAAgACQAZABpAHIAIAB8ACAATwB1AHQALQBOAHUAbABsAAoAJABwAHIAbwBmAGkAbABlAFMAYwByAGkAcAB0ACAAPQAgAEoAbwBpAG4ALQBQAGEAdABoACAAJABQAFMASABPAE0ARQAgACcAcAByAG8AZgBpAGwAZQAuAHAAcwAxACcACgBAACgACgAgACAAIgBgACQAZQBuAHYAOgBQAGEAdABoACAAPQAgAFsARQBuAHYAaQByAG8AbgBtAGUAbgB0AF0AOgA6AEcAZQB0AEUAbgB2AGkAcgBvAG4AbQBlAG4AdABWAGEAcgBpAGEAYgBsAGUAKAAnAFAAYQB0AGgAJwAsACAAJwBNAGEAYwBoAGkAbgBlACcAKQAgACsAIAAnADsAJwAgACsAIAAiACAAKwAKACAAIAAiAFsARQBuAHYAaQByAG8AbgBtAGUAbgB0AF0AOgA6AEcAZQB0AEUAbgB2AGkAcgBvAG4AbQBlAG4AdABWAGEAcgBpAGEAYgBsAGUAKAAnAFAAYQB0AGgAJwAsACAAJwBVAHMAZQByACcAKQAiACwACgAgACAAIgBpAGYAIAAoAFQAZQBzAHQALQBQAGEAdABoACAAJwAkAHMAdABhAHQAdQBzACcAKQAgAHsAIABHAGUAdAAtAEMAbwBuAHQAZQBuAHQAIAAnACQAcwB0AGEAdAB1AHMAJwAgAH0AIgAKACkAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABwAHIAbwBmAGkAbABlAFMAYwByAGkAcAB0AAoAJABwAGEAYwBrAGEAZwBlAHMAIAA9ACAAQAAoACkACgBpAGYAIAAoACQAZQBuAHYAOgBQAFIAQQBDAFQASQBDAFUATQBfAFAAQQBDAEsAQQBHAEUAUwApACAAewAKACAAIAAkAHAAYQBjAGsAYQBnAGUAcwAgAD0AIABAACgAJABlAG4AdgA6AFAAUgBBAEMAVABJAEMAVQBNAF8AUABBAEMASwBBAEcARQBTACAALQBzAHAAbABpAHQAIAAnACAAJwAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8AIAB9ACkACgB9AAoAaQBmACAAKAAkAHAAYQBjAGsAYQBnAGUAcwAuAEMAbwB1AG4AdAAgAC0AZQBxACAAMAApACAAewAKACAAIAAnAFAAcgBhAGMAdABpAGMAdQBtADoAIAByAGUAYQBkAHkAIAAoAG4AbwAgAGUAeAB0AHIAYQAgAHQAbwBvAGwAcwAgAHMAZQBsAGUAYwB0AGUAZAApACcAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKAH0AIABlAGwAcwBlACAAewAKACAAIAAkAG4AYQBtAGUAcwAgAD0AIAAkAHAAYQBjAGsAYQBnAGUAcwAgAC0AagBvAGkAbgAgACcAIAAnAAoAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAGkAbgBzAHQAYQBsAGwAaQBuAGcAIAB0AG8AbwBsAHMAIAAoACQAbgBhAG0AZQBzACkAIAB3AGkAdABoACAAQwBoAG8AYwBvAGwAYQB0AGUAeQAgAC0AIAB0AGgAaQBzACAAdABhAGsAZQBzACAAcwBlAHYAZQByAGEAbAAgAG0AaQBuAHUAdABlAHMAOwAgAHIAZQAtAG8AcABlAG4AIABQAG8AdwBlAHIAUwBoAGUAbABsACAAdABvACAAYwBoAGUAYwBrACIAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKACAAIAAkAGYAYQBpAGwAZQBkACAAPQAgAEAAKAApAAoAIAAgACQAZgBhAHQAYQBsACAAPQAgACcAJwAKACAAIAB0AHIAeQAgAHsACgAgACAAIAAgAFsATgBlAHQALgBTAGUAcgB2AGkAYwBlAFAAbwBpAG4AdABNAGEAbgBhAGcAZQByAF0AOgA6AFMAZQBjAHUAcgBpAHQAeQBQAHIAbwB0AG8AYwBvAGwAIAA9ACAAWwBOAGUAdAAuAFMAZQByAHYAaQBjAGUAUABvAGkAbgB0AE0AYQBuAGEAZwBlAHIAXQA6ADoAUwBlAGMAdQByAGkAdAB5AFAAcgBvAHQAbwBjAG8AbAAgAC0AYgBvAHIAIAAzADAANwAyAAoAIAAgACAAIABpAGYAIAAoAC0AbgBvAHQAIAAoAFQAZQBzAHQALQBQAGEAdABoACAAJwBDADoAXABQAHIAbwBnAHIAYQBtAEQAYQB0AGEAXABjAGgAbwBjAG8AbABhAHQAZQB5AFwAYgBpAG4AXABjAGgAbwBjAG8ALgBlAHgAZQAnACkAKQAgAHsACgAgACAAIAAgACAAIABJAG4AdgBvAGsAZQAtAEUAeABwAHIAZQBzAHMAaQBvAG4AIAAoACgATgBlAHcALQBPAGIAagBlAGMAdAAgAFMAeQBzAHQAZQBtAC4ATgBlAHQALgBXAGUAYgBDAGwAaQBlAG4AdAApAC4ARABvAHcAbgBsAG8AYQBkAFMAdAByAGkAbgBnACgAJwBoAHQAdABwAHMAOgAvAC8AYwBvAG0AbQB1AG4AaQB0AHkALgBjAGgAbwBjAG8AbABhAHQAZQB5AC4AbwByAGcALwBpAG4AcwB0AGEAbABsAC4AcABzADEAJwApACkAIAAqAD4APgAgACQAbABvAGcACgAgACAAIAAgAH0ACgAgACAAIAAgAGkAZgAgACgALQBuAG8AdAAgACgAVABlAHMAdAAtAFAAYQB0AGgAIAAnAEMAOgBcAFAAcgBvAGcAcgBhAG0ARABhAHQAYQBcAGMAaABvAGMAbwBsAGEAdABlAHkAXABiAGkAbgBcAGMAaABvAGMAbwAuAGUAeABlACcAKQApACAAewAgAHQAaAByAG8AdwAgACcAQwBoAG8AYwBvAGwAYQB0AGUAeQAgAGMAbwB1AGwAZAAgAG4AbwB0ACAAYgBlACAAaQBuAHMAdABhAGwAbABlAGQAIAAoAGkAcwAgAHQAaABlACAAYwBvAG4AdABhAGkAbgBlAHIAIABvAG4AbABpAG4AZQA/ACkAJwAgAH0ACgAgACAAIAAgAGYAbwByAGUAYQBjAGgAIAAoACQAcABhAGMAawBhAGcAZQAgAGkAbgAgACQAcABhAGMAawBhAGcAZQBzACkAIAB7AAoAIAAgACAAIAAgACAAIgAtAC0ALQAgAGMAaABvAGMAbwAgAGkAbgBzAHQAYQBsAGwAIAAkAHAAYQBjAGsAYQBnAGUAIgAgAHwAIABBAGQAZAAtAEMAbwBuAHQAZQBuAHQAIAAtAFAAYQB0AGgAIAAkAGwAbwBnAAoAIAAgACAAIAAgACAAJgAgACcAQwA6AFwAUAByAG8AZwByAGEAbQBEAGEAdABhAFwAYwBoAG8AYwBvAGwAYQB0AGUAeQBcAGIAaQBuAFwAYwBoAG8AYwBvAC4AZQB4AGUAJwAgAGkAbgBzAHQAYQBsAGwAIAAkAHAAYQBjAGsAYQBnAGUAIAAtAHkAIAAtAC0AbgBvAC0AcAByAG8AZwByAGUAcwBzACAALQAtAGwAaQBtAGkAdAAtAG8AdQB0AHAAdQB0ACAAKgA+AD4AIAAkAGwAbwBnAAoAIAAgACAAIAAgACAAaQBmACAAKAAkAEwAQQBTAFQARQBYAEkAVABDAE8ARABFACAALQBuAGUAIAAwACkAIAB7ACAAJABmAGEAaQBsAGUAZAAgACsAPQAgACQAcABhAGMAawBhAGcAZQAgAH0ACgAgACAAIAAgAH0ACgAgACAAfQAgAGMAYQB0AGMAaAAgAHsACgAgACAAIAAgACQAZgBhAHQAYQBsACAAPQAgACQAXwAuAEUAeABjAGUAcAB0AGkAbwBuAC4ATQBlAHMAcwBhAGcAZQAKACAAIAB9AAoAIAAgAGkAZgAgACgAJABmAGEAdABhAGwAKQAgAHsACgAgACAAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAHQAbwBvAGwAIABpAG4AcwB0AGEAbABsACAARgBBAEkATABFAEQAIAAtACAAJABmAGEAdABhAGwAIAAoAHMAZQBlACAAJABsAG8AZwApACIAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKACAAIAB9ACAAZQBsAHMAZQBpAGYAIAAoACQAZgBhAGkAbABlAGQALgBDAG8AdQBuAHQAIAAtAGcAdAAgADAAKQAgAHsACgAgACAAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAHQAbwBvAGwAIABpAG4AcwB0AGEAbABsACAARgBBAEkATABFAEQAIABmAG8AcgAgACQAKAAkAGYAYQBpAGwAZQBkACAALQBqAG8AaQBuACAAJwAsACAAJwApACAALQAgAGMAaABlAGMAawAgAGUAYQBjAGgAIABwAGEAYwBrAGEAZwBlACAAaQBkACAAYQB0ACAAYwBvAG0AbQB1AG4AaQB0AHkALgBjAGgAbwBjAG8AbABhAHQAZQB5AC4AbwByAGcAIABhAG4AZAAgAHQAaABhAHQAIAB0AGgAZQAgAGMAbwBuAHQAYQBpAG4AZQByACAAaQBzACAAbwBuAGwAaQBuAGUAIAAoAHMAZQBlACAAJABsAG8AZwApACIAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKACAAIAB9ACAAZQBsAHMAZQAgAHsACgAgACAAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAHQAbwBvAGwAcwAgAHIAZQBhAGQAeQAgACgAJABuAGEAbQBlAHMAKQAiACAAfAAgAFMAZQB0AC0AQwBvAG4AdABlAG4AdAAgAC0AUABhAHQAaAAgACQAcwB0AGEAdAB1AHMACgAgACAAfQAKAH0ACgB3AGgAaQBsAGUAIAAoACQAdAByAHUAZQApACAAewAgAFMAdABhAHIAdAAtAFMAbABlAGUAcAAgAC0AUwBlAGMAbwBuAGQAcwAgADMANgAwADAAIAB9AAoA\"\n      ],\n      \"environment\": {\n        \"PRACTICUM_PACKAGES\": \"git 7zip\",\n        \"PRACTICUM_PACKAGE_SOURCE\": \"chocolatey\"\n      }\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"lab-net\",\n      \"subnet\": \"10.92.0.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host\",\n      \"network\": \"lab-net\",\n      \"address\": \"10.92.0.10/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/validate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "validate"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('A Windows node declares its os and shell', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.valid).to.eql(true);",
+              "  pm.expect(body.lab.nodes[0].os).to.eql('windows');",
+              "  pm.expect(body.lab.nodes[0].shell).to.eql('powershell');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validate Invalid Lab - Mixed Operating Systems",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"schema_version\": \"1.0\",\n  \"name\": \"Windows Quick Start\",\n  \"description\": \"A single Windows Server Core container with a PowerShell command line - a sandbox for Windows command-line tasks. Needs Docker Desktop switched to Windows containers.\",\n  \"author\": \"Practicum Team\",\n  \"version\": \"0.1.0\",\n  \"manual\": {\n    \"sections\": [\n      {\n        \"id\": \"step-1\",\n        \"title\": \"Open PowerShell\",\n        \"content_markdown\": \"Start the lab, wait until the host node shows `running`, then use **Open PowerShell** in the Lab nodes table. The prompt prints the tool-install status: wait for `Practicum: tools ready`.\",\n        \"tasks\": [\n          {\n            \"id\": \"done\",\n            \"text\": \"Done: Open PowerShell\"\n          }\n        ]\n      },\n      {\n        \"id\": \"step-2\",\n        \"title\": \"Explore the sandbox\",\n        \"content_markdown\": \"Try a few commands:\\n\\n```\\nGet-ComputerInfo | Select-Object WindowsProductName, OsVersion\\ngit --version\\n7z\\n```\",\n        \"tasks\": [\n          {\n            \"id\": \"done\",\n            \"text\": \"Done: Explore the sandbox\"\n          }\n        ]\n      }\n    ]\n  },\n  \"nodes\": [\n    {\n      \"id\": \"host\",\n      \"image\": \"mcr.microsoft.com/windows/servercore:ltsc2022\",\n      \"resources\": {\n        \"cpu\": 2,\n        \"memory_mb\": 2048\n      },\n      \"os\": \"windows\",\n      \"shell\": \"powershell\",\n      \"command\": [\n        \"powershell.exe\",\n        \"-NoLogo\",\n        \"-NoProfile\",\n        \"-NonInteractive\",\n        \"-ExecutionPolicy\",\n        \"Bypass\",\n        \"-EncodedCommand\",\n        \"JABFAHIAcgBvAHIAQQBjAHQAaQBvAG4AUAByAGUAZgBlAHIAZQBuAGMAZQAgAD0AIAAnAEMAbwBuAHQAaQBuAHUAZQAnAAoAJABkAGkAcgAgAD0AIAAnAEMAOgBcAHAAcgBhAGMAdABpAGMAdQBtACcACgAkAHMAdABhAHQAdQBzACAAPQAgACcAQwA6AFwAcAByAGEAYwB0AGkAYwB1AG0AXABwAGEAYwBrAGEAZwBlAHMALgBzAHQAYQB0AHUAcwAnAAoAJABsAG8AZwAgAD0AIAAnAEMAOgBcAHAAcgBhAGMAdABpAGMAdQBtAFwAcABhAGMAawBhAGcAZQBzAC4AbABvAGcAJwAKAE4AZQB3AC0ASQB0AGUAbQAgAC0ASQB0AGUAbQBUAHkAcABlACAARABpAHIAZQBjAHQAbwByAHkAIAAtAEYAbwByAGMAZQAgAC0AUABhAHQAaAAgACQAZABpAHIAIAB8ACAATwB1AHQALQBOAHUAbABsAAoAJABwAHIAbwBmAGkAbABlAFMAYwByAGkAcAB0ACAAPQAgAEoAbwBpAG4ALQBQAGEAdABoACAAJABQAFMASABPAE0ARQAgACcAcAByAG8AZgBpAGwAZQAuAHAAcwAxACcACgBAACgACgAgACAAIgBgACQAZQBuAHYAOgBQAGEAdABoACAAPQAgAFsARQBuAHYAaQByAG8AbgBtAGUAbgB0AF0AOgA6AEcAZQB0AEUAbgB2AGkAcgBvAG4AbQBlAG4AdABWAGEAcgBpAGEAYgBsAGUAKAAnAFAAYQB0AGgAJwAsACAAJwBNAGEAYwBoAGkAbgBlACcAKQAgACsAIAAnADsAJwAgACsAIAAiACAAKwAKACAAIAAiAFsARQBuAHYAaQByAG8AbgBtAGUAbgB0AF0AOgA6AEcAZQB0AEUAbgB2AGkAcgBvAG4AbQBlAG4AdABWAGEAcgBpAGEAYgBsAGUAKAAnAFAAYQB0AGgAJwAsACAAJwBVAHMAZQByACcAKQAiACwACgAgACAAIgBpAGYAIAAoAFQAZQBzAHQALQBQAGEAdABoACAAJwAkAHMAdABhAHQAdQBzACcAKQAgAHsAIABHAGUAdAAtAEMAbwBuAHQAZQBuAHQAIAAnACQAcwB0AGEAdAB1AHMAJwAgAH0AIgAKACkAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABwAHIAbwBmAGkAbABlAFMAYwByAGkAcAB0AAoAJABwAGEAYwBrAGEAZwBlAHMAIAA9ACAAQAAoACkACgBpAGYAIAAoACQAZQBuAHYAOgBQAFIAQQBDAFQASQBDAFUATQBfAFAAQQBDAEsAQQBHAEUAUwApACAAewAKACAAIAAkAHAAYQBjAGsAYQBnAGUAcwAgAD0AIABAACgAJABlAG4AdgA6AFAAUgBBAEMAVABJAEMAVQBNAF8AUABBAEMASwBBAEcARQBTACAALQBzAHAAbABpAHQAIAAnACAAJwAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8AIAB9ACkACgB9AAoAaQBmACAAKAAkAHAAYQBjAGsAYQBnAGUAcwAuAEMAbwB1AG4AdAAgAC0AZQBxACAAMAApACAAewAKACAAIAAnAFAAcgBhAGMAdABpAGMAdQBtADoAIAByAGUAYQBkAHkAIAAoAG4AbwAgAGUAeAB0AHIAYQAgAHQAbwBvAGwAcwAgAHMAZQBsAGUAYwB0AGUAZAApACcAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKAH0AIABlAGwAcwBlACAAewAKACAAIAAkAG4AYQBtAGUAcwAgAD0AIAAkAHAAYQBjAGsAYQBnAGUAcwAgAC0AagBvAGkAbgAgACcAIAAnAAoAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAGkAbgBzAHQAYQBsAGwAaQBuAGcAIAB0AG8AbwBsAHMAIAAoACQAbgBhAG0AZQBzACkAIAB3AGkAdABoACAAQwBoAG8AYwBvAGwAYQB0AGUAeQAgAC0AIAB0AGgAaQBzACAAdABhAGsAZQBzACAAcwBlAHYAZQByAGEAbAAgAG0AaQBuAHUAdABlAHMAOwAgAHIAZQAtAG8AcABlAG4AIABQAG8AdwBlAHIAUwBoAGUAbABsACAAdABvACAAYwBoAGUAYwBrACIAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKACAAIAAkAGYAYQBpAGwAZQBkACAAPQAgAEAAKAApAAoAIAAgACQAZgBhAHQAYQBsACAAPQAgACcAJwAKACAAIAB0AHIAeQAgAHsACgAgACAAIAAgAFsATgBlAHQALgBTAGUAcgB2AGkAYwBlAFAAbwBpAG4AdABNAGEAbgBhAGcAZQByAF0AOgA6AFMAZQBjAHUAcgBpAHQAeQBQAHIAbwB0AG8AYwBvAGwAIAA9ACAAWwBOAGUAdAAuAFMAZQByAHYAaQBjAGUAUABvAGkAbgB0AE0AYQBuAGEAZwBlAHIAXQA6ADoAUwBlAGMAdQByAGkAdAB5AFAAcgBvAHQAbwBjAG8AbAAgAC0AYgBvAHIAIAAzADAANwAyAAoAIAAgACAAIABpAGYAIAAoAC0AbgBvAHQAIAAoAFQAZQBzAHQALQBQAGEAdABoACAAJwBDADoAXABQAHIAbwBnAHIAYQBtAEQAYQB0AGEAXABjAGgAbwBjAG8AbABhAHQAZQB5AFwAYgBpAG4AXABjAGgAbwBjAG8ALgBlAHgAZQAnACkAKQAgAHsACgAgACAAIAAgACAAIABJAG4AdgBvAGsAZQAtAEUAeABwAHIAZQBzAHMAaQBvAG4AIAAoACgATgBlAHcALQBPAGIAagBlAGMAdAAgAFMAeQBzAHQAZQBtAC4ATgBlAHQALgBXAGUAYgBDAGwAaQBlAG4AdAApAC4ARABvAHcAbgBsAG8AYQBkAFMAdAByAGkAbgBnACgAJwBoAHQAdABwAHMAOgAvAC8AYwBvAG0AbQB1AG4AaQB0AHkALgBjAGgAbwBjAG8AbABhAHQAZQB5AC4AbwByAGcALwBpAG4AcwB0AGEAbABsAC4AcABzADEAJwApACkAIAAqAD4APgAgACQAbABvAGcACgAgACAAIAAgAH0ACgAgACAAIAAgAGkAZgAgACgALQBuAG8AdAAgACgAVABlAHMAdAAtAFAAYQB0AGgAIAAnAEMAOgBcAFAAcgBvAGcAcgBhAG0ARABhAHQAYQBcAGMAaABvAGMAbwBsAGEAdABlAHkAXABiAGkAbgBcAGMAaABvAGMAbwAuAGUAeABlACcAKQApACAAewAgAHQAaAByAG8AdwAgACcAQwBoAG8AYwBvAGwAYQB0AGUAeQAgAGMAbwB1AGwAZAAgAG4AbwB0ACAAYgBlACAAaQBuAHMAdABhAGwAbABlAGQAIAAoAGkAcwAgAHQAaABlACAAYwBvAG4AdABhAGkAbgBlAHIAIABvAG4AbABpAG4AZQA/ACkAJwAgAH0ACgAgACAAIAAgAGYAbwByAGUAYQBjAGgAIAAoACQAcABhAGMAawBhAGcAZQAgAGkAbgAgACQAcABhAGMAawBhAGcAZQBzACkAIAB7AAoAIAAgACAAIAAgACAAIgAtAC0ALQAgAGMAaABvAGMAbwAgAGkAbgBzAHQAYQBsAGwAIAAkAHAAYQBjAGsAYQBnAGUAIgAgAHwAIABBAGQAZAAtAEMAbwBuAHQAZQBuAHQAIAAtAFAAYQB0AGgAIAAkAGwAbwBnAAoAIAAgACAAIAAgACAAJgAgACcAQwA6AFwAUAByAG8AZwByAGEAbQBEAGEAdABhAFwAYwBoAG8AYwBvAGwAYQB0AGUAeQBcAGIAaQBuAFwAYwBoAG8AYwBvAC4AZQB4AGUAJwAgAGkAbgBzAHQAYQBsAGwAIAAkAHAAYQBjAGsAYQBnAGUAIAAtAHkAIAAtAC0AbgBvAC0AcAByAG8AZwByAGUAcwBzACAALQAtAGwAaQBtAGkAdAAtAG8AdQB0AHAAdQB0ACAAKgA+AD4AIAAkAGwAbwBnAAoAIAAgACAAIAAgACAAaQBmACAAKAAkAEwAQQBTAFQARQBYAEkAVABDAE8ARABFACAALQBuAGUAIAAwACkAIAB7ACAAJABmAGEAaQBsAGUAZAAgACsAPQAgACQAcABhAGMAawBhAGcAZQAgAH0ACgAgACAAIAAgAH0ACgAgACAAfQAgAGMAYQB0AGMAaAAgAHsACgAgACAAIAAgACQAZgBhAHQAYQBsACAAPQAgACQAXwAuAEUAeABjAGUAcAB0AGkAbwBuAC4ATQBlAHMAcwBhAGcAZQAKACAAIAB9AAoAIAAgAGkAZgAgACgAJABmAGEAdABhAGwAKQAgAHsACgAgACAAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAHQAbwBvAGwAIABpAG4AcwB0AGEAbABsACAARgBBAEkATABFAEQAIAAtACAAJABmAGEAdABhAGwAIAAoAHMAZQBlACAAJABsAG8AZwApACIAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKACAAIAB9ACAAZQBsAHMAZQBpAGYAIAAoACQAZgBhAGkAbABlAGQALgBDAG8AdQBuAHQAIAAtAGcAdAAgADAAKQAgAHsACgAgACAAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAHQAbwBvAGwAIABpAG4AcwB0AGEAbABsACAARgBBAEkATABFAEQAIABmAG8AcgAgACQAKAAkAGYAYQBpAGwAZQBkACAALQBqAG8AaQBuACAAJwAsACAAJwApACAALQAgAGMAaABlAGMAawAgAGUAYQBjAGgAIABwAGEAYwBrAGEAZwBlACAAaQBkACAAYQB0ACAAYwBvAG0AbQB1AG4AaQB0AHkALgBjAGgAbwBjAG8AbABhAHQAZQB5AC4AbwByAGcAIABhAG4AZAAgAHQAaABhAHQAIAB0AGgAZQAgAGMAbwBuAHQAYQBpAG4AZQByACAAaQBzACAAbwBuAGwAaQBuAGUAIAAoAHMAZQBlACAAJABsAG8AZwApACIAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABzAHQAYQB0AHUAcwAKACAAIAB9ACAAZQBsAHMAZQAgAHsACgAgACAAIAAgACIAUAByAGEAYwB0AGkAYwB1AG0AOgAgAHQAbwBvAGwAcwAgAHIAZQBhAGQAeQAgACgAJABuAGEAbQBlAHMAKQAiACAAfAAgAFMAZQB0AC0AQwBvAG4AdABlAG4AdAAgAC0AUABhAHQAaAAgACQAcwB0AGEAdAB1AHMACgAgACAAfQAKAH0ACgB3AGgAaQBsAGUAIAAoACQAdAByAHUAZQApACAAewAgAFMAdABhAHIAdAAtAFMAbABlAGUAcAAgAC0AUwBlAGMAbwBuAGQAcwAgADMANgAwADAAIAB9AAoA\"\n      ],\n      \"environment\": {\n        \"PRACTICUM_PACKAGES\": \"git 7zip\",\n        \"PRACTICUM_PACKAGE_SOURCE\": \"chocolatey\"\n      }\n    },\n    {\n      \"id\": \"linux-host\",\n      \"image\": \"alpine:3.21\"\n    }\n  ],\n  \"networks\": [\n    {\n      \"id\": \"lab-net\",\n      \"subnet\": \"10.92.0.0/24\"\n    }\n  ],\n  \"interfaces\": [\n    {\n      \"node\": \"host\",\n      \"network\": \"lab-net\",\n      \"address\": \"10.92.0.10/24\"\n    },\n    {\n      \"node\": \"linux-host\",\n      \"network\": \"lab-net\",\n      \"address\": \"10.92.0.11/24\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/labs/validate",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "labs",
+            "validate"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Linux and Windows nodes cannot share a lab', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.valid).to.eql(false);",
+              "  pm.expect(body.errors.map(e => e.message).join(' ')).to.include('same operating system');",
               "});"
             ]
           }

@@ -12,7 +12,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 from practicum_desktop.api_client import NODE_STEP_LABELS, NodeProgressInfo
 from practicum_desktop.widgets import discard, role_label
 
@@ -115,11 +115,26 @@ class StartProgressPanel(QFrame):
                 bar.setFixedWidth(120)
                 self.rows.addWidget(bar, row, 2)
                 self._row_widgets.append(bar)
-            elif entry.step == "ready":
-                check = QLabel("\u2713")
-                check.setStyleSheet(f"color: {theme.GREEN}; font-weight: 700;")
-                self.rows.addWidget(check, row, 2)
-                self._row_widgets.append(check)
+            elif entry.step in ("ready", "failed"):
+                mark = self._outcome_mark(entry.step)
+                self.rows.addWidget(mark, row, 2, Qt.AlignmentFlag.AlignTop)
+                self._row_widgets.append(mark)
+
+    @staticmethod
+    def _outcome_mark(step: str) -> QLabel:
+        """The design check / cross for a finished node (text glyph when assets are missing)."""
+        name, glyph, colour, label = (
+            ("success", "\u2713", theme.GREEN, "Ready")
+            if step == "ready"
+            else ("error", "\u2717", theme.DANGER, "Failed")
+        )
+        if icons.icon_available(name):
+            return icons.icon_label(name, 16, label)
+        mark = QLabel(glyph)
+        mark.setToolTip(label)
+        mark.setAccessibleName(label)
+        mark.setStyleSheet(f"color: {colour}; font-weight: 700;")
+        return mark
 
     def set_title(self, text: str) -> None:
         self.title_label.setText(text)

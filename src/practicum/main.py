@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from practicum.models import (
     ApplyPortRecommendationRequest,
     ApplySubnetRecommendationRequest,
+    DockerEngineInfo,
     ImportResult,
     Lab,
     LabDefinition,
@@ -67,6 +68,14 @@ def sweep_leftovers() -> LeftoverSweepResult:
     """Removes Practicum containers/networks whose lab this API does not know (also run at
     startup). `error` is set when Docker could not be queried."""
     return service.sweep_leftovers()
+
+
+@app.get("/docker/engine", response_model=DockerEngineInfo)
+def docker_engine() -> DockerEngineInfo:
+    """Which kind of container the active Docker daemon serves (Linux or Windows), from a
+    read-only `docker info`. The desktop uses it to gate Windows Quick Start; Practicum never
+    switches Docker Desktop's engine itself (windows-desktop-windows-container-readiness)."""
+    return service.docker_engine()
 
 
 def validation_issues(exc: ValidationError) -> list[ValidationIssue]:
@@ -261,11 +270,11 @@ def apply_port_recommendation(
 ) -> PortCheckResult:
     try:
         return service.apply_port_recommendation(
-            lab_id, request.node_id, request.host_port, request.protocol
+            lab_id, request.node_id, request.host_port, request.protocol, request.new_host_port
         )
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
-    except PortRecommendationUnavailableError as exc:
+    except (PortRecommendationUnavailableError, LabBusyError, LabDeleteError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -285,7 +294,7 @@ def apply_subnet_recommendation(
         return service.apply_subnet_recommendation(lab_id, request.network_id)
     except LabNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Lab not found") from exc
-    except SubnetRecommendationUnavailableError as exc:
+    except (SubnetRecommendationUnavailableError, LabBusyError, LabDeleteError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

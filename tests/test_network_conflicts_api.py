@@ -19,15 +19,19 @@ class FakeRuntime:
         self.networks = networks or []
         self.removed: list[str] = []
         self.fail_listing: str | None = None
+        self.reset_labs: list[str] = []
+        self.fail_reset: str | None = None
 
-    def start(self, lab: Lab) -> None:
+    def start(self, lab: Lab, on_progress=None) -> None:
         pass
 
     def stop(self, lab: Lab) -> None:
         pass
 
     def reset(self, lab: Lab) -> None:
-        pass
+        if self.fail_reset:
+            raise RuntimeFailure(self.fail_reset, ["docker", "rm", "-f", "x"])
+        self.reset_labs.append(lab.id)
 
     def status(self, lab: Lab) -> list:
         return []
@@ -74,6 +78,7 @@ def test_networks_reports_no_conflicts(client: TestClient, lab_definition: dict,
         "has_conflicts": False,
         "conflicts": [],
         "error": None,
+        "machines_reset": False,
     }
 
 
@@ -241,3 +246,62 @@ def test_remove_leftover_refuses_unrelated_network_names(
 
     assert response.status_code == 409
     assert "does not conflict" in response.json()["detail"]
+
+
+# ----- fixes recreate the machines (D-48, user report 2026-10-25) -----------------------------
+
+
+def test_subnet_fix_on_a_lab_that_has_run_recreates_its_machines(
+    client: TestClient, lab_definition: dict, runtime
+) -> None:
+    """Stop keeps containers for `docker start`; after a subnet (or port) rewrite those old
+    containers would come back with the old addresses and the old session data."""
+    runtime.networks = [_leftover()]
+    lab_id = _create(client, lab_definition)
+    assert client.post(f"/labs/{lab_id}/start").json()["lab"]["status"] == "running"
+    assert client.post(f"/labs/{lab_id}/stop").json()["lab"]["status"] == "stopped"
+
+    response = client.post(
+        f"/labs/{lab_id}/networks/apply-recommendation", json={"network_id": "left"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["machines_reset"] is True
+    assert runtime.reset_labs == [lab_id]
+    lab = client.get(f"/labs/{lab_id}").json()
+    assert lab["status"] == "defined"  # the next Start builds fresh containers
+    assert lab["networks"][0]["subnet"] == "10.90.0.0/24"
+
+
+def test_subnet_fix_on_a_never_started_lab_has_nothing_to_reset(
+    client: TestClient, lab_definition: dict, runtime
+) -> None:
+    runtime.networks = [_leftover()]
+    lab_id = _create(client, lab_definition)
+
+    response = client.post(
+        f"/labs/{lab_id}/networks/apply-recommendation", json={"network_id": "left"}
+    )
+
+    assert response.json()["machines_reset"] is False
+    assert runtime.reset_labs == []
+
+
+def test_subnet_fix_keeps_the_old_definition_when_cleanup_fails(
+    client: TestClient, lab_definition: dict, runtime
+) -> None:
+    runtime.networks = [_leftover()]
+    lab_id = _create(client, lab_definition)
+    client.post(f"/labs/{lab_id}/start")
+    client.post(f"/labs/{lab_id}/stop")
+    runtime.fail_reset = "Docker is unavailable"
+
+    response = client.post(
+        f"/labs/{lab_id}/networks/apply-recommendation", json={"network_id": "left"}
+    )
+
+    assert response.status_code == 409
+    assert "Could not remove the lab's existing machines" in response.json()["detail"]
+    lab = client.get(f"/labs/{lab_id}").json()
+    assert lab["networks"][0]["subnet"] == "10.0.1.0/24"  # unchanged
+    assert lab["status"] == "error" and "Docker is unavailable" in lab["last_error"]

@@ -28,7 +28,8 @@ class NodePreset:
     role: str  # host | router | server | desktop | custom
     description: str
     id_prefix: str
-    glyph: str = "\u25a0"
+    glyph: str = "\u25a0"  # text fallback; `icon_name` is the design icon
+    icon_name: str = "desktop"  # desktop (a machine) | forward (router) | tools (custom image)
     # None = keep the image's command (`command: null`); () = the spec default (sleep infinity);
     # otherwise the explicit argv.
     command: tuple[str, ...] | None = ()
@@ -101,6 +102,7 @@ PRESETS: tuple[NodePreset, ...] = (
         ),
         id_prefix="router",
         glyph="\u25c6",
+        icon_name="forward",
         cpu=0.5,
         memory_mb=128,
         sysctls={"net.ipv4.ip_forward": "1"},
@@ -141,6 +143,7 @@ PRESETS: tuple[NodePreset, ...] = (
         description="Any Docker image; runs `sleep infinity` unless the image has its own service.",
         id_prefix="node",
         glyph="\u25cc",
+        icon_name="tools",
         editable_image=True,
     ),
 )
@@ -165,6 +168,42 @@ def preset_for_node(node: dict[str, object]) -> NodePreset:
         if preset.image and preset.image == image and preset.key != "router":
             return preset
     return preset_by_key("custom")
+
+
+def used_host_ports(nodes: list[dict[str, object]]) -> set[tuple[int, str]]:
+    """(host port, protocol) pairs already published by the draft's machines."""
+    used: set[tuple[int, str]] = set()
+    for node in nodes:
+        resources = node.get("resources") or {}
+        if not isinstance(resources, dict):
+            continue
+        for mapping in resources.get("port_mappings") or []:
+            used.add((int(mapping["host"]), str(mapping.get("protocol") or "tcp")))
+        for port in resources.get("exposed_ports") or []:
+            used.add((int(port), "tcp"))
+    return used
+
+
+def free_host_ports(
+    node: dict[str, object], existing: list[dict[str, object]]
+) -> dict[str, object]:
+    """The node with any host port another machine in the draft already publishes moved to
+    the next free port above it - so a second Ubuntu Desktop gets 3002/3003 instead of
+    clashing with the first one's 3000/3001 (the gate would otherwise have to fix it)."""
+    resources = node.get("resources")
+    if not isinstance(resources, dict) or not resources.get("port_mappings"):
+        return node
+    taken = used_host_ports(existing)
+    moved = []
+    for mapping in resources["port_mappings"]:
+        host = int(mapping["host"])
+        protocol = str(mapping.get("protocol") or "tcp")
+        while (host, protocol) in taken and host < 65535:
+            host += 1
+        taken.add((host, protocol))
+        moved.append({**mapping, "host": host})
+    node["resources"] = {**resources, "port_mappings": moved}
+    return node
 
 
 def next_node_id(prefix: str, existing: list[str]) -> str:

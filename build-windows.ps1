@@ -72,6 +72,8 @@ try {
         --name Practicum `
         --icon (Join-Path $root "assets\practicum.ico") `
         --add-data "$(Join-Path $root 'assets\practicum.ico');assets" `
+        --add-data "$(Join-Path $root 'desktop\src\practicum_desktop\assets');practicum_desktop\assets" `
+        --add-data "$(Join-Path $root 'desktop\src\practicum_desktop\samples');practicum_desktop\samples" `
         --workpath $workPath `
         --distpath $distPath `
         --paths (Join-Path $root "src") `

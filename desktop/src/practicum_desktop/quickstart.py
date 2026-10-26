@@ -15,6 +15,16 @@ Two kinds of template (D-35):
   command must stay untouched (`command: null`).
 * **terminal** — a plain `ubuntu:22.04` container reached with Open shell. Packages become the
   node's start command (apt-get on first boot, then `sleep infinity`).
+* **windows** — a Windows Server Core command-line sandbox with PowerShell
+  (designer-windows-quick-start, designer-windows-quick-start-packages). The image tag is
+  pinned from `WINDOWS_IMAGES`, the host/image compatibility matrix, for the host build the
+  Docker daemon reports; never a floating `latest`. Tools are Chocolatey package ids
+  (`WINDOWS_TOOL_CATALOG`), installed at first start by `WINDOWS_INIT_SCRIPT` - a PowerShell
+  script handed to the container as `-EncodedCommand` (the only robust way to pass a script
+  through Docker's Windows command-line quoting) that reads the package list from the
+  readable `PRACTICUM_PACKAGES` environment variable, keeps a status marker the Lab nodes
+  table and the PowerShell profile show, and then keeps the container alive. Needs Docker
+  Desktop in Windows-container mode (windows-desktop-windows-container-readiness).
 
 Subnets are drawn from a dedicated /16 (D-17) so repeated quick starts don't collide with
 each other or with hand-authored labs.
@@ -22,6 +32,7 @@ each other or with hand-authored labs.
 
 from __future__ import annotations
 
+import base64
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -32,7 +43,8 @@ from practicum_desktop.api_client import ApiClient, CreateLabResult
 # A dedicated /16 reserved for auto-picked quick-start subnets.
 QUICK_START_SUBNET_POOL = ip_network("10.90.0.0/16")
 
-PACKAGE_NAME = re.compile(r"^[a-z0-9][a-z0-9+.\-]*$")
+PACKAGE_NAME = re.compile(r"^[a-z0-9][a-z0-9+.\-]*$")  # Debian package names
+CHOCO_PACKAGE_ID = re.compile(r"^[a-z0-9][a-z0-9._\-]*$")  # Chocolatey package ids (lowercased)
 ID_SAFE = re.compile(r"[^a-z0-9-]+")
 
 
@@ -43,8 +55,11 @@ class QuickStartTemplate:
     caption: str
     image: str
     base_label: str
-    kind: str = "terminal"  # terminal | desktop
-    icon: str = "\u25a0"
+    kind: str = "terminal"  # terminal | desktop | windows
+    os: str = "linux"  # linux | windows - the Docker engine mode the template needs
+    shell: str | None = None  # declared shell for Open shell (None = the OS default)
+    icon: str = "\u25a0"  # text glyph (fallback); `icon_name` is the design icon
+    icon_name: str = "terminal"
     default_name: str = "Ubuntu Quick Start"
     description: str = (
         "A single Ubuntu container for quickly exploring Practicum with no topology to configure."
@@ -57,14 +72,59 @@ class QuickStartTemplate:
     environment: tuple[tuple[str, str], ...] = ()
     default_options: tuple[str, ...] = ()  # PACKAGE_CATALOG keys preselected for this template
     packages_caption: str = "Pre-install packages onto the base image (installed at first start)."
-    available: bool = True
-    unavailable_reason: str = ""
+    # Wording of the package picker, which differs per package system (apt vs Chocolatey).
+    catalog_title: str = "Popular software"
+    catalog_hint: str = "Tick what the lab should come with - installed at first start."
+    other_packages_title: str = "Other packages"
+    package_placeholder: str = "Any Ubuntu package name, e.g. htop"
+    install_note: str = (
+        "Installing takes a minute or two after the lab starts; the Lab nodes table and the "
+        "node's shell show when the packages are ready."
+    )
 
 
 WEBTOP_IMAGE = "lscr.io/linuxserver/webtop:ubuntu-xfce"
 # LinuxServer.io images install extra distro packages at first start through this mod;
 # packages are pipe-separated. Needs internet inside the container, like apt-get does.
 LINUXSERVER_PACKAGE_MOD = "linuxserver/mods:universal-package-install"
+
+
+@dataclass(frozen=True)
+class WindowsImage:
+    """One pinned Windows Server Core tag and the host it is built for. Windows containers
+    must not be newer than the host (Hyper-V isolation runs older images on a newer host;
+    process isolation needs the same build), so the chooser picks the newest tag whose build
+    is at or below the daemon host's build."""
+
+    tag: str
+    build: int  # the OS build the image carries (and the minimum host build)
+    label: str
+
+    @property
+    def image(self) -> str:
+        return f"{WINDOWS_SERVERCORE_REPOSITORY}:{self.tag}"
+
+
+WINDOWS_SERVERCORE_REPOSITORY = "mcr.microsoft.com/windows/servercore"
+# Newest first. Source: Microsoft's Windows container version compatibility matrix
+# (learn.microsoft.com/virtualization/windowscontainers/deploy-containers/version-compatibility).
+WINDOWS_IMAGES: tuple[WindowsImage, ...] = (
+    WindowsImage("ltsc2025", 26100, "Windows Server 2025"),
+    WindowsImage("ltsc2022", 20348, "Windows Server 2022"),
+    WindowsImage("ltsc2019", 17763, "Windows Server 2019"),
+)
+# Used when the host build is unknown (the template's listed image): runs on every supported
+# Windows 11 / Server 2022+ host with Hyper-V isolation.
+DEFAULT_WINDOWS_IMAGE = WINDOWS_IMAGES[1]
+WINDOWS_MIN_HOST_BUILD = WINDOWS_IMAGES[-1].build
+
+
+def windows_image_for_host(host_build: int | None) -> WindowsImage | None:
+    """The newest Server Core tag compatible with `host_build`; the default when the build is
+    unknown; None when the host is older than every supported image."""
+    if host_build is None:
+        return DEFAULT_WINDOWS_IMAGE
+    return next((image for image in WINDOWS_IMAGES if image.build <= host_build), None)
 
 TEMPLATES: tuple[QuickStartTemplate, ...] = (
     QuickStartTemplate(
@@ -75,6 +135,7 @@ TEMPLATES: tuple[QuickStartTemplate, ...] = (
         base_label="Ubuntu desktop (XFCE) base",
         kind="desktop",
         icon="\u25a3",  # ▣ a screen with content
+        icon_name="desktop",
         default_name="Ubuntu Desktop Quick Start",
         description=(
             "A full Ubuntu desktop that opens in Practicum's lab view - point and click, no "
@@ -98,6 +159,7 @@ TEMPLATES: tuple[QuickStartTemplate, ...] = (
         base_label="Ubuntu 22.04 base",
         kind="terminal",
         icon="\u203a_",  # ›_ a prompt
+        icon_name="terminal",
         hint="one host you work in through Open shell; no network setup required.",
         default_options=("git", "python3", "curl"),
         packages_caption="Pre-install packages onto the base Ubuntu 22.04 image.",
@@ -105,14 +167,35 @@ TEMPLATES: tuple[QuickStartTemplate, ...] = (
     QuickStartTemplate(
         key="windows",
         title="Windows",
-        caption="Windows template",
-        image="",
-        base_label="Windows base",
-        icon="\u25a6",  # ▦ window panes
-        available=False,
-        unavailable_reason=(
-            "Coming soon. Windows containers need Docker Desktop switched to Windows "
-            "container mode, which Practicum does not drive yet."
+        caption="PowerShell sandbox",
+        image=DEFAULT_WINDOWS_IMAGE.image,
+        base_label=f"Windows Server Core ({DEFAULT_WINDOWS_IMAGE.label}) base",
+        kind="windows",
+        os="windows",
+        shell="powershell",
+        icon="\u203a_",
+        icon_name="terminal",
+        default_name="Windows Quick Start",
+        description=(
+            "A single Windows Server Core container with a PowerShell command line - a "
+            "sandbox for Windows command-line tasks, not a Windows desktop. Needs Docker "
+            "Desktop switched to Windows containers."
+        ),
+        hint="one Windows host you work in through Open PowerShell; no network setup required.",
+        cpu=2,
+        memory_mb=2048,
+        default_options=("git",),
+        packages_caption=(
+            "Pre-install command-line tools onto the Windows Server Core image with "
+            "Chocolatey (installed at first start; needs internet inside the container)."
+        ),
+        catalog_title="Popular tools",
+        catalog_hint="Tick the tools the lab should come with - installed at first start.",
+        other_packages_title="Other Chocolatey packages",
+        package_placeholder="Any Chocolatey package id, e.g. 7zip",
+        install_note=(
+            "Installing takes several minutes after the lab starts (Chocolatey plus each "
+            "tool); the Lab nodes table and the node's PowerShell show when the tools are ready."
         ),
     ),
 )
@@ -120,10 +203,12 @@ TEMPLATES: tuple[QuickStartTemplate, ...] = (
 
 @dataclass(frozen=True)
 class PackageOption:
-    """A curated, popular package (or small group) students/instructors often want."""
+    """A curated, popular package (or small group) students/instructors often want.
+    `packages` are apt package names for the Ubuntu kinds and Chocolatey package ids for
+    the windows kind; `kinds` says which template kinds offer the option."""
 
     key: str  # what the chip shows
-    packages: tuple[str, ...]  # apt package names installed for it
+    packages: tuple[str, ...]  # package names/ids installed for it
     description: str
     kinds: tuple[str, ...] = ("terminal", "desktop")
 
@@ -165,38 +250,75 @@ PACKAGE_CATALOG: tuple[PackageOption, ...] = (
     ),
 )
 
+# Windows-container-compatible command-line tools, as Chocolatey package ids
+# (community.chocolatey.org). Only tools whose installers run unattended inside a Server
+# Core container (no GUI installers, no drivers such as Npcap) are listed.
+WINDOWS_TOOL_CATALOG: tuple[PackageOption, ...] = (
+    PackageOption("git", ("git",), "Git version control", ("windows",)),
+    PackageOption("python", ("python",), "Python 3 with pip", ("windows",)),
+    PackageOption("nodejs", ("nodejs-lts",), "Node.js LTS with npm", ("windows",)),
+    PackageOption("dotnet-sdk", ("dotnet-sdk",), ".NET SDK (dotnet CLI)", ("windows",)),
+    PackageOption("openjdk", ("openjdk",), "Java development kit", ("windows",)),
+    PackageOption("pwsh", ("powershell-core",), "PowerShell 7 (pwsh)", ("windows",)),
+    PackageOption("7zip", ("7zip",), "7-Zip archiver (7z)", ("windows",)),
+    PackageOption("curl", ("curl",), "Fetch URLs from the command line", ("windows",)),
+    PackageOption("wget", ("wget",), "Download files", ("windows",)),
+    PackageOption("jq", ("jq",), "Work with JSON in the shell", ("windows",)),
+    PackageOption("vim", ("vim",), "Vim editor", ("windows",)),
+    PackageOption("nano", ("nano",), "Simple text editor", ("windows",)),
+    PackageOption("openssh", ("openssh",), "ssh / scp clients", ("windows",)),
+    PackageOption("sqlite", ("sqlite",), "SQLite database shell", ("windows",)),
+    PackageOption(
+        "sysinternals", ("sysinternals",), "Sysinternals suite (PsExec, Procmon…)", ("windows",)
+    ),
+)
+PACKAGE_CATALOG = PACKAGE_CATALOG + WINDOWS_TOOL_CATALOG
+
 
 def catalog_for(kind: str) -> tuple[PackageOption, ...]:
     return tuple(option for option in PACKAGE_CATALOG if kind in option.kinds)
 
 
-def catalog_option(key: str) -> PackageOption | None:
-    return next((option for option in PACKAGE_CATALOG if option.key == key), None)
+def catalog_option(key: str, kind: str | None = None) -> PackageOption | None:
+    """The catalogue entry shown as `key` - for template `kind` when given, because the same
+    key means different packages on Ubuntu and Windows ("python3"/"python", "git"/"git")."""
+    options = catalog_for(kind) if kind else PACKAGE_CATALOG
+    return next((option for option in options if option.key == key), None)
 
 
 DEFAULT_TEMPLATE = TEMPLATES[0]  # the desktop: the friendliest start (D-35)
 
 
-def packages_for_options(keys: list[str] | tuple[str, ...]) -> list[str]:
-    """Apt package names for catalogue keys (unknown keys are taken literally), deduplicated."""
+def packages_for_options(keys: list[str] | tuple[str, ...], kind: str | None = None) -> list[str]:
+    """Package names/ids for catalogue keys of template `kind` (unknown keys are taken
+    literally), deduplicated."""
     names: list[str] = []
     for key in keys:
-        option = catalog_option(key)
+        option = catalog_option(key, kind)
         for name in option.packages if option else (key,):
             if name not in names:
                 names.append(name)
     return names
 
 
-DEFAULT_PACKAGES: tuple[str, ...] = tuple(packages_for_options(DEFAULT_TEMPLATE.default_options))
+DEFAULT_PACKAGES: tuple[str, ...] = tuple(
+    packages_for_options(DEFAULT_TEMPLATE.default_options, DEFAULT_TEMPLATE.kind)
+)
 DEFAULT_NAME = DEFAULT_TEMPLATE.default_name
 DEFAULT_DESCRIPTION = DEFAULT_TEMPLATE.description
 
 
 @dataclass
 class QuickStartStep:
+    """One instruction step: a manual section with (normally) a single "Done" task. Steps
+    loaded from a hand-authored manual may carry their original `section_id` and `tasks`
+    (see `manual_editor.ManualStepsEditor.load_manual`); both are kept as they were."""
+
     title: str
     details: str = ""
+    section_id: str | None = None
+    tasks: list[dict] | None = None
+    requires_screenshot: bool = False  # the instructor asks the student for a screenshot
 
 
 @dataclass
@@ -208,20 +330,32 @@ class QuickStartDraft:
     author: str = ""
     version: str = ""
     description: str = ""
+    # Windows template: the daemon host's build (from the readiness check) picks the image tag.
+    windows_host_build: int | None = None
 
     def __post_init__(self) -> None:
         if self.packages is None:
-            self.packages = packages_for_options(self.template.default_options)
+            self.packages = packages_for_options(
+                self.template.default_options, self.template.kind
+            )
 
 
 def template_by_key(key: str) -> QuickStartTemplate:
     return next((t for t in TEMPLATES if t.key == key), DEFAULT_TEMPLATE)
 
 
-def validate_package_name(name: str) -> str | None:
-    """None when `name` is an acceptable Debian package name, else the reason it is not."""
+def validate_package_name(name: str, kind: str = "terminal") -> str | None:
+    """None when `name` is an acceptable package name for template `kind` (a Debian package
+    name, or a Chocolatey package id for the Windows template), else the reason it is not."""
     if not name:
         return "Type a package name first."
+    if kind == "windows":
+        if not CHOCO_PACKAGE_ID.match(name):
+            return (
+                f"'{name}' is not a valid Chocolatey package id (letters, digits, '.', '_', "
+                "'-'; look it up at community.chocolatey.org)."
+            )
+        return None
     if not PACKAGE_NAME.match(name):
         return f"'{name}' is not a valid package name (lowercase letters, digits, '+', '.', '-')."
     return None
@@ -265,23 +399,139 @@ def desktop_package_environment(packages: list[str]) -> dict[str, str]:
     return {"DOCKER_MODS": LINUXSERVER_PACKAGE_MOD, "INSTALL_PACKAGES": "|".join(packages)}
 
 
+WINDOWS_PACKAGE_DIR = r"C:\practicum"
+WINDOWS_PACKAGE_STATUS_FILE = r"C:\practicum\packages.status"  # read by GET /status (core)
+WINDOWS_PACKAGE_LOG_FILE = r"C:\practicum\packages.log"
+CHOCOLATEY_INSTALL_URL = "https://community.chocolatey.org/install.ps1"
+CHOCOLATEY_EXE = r"C:\ProgramData\chocolatey\bin\choco.exe"
+WINDOWS_PACKAGES_VARIABLE = "PRACTICUM_PACKAGES"  # space-separated Chocolatey ids
+WINDOWS_PACKAGE_SOURCE_VARIABLE = "PRACTICUM_PACKAGE_SOURCE"
+
+# The Windows node's init: the same contract as the Ubuntu script (status marker, log, shell
+# banner, keep-alive), in PowerShell. It is generic - the package list comes from the node's
+# environment - so the exported spec stays readable: the tools are in `environment`, the
+# mechanism is this documented script. Each tool is installed on its own so a failure names
+# the package. The all-users PowerShell profile prints the status on every Open PowerShell
+# and refreshes PATH so freshly installed tools are found without a restart.
+WINDOWS_INIT_SCRIPT = f"""\
+$ErrorActionPreference = 'Continue'
+$dir = '{WINDOWS_PACKAGE_DIR}'
+$status = '{WINDOWS_PACKAGE_STATUS_FILE}'
+$log = '{WINDOWS_PACKAGE_LOG_FILE}'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$profileScript = Join-Path $PSHOME 'profile.ps1'
+@(
+  "`$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + " +
+  "[Environment]::GetEnvironmentVariable('Path', 'User')",
+  "if (Test-Path '$status') {{ Get-Content '$status' }}"
+) | Set-Content -Path $profileScript
+$packages = @()
+if ($env:{WINDOWS_PACKAGES_VARIABLE}) {{
+  $packages = @($env:{WINDOWS_PACKAGES_VARIABLE} -split ' ' | Where-Object {{ $_ }})
+}}
+if ($packages.Count -eq 0) {{
+  'Practicum: ready (no extra tools selected)' | Set-Content -Path $status
+}} else {{
+  $names = $packages -join ' '
+  "Practicum: installing tools ($names) with Chocolatey - this takes several minutes; re-open PowerShell to check" | Set-Content -Path $status
+  $failed = @()
+  $fatal = ''
+  try {{
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+    if (-not (Test-Path '{CHOCOLATEY_EXE}')) {{
+      Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('{CHOCOLATEY_INSTALL_URL}')) *>> $log
+    }}
+    if (-not (Test-Path '{CHOCOLATEY_EXE}')) {{ throw 'Chocolatey could not be installed (is the container online?)' }}
+    foreach ($package in $packages) {{
+      "--- choco install $package" | Add-Content -Path $log
+      & '{CHOCOLATEY_EXE}' install $package -y --no-progress --limit-output *>> $log
+      if ($LASTEXITCODE -ne 0) {{ $failed += $package }}
+    }}
+  }} catch {{
+    $fatal = $_.Exception.Message
+  }}
+  if ($fatal) {{
+    "Practicum: tool install FAILED - $fatal (see $log)" | Set-Content -Path $status
+  }} elseif ($failed.Count -gt 0) {{
+    "Practicum: tool install FAILED for $($failed -join ', ') - check each package id at community.chocolatey.org and that the container is online (see $log)" | Set-Content -Path $status
+  }} else {{
+    "Practicum: tools ready ($names)" | Set-Content -Path $status
+  }}
+}}
+while ($true) {{ Start-Sleep -Seconds 3600 }}
+"""
+
+
+def encode_powershell(script: str) -> str:
+    """`powershell -EncodedCommand` form of `script` (base64 of UTF-16LE)."""
+    return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+
+def decode_powershell(encoded: str) -> str:
+    return base64.b64decode(encoded).decode("utf-16-le")
+
+
+def windows_node_command(script: str = WINDOWS_INIT_SCRIPT) -> list[str]:
+    """The Windows node's start command: PowerShell running `script`, which ends in a
+    keep-alive loop so the container stays up for `docker exec`. No argument contains a
+    space or a quote, so it survives Docker's Windows command-line escaping unchanged."""
+    return [
+        "powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encode_powershell(script),
+    ]
+
+
+def windows_package_environment(packages: list[str]) -> dict[str, str]:
+    """Environment that tells WINDOWS_INIT_SCRIPT which Chocolatey packages to install; empty
+    when there is nothing to install (the script then just reports ready)."""
+    if not packages:
+        return {}
+    return {
+        WINDOWS_PACKAGES_VARIABLE: " ".join(packages),
+        WINDOWS_PACKAGE_SOURCE_VARIABLE: "chocolatey",
+    }
+
+
 def steps_to_manual(steps: list[QuickStartStep]) -> dict | None:
     """One manual section per step (title + markdown details + one 'Done' task), so the
-    instructions flyout shows them as numbered, checkable steps. None when there are none."""
+    instructions flyout shows them as numbered, checkable steps. None when there are none.
+    A step's own `section_id` / `tasks` (from a loaded manual) win over the generated ones;
+    ids are kept unique in any case."""
     sections = []
+    used_ids: set[str] = set()
     for number, step in enumerate(steps, start=1):
         title = step.title.strip()
         if not title:
             continue
         details = step.details.strip() or title
-        sections.append(
-            {
-                "id": f"step-{number}",
-                "title": title[:120],
-                "content_markdown": details[:10000],
-                "tasks": [{"id": "done", "text": f"Done: {title}"[:500]}],
-            }
+        section_id = step.section_id if step.section_id and step.section_id not in used_ids else ""
+        if not section_id:
+            section_id = f"step-{number}"
+            suffix = 1
+            while section_id in used_ids:
+                suffix += 1
+                section_id = f"step-{number}-{suffix}"
+        used_ids.add(section_id)
+        tasks = (
+            [dict(task) for task in step.tasks]
+            if step.tasks is not None
+            else [{"id": "done", "text": f"Done: {title}"[:500]}]
         )
+        section: dict = {
+            "id": section_id,
+            "title": title[:120],
+            "content_markdown": details[:10000],
+            "tasks": tasks,
+        }
+        if step.requires_screenshot:
+            section["requires_screenshot"] = True
+        sections.append(section)
     return {"sections": sections} if sections else None
 
 
@@ -314,9 +564,26 @@ def build_quick_start_lab(
         resources["port_mappings"] = [
             {"host": host, "container": container} for host, container in template.port_mappings
         ]
-    node: dict[str, object] = {"id": "host", "image": template.image, "resources": resources}
+    image = template.image
+    if template.kind == "windows":
+        chosen = windows_image_for_host(draft.windows_host_build)
+        if chosen is None:
+            raise ValueError(
+                f"No supported Windows Server Core image runs on this host (build "
+                f"{draft.windows_host_build}); Windows Quick Start needs build "
+                f"{WINDOWS_MIN_HOST_BUILD} ({WINDOWS_IMAGES[-1].label}) or newer."
+            )
+        image = chosen.image
+    node: dict[str, object] = {"id": "host", "image": image, "resources": resources}
+    if template.os != "linux":
+        node["os"] = template.os
+    if template.shell is not None:
+        node["shell"] = template.shell
     environment = dict(template.environment)
-    if template.kind == "desktop":
+    if template.kind == "windows":
+        node["command"] = windows_node_command()
+        environment.update(windows_package_environment(draft.packages))
+    elif template.kind == "desktop":
         # The image's own init (s6) must run: keep its command and let the LinuxServer
         # package mod install the extras.
         node["command"] = None

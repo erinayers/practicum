@@ -1,10 +1,13 @@
 """Custom Lab designer screen (designer-create-new-lab, designer-add-nodes,
-designer-add-networks, designer-connect-nodes-networks, designer-visual-topology-builder).
+designer-add-networks, designer-connect-nodes-networks, designer-visual-topology-builder,
+designer-author-manual).
 
 The mockup's `screen-custom`: a Machines panel (cards with icon / id / image and a remove
 action), a Network topology panel (the schematic `TopologyView` plus the interfaces table)
-and a Networks panel, over a bottom bar with the draft status pill and Validate / Cancel /
-Save Lab / Save & Start. All three panels render the same in-memory draft
+and a Networks panel, then - below them in a draggable splitter - the Lab instructions panel
+(the shared `ManualStepsEditor`: numbered steps with Markdown details and a student-view
+preview, the same editor the quick start uses), over a bottom bar with the draft status pill
+and Validate / Cancel / Save Lab / Save & Start. All three panels render the same in-memory draft
 (`_nodes` / `_networks` / `_interfaces`); validation rules and the API calls
 (`POST /labs/validate`, `POST /labs`) are unchanged from the earlier table-based dialog.
 No drag-and-drop - positions follow the order things were added (D-6).
@@ -33,17 +36,20 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 from practicum_desktop.api_client import ApiClient, CreateLabResult, ValidateLabResult
+from practicum_desktop.manual_editor import ManualStepsEditor
 from practicum_desktop.node_catalog import (
     PRESETS,
     NodePreset,
+    free_host_ports,
     next_node_id,
     preset_by_key,
     preset_for_node,
@@ -53,6 +59,7 @@ from practicum_desktop.widgets import (
     NODE_GATEWAY_GLYPH,
     NODE_HOST_GLYPH,
     BackLink,
+    MessageBanner,
     Panel,
     StatusPill,
     TopologyCanvas,
@@ -65,6 +72,7 @@ from practicum_desktop.widgets import (
     discard,
     edge_frame,
     make_button,
+    node_icon_name,
     node_role,
     page_container,
     payload_of,
@@ -79,8 +87,11 @@ ID_HINT = (
 )
 SUGGESTED_IMAGES = ["alpine:3.21", "ubuntu:22.04", "nginx:latest", "frrouting/frr:latest"]
 DEFAULT_NAME = "Static routing topology"
-# Spec fields the designer does not edit but must carry through when editing an existing lab.
-PASS_THROUGH_FIELDS = ("schema_version", "manual")
+# Spec fields the designer does not edit but must carry through when editing an existing lab
+# (the manual is edited since 2026-10-25: it lives in the Lab instructions panel).
+PASS_THROUGH_FIELDS = ("schema_version",)
+INSTRUCTIONS_PANEL_HEIGHT = 190  # default height of the Lab instructions panel (draggable)
+TOPOLOGY_ROW_MIN_HEIGHT = 330  # Machines / topology / Networks need this much to stay usable
 
 
 class MachineRow(QFrame):
@@ -96,9 +107,16 @@ class MachineRow(QFrame):
         row.setContentsMargins(12, 8, 8, 8)
         row.setSpacing(10)
         glyph = preset.glyph
+        icon_name = preset.icon_name
         if preset.key == "custom":
+            # A custom image says nothing about its role: derive it like the topology card does.
             glyph = NODE_GATEWAY_GLYPH if link_count >= 2 else NODE_HOST_GLYPH
-        icon = QLabel(glyph)
+            icon_name = node_icon_name(link_count)
+        if icons.icon_available(icon_name):
+            icon = icons.icon_label(icon_name, 16, preset.title)
+        else:
+            icon = QLabel(glyph)
+            icon.setAccessibleName(preset.title)
         icon.setFixedSize(30, 30)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setStyleSheet(f"background: {theme.LINE_SOFT}; border-radius: 8px; font-size: 14px;")
@@ -236,15 +254,32 @@ class DesignerView(QWidget):
         details.addLayout(version_block, 0)
         layout.addLayout(details)
 
-        body = QHBoxLayout()
+        body_host = QWidget()
+        body = QHBoxLayout(body_host)
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(18)
         body.addWidget(self._build_machines_panel())
         body.addWidget(self._build_topology_panel(), 1)
         body.addWidget(self._build_networks_panel())
-        layout.addLayout(body, 1)
+        body_host.setMinimumHeight(TOPOLOGY_ROW_MIN_HEIGHT)
 
-        self.status_label = copyable_label("")
-        self.status_label.setProperty("banner", "info")
+        # Topology panels above, the manual below; the user drags the boundary.
+        self.body_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.body_splitter.setChildrenCollapsible(False)
+        self.body_splitter.setHandleWidth(8)
+        self.body_splitter.setStyleSheet(
+            f"QSplitter::handle {{ background: transparent; border-top: 1px dashed {theme.LINE}; "
+            "margin: 3px 120px; }"
+            f"QSplitter::handle:hover {{ border-top: 1px dashed {theme.INK}; }}"
+        )
+        self.body_splitter.addWidget(body_host)
+        self.body_splitter.addWidget(self._build_instructions_panel())
+        self.body_splitter.setStretchFactor(0, 1)
+        self.body_splitter.setStretchFactor(1, 0)
+        self.body_splitter.setSizes([TOPOLOGY_ROW_MIN_HEIGHT, INSTRUCTIONS_PANEL_HEIGHT])
+        layout.addWidget(self.body_splitter, 1)
+
+        self.status_label = MessageBanner("info")
         self.status_label.hide()
         layout.addWidget(self.status_label)
 
@@ -261,11 +296,59 @@ class DesignerView(QWidget):
         self.save_button.setToolTip("Store the lab and return to your labs")
         bind(self.save_button, self._on_save_button_clicked, False)
         bar_row.addWidget(self.save_button)
-        self.save_start_button = make_button("Save && Start", kind="primary")
+        self.save_start_button = make_button("Save && Start", kind="primary", icon="play")
         self.save_start_button.setToolTip("Store the lab and review it before starting")
         bind(self.save_start_button, self._on_save_button_clicked, True)
         bar_row.addWidget(self.save_start_button)
         outer.addWidget(bar)
+
+    def _build_instructions_panel(self) -> QWidget:
+        """designer-author-manual: the same step editor as the quick start, with a preview."""
+        self.instructions_panel = Panel("Lab instructions", padding=12)
+        self.instructions_panel.set_count(0)
+        self.instructions_toggle = make_button("Hide", kind="link", small=True)
+        self.instructions_toggle.setCheckable(True)
+        self.instructions_toggle.setChecked(True)
+        self.instructions_toggle.setToolTip("Show or hide the step editor (steps are kept)")
+        self.instructions_toggle.toggled.connect(self._on_instructions_toggled)
+        self.instructions_panel.add_head_action(self.instructions_toggle)
+        self.instructions_panel.body_layout.addWidget(
+            role_label(
+                "Steps students complete, shown as a numbered checklist in the instructions "
+                "flyout once the lab is running. Details are Markdown; use ``` for commands.",
+                "muted",
+                wrap=True,
+            )
+        )
+        self.manual_editor = ManualStepsEditor()
+        self.manual_editor.changed.connect(self._on_manual_changed)
+        self.instructions_panel.body_layout.addWidget(self.manual_editor, 1)
+        self.instructions_panel.setMinimumHeight(120)
+        return self.instructions_panel
+
+    def _on_manual_changed(self) -> None:
+        self.instructions_panel.set_count(self.manual_editor.titled_count())
+        self._update_status()
+
+    def _on_instructions_toggled(self, expanded: bool) -> None:
+        """Collapsed = header (title, step count) only, giving the topology the height back."""
+        self.instructions_panel.body.setVisible(expanded)
+        self.instructions_toggle.setText("Hide" if expanded else "Show")
+        if expanded:
+            self.instructions_panel.setMinimumHeight(120)
+            self.instructions_panel.setMaximumHeight(16777215)
+            total = sum(self.body_splitter.sizes())
+            top = max(TOPOLOGY_ROW_MIN_HEIGHT, total - INSTRUCTIONS_PANEL_HEIGHT)
+            self.body_splitter.setSizes([top, INSTRUCTIONS_PANEL_HEIGHT])
+        else:
+            head_height = self.instructions_panel.head.sizeHint().height() + 2
+            self.instructions_panel.setMinimumHeight(head_height)
+            self.instructions_panel.setMaximumHeight(head_height)
+
+    @property
+    def manual(self) -> dict | None:
+        """The manual the draft will be saved with (None when there are no titled steps)."""
+        return self.manual_editor.manual()
 
     def _build_machines_panel(self) -> QWidget:
         self.machines_panel = Panel("Machines", padding=0)
@@ -289,7 +372,12 @@ class DesignerView(QWidget):
         form_layout.addWidget(role_label("+ Add machine", "label"))
         self.preset_combo = QComboBox()
         for preset in PRESETS:
-            self.preset_combo.addItem(f"{preset.glyph}  {preset.title}", preset.key)
+            if icons.icon_available(preset.icon_name):
+                self.preset_combo.addItem(
+                    icons.icon(preset.icon_name, theme.INK), preset.title, preset.key
+                )
+            else:
+                self.preset_combo.addItem(f"{preset.glyph}  {preset.title}", preset.key)
         self.preset_combo.setToolTip("Ready-made machine types; pick Custom image to type your own")
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         form_layout.addWidget(self.preset_combo)
@@ -434,13 +522,15 @@ class DesignerView(QWidget):
         self._pass_through = {}
         self.title_label.setText("Build your Custom Lab")
         self.subtitle_label.setText(
-            "Add machines, connect them into networks, and define each host's role."
+            "Add machines, connect them into networks, define each host's role, and write the "
+            "steps students follow."
         )
         self.save_button.setText("Save Lab")
         self.name_field.clear()
         self.description_field.clear()
         self.author_field.clear()
         self.version_field.clear()
+        self.manual_editor.clear()
         self.node_id_field.clear()
         self.node_image_field.setCurrentText("")
         self.preset_combo.setCurrentIndex(0)
@@ -464,14 +554,16 @@ class DesignerView(QWidget):
         self._pass_through = {k: lab[k] for k in PASS_THROUGH_FIELDS if lab.get(k) is not None}
         self.title_label.setText("Edit your lab")
         self.subtitle_label.setText(
-            "Change machines, networks and connections; the lab's manual is kept as it is. "
-            "Saving returns the lab to Ready, so Start it again afterwards."
+            "Change machines, networks, connections and the lab instructions. Saving returns "
+            "the lab to Ready, so Start it again afterwards."
         )
         self.save_button.setText("Save changes")
         self.name_field.setText(str(lab.get("name") or ""))
         self.description_field.setText(str(lab.get("description") or ""))
         self.author_field.setText(str(lab.get("author") or ""))
         self.version_field.setText(str(lab.get("version") or ""))
+        manual = lab.get("manual")
+        self.manual_editor.load_manual(manual if isinstance(manual, dict) else None)
         for node in lab.get("nodes") or []:
             node_copy = {k: v for k, v in dict(node).items() if v is not None or k == "command"}
             node_copy["preset"] = preset_for_node(node_copy).key
@@ -552,7 +644,7 @@ class DesignerView(QWidget):
             self._set_error(self.node_error_label, "A Docker image is required.")
             return
 
-        node = preset.node(node_id, image)
+        node = free_host_ports(preset.node(node_id, image), self._nodes)
         node["preset"] = preset.key
         self._nodes.append(node)
         self._set_error(self.node_error_label, "")
@@ -776,6 +868,9 @@ class DesignerView(QWidget):
             value = field.text().strip()
             if value:
                 definition[key] = value
+        manual = self.manual
+        if manual is not None:
+            definition["manual"] = manual
         definition["nodes"] = [
             {k: v for k, v in node.items() if k != "preset"} for node in self._nodes
         ]
@@ -810,21 +905,19 @@ class DesignerView(QWidget):
         problems = self.draft_problems()
         machines = f"{len(self._nodes)} machine{'s' if len(self._nodes) != 1 else ''}"
         networks = f"{len(self._networks)} network{'s' if len(self._networks) != 1 else ''}"
+        counts = f"{machines} \u00b7 {networks}"
+        steps = self.manual_editor.titled_count()
+        if steps:
+            counts += f" \u00b7 {steps} step{'s' if steps != 1 else ''}"
         if problems:
             self.status_pill.set_state(
-                f"Draft needs {', '.join(problems)} \u00b7 {machines} \u00b7 {networks}",
-                theme.AMBER,
+                f"Draft needs {', '.join(problems)} \u00b7 {counts}", theme.AMBER
             )
         else:
-            self.status_pill.set_state(
-                f"Draft valid \u00b7 {machines} \u00b7 {networks}", theme.GREEN
-            )
+            self.status_pill.set_state(f"Draft valid \u00b7 {counts}", theme.GREEN)
 
     def _show_status(self, text: str, banner: str) -> None:
-        self.status_label.setText(text)
-        self.status_label.setProperty("banner", banner)
-        theme.restyle(self.status_label)
-        self.status_label.setVisible(bool(text))
+        self.status_label.set_message(text, banner)
 
     def _on_name_changed(self, _text: str) -> None:
         self._update_status()
@@ -847,7 +940,7 @@ class DesignerView(QWidget):
             self._show_status(result.detail, "error")
             return
         if result.valid:
-            self._show_status("\u2713 The lab is valid.", "ok")
+            self._show_status("The lab is valid.", "ok")
             return
         messages = "; ".join(
             f"{'.'.join(error.location)}: {error.message}" for error in result.errors

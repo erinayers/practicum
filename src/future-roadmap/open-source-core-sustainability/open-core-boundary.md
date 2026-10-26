@@ -29,6 +29,16 @@ Do not paywall core local functionality. Paywall features that require hosted in
 - Users can run local labs without marketplace accounts.
 - Public specs remain importable without platform lock-in.
 
+## Addendum 2026-10-25 — platform carve-out
+
+"Run a lab locally with Docker" in the open core means **Linux containers**, the kind Docker
+Desktop runs on every supported Windows edition (WSL 2) and on macOS. Labs whose guest is
+Windows or macOS are carved out into the paid tier — not to withhold value, but because the
+platforms themselves exclude the free audience (Windows containers need Windows
+Pro/Enterprise/Education; macOS guests need Apple hardware under Apple's licence). The spec
+fields that describe such labs, and authoring/validating/importing/exporting them, remain free.
+Details: [Premium Lab Platforms](../premium-lab-platforms/README.md).
+
 ## Risks
 
 - Paywalling too early could reduce trust.

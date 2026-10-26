@@ -68,7 +68,9 @@ def test_panel_renders_one_row_per_node_with_bars_for_pulls() -> None:
     assert "Downloading ubuntu" in panel.summary_label.text()
     assert panel.overall_bar.value() == round((100 + 28) / 2)
     texts = [w.text() for w in panel._row_widgets if hasattr(w, "text")]
-    assert "a" in texts and "Ready" in texts and "✓" in texts
+    assert "a" in texts and "Ready" in texts
+    marks = [w.property("icon") for w in panel._row_widgets if w.property("icon")]
+    assert marks == ["success"]  # the design check next to the ready node
     assert "b" in texts and any("1 of 3 layers" in t for t in texts)
     bars = [w for w in panel._row_widgets if w.metaObject().className() == "QProgressBar"]
     assert len(bars) == 1 and bars[0].value() == 30

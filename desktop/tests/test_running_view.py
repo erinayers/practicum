@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QSettings
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QTextBrowser
 from qt_helpers import ImmediateWorker, StalledWorker
 
@@ -20,6 +21,7 @@ from practicum_desktop.api_client import (
     StatusResult,
     TopologyInfo,
     TopologyInterfaceInfo,
+    TopologyNodeInfo,
 )
 from practicum_desktop.embedded_view import ProbeResult
 from practicum_desktop.node_shell import ShellLaunchResult
@@ -53,21 +55,23 @@ class FakeApiClient:
         )
         self.reset_result = StartResult(success=True, detail="Lab reset.", lab_status="defined")
         self.port_mappings = [PortMappingInfo(3001, 3001, "tcp")]
+        self.topology_nodes = [TopologyNodeInfo("host", "ubuntu:22.04")]
+        self.note: str | None = None
+        self.sections = [
+            ManualSectionInfo("s1", "Install", "pip install", [ManualTaskInfo("t1", "Installed")]),
+            ManualSectionInfo("s2", "Run", "flask run", [ManualTaskInfo("t2", "Running")]),
+        ]
 
     def get_preview(self, lab_id: str) -> PreviewResult:
         self.calls.append("preview")
         return PreviewResult(
             success=True,
             name="Build a Python API",
-            manual_sections=[
-                ManualSectionInfo(
-                    "s1", "Install", "pip install", [ManualTaskInfo("t1", "Installed")]
-                ),
-                ManualSectionInfo("s2", "Run", "flask run", [ManualTaskInfo("t2", "Running")]),
-            ],
+            manual_sections=list(self.sections),
             port_mappings=self.port_mappings,
             topology=TopologyInfo(
-                interfaces=[TopologyInterfaceInfo("host", "lab-net", "10.90.0.10/24")]
+                nodes=list(self.topology_nodes),
+                interfaces=[TopologyInterfaceInfo("host", "lab-net", "10.90.0.10/24")],
             ),
         )
 
@@ -84,6 +88,7 @@ class FakeApiClient:
                     f"practicum-{lab_id}-host",
                     exists,
                     "running" if self.status == "running" else ("exited" if exists else None),
+                    note=self.note,
                 )
             ],
             progress=self.progress,
@@ -111,12 +116,14 @@ def settings(tmp_path: Path) -> QSettings:
 
 
 @pytest.fixture
-def view(monkeypatch, settings: QSettings):
+def view(monkeypatch, settings: QSettings, tmp_path: Path):
     monkeypatch.setattr(running_view, "CallableWorker", ImmediateWorker)
     monkeypatch.setattr(embedded_view, "CallableWorker", ImmediateWorker)
     api = FakeApiClient()
     web = FakeWebView()
-    widget = RunningLabView(api, settings, web_view_factory=lambda parent: web)
+    widget = RunningLabView(
+        api, settings, web_view_factory=lambda parent: web, screenshot_dir=tmp_path / "shots"
+    )
     widget.embedded_view._probe = lambda port: ProbeResult(True, f"http://localhost:{port}/")
     widget.api = api
     widget.web = web
@@ -355,11 +362,13 @@ def test_error_status_from_polling_surfaces_last_error(view: RunningLabView) -> 
 
 
 def test_nodes_table_and_open_shell(view: RunningLabView, monkeypatch) -> None:
-    launched: list[tuple[str, str]] = []
+    launched: list[tuple[str, str, str, str | None]] = []
     monkeypatch.setattr(
         running_view,
         "open_node_shell",
-        lambda name, node: launched.append((name, node)) or ShellLaunchResult(True, "Opened."),
+        lambda name, node, os, shell: (
+            launched.append((name, node, os, shell)) or ShellLaunchResult(True, "Opened.")
+        ),
     )
     view.show_lab(_lab())
 
@@ -368,13 +377,52 @@ def test_nodes_table_and_open_shell(view: RunningLabView, monkeypatch) -> None:
     assert table.item(0, 0).text() == "host"
     assert table.item(0, 1).text() == "10.90.0.10 (lab-net)"  # the address students need
     assert table.item(0, 3).text() == "running"
-    assert table.cellWidget(0, 4).isEnabled()
+    button = table.cellWidget(0, 4)
+    assert button.isEnabled()
+    assert button.text() == "Open shell"
+    assert not button.icon().isNull()  # the design terminal icon
+    assert "bash or sh" in button.toolTip() and "'host'" in button.toolTip()
     assert "1 container running" in view.containers_label.text()
 
-    table.cellWidget(0, 4).click()
+    button.click()
 
-    assert launched == [("practicum-lab-1-host", "host")]
+    assert launched == [("practicum-lab-1-host", "host", "linux", None)]
     assert view.nodes_status_label.text() == "Opened."
+
+
+def test_windows_node_offers_open_powershell(view: RunningLabView, monkeypatch) -> None:
+    launched: list[tuple[str, str, str, str | None]] = []
+    monkeypatch.setattr(
+        running_view,
+        "open_node_shell",
+        lambda name, node, os, shell: (
+            launched.append((name, node, os, shell))
+            or ShellLaunchResult(True, "Opened PowerShell on 'host' in a new window.")
+        ),
+    )
+    view.api.topology_nodes = [
+        TopologyNodeInfo(
+            "host", "mcr.microsoft.com/windows/servercore:ltsc2022", "windows", "powershell"
+        )
+    ]
+    view.show_lab(_lab())
+
+    button = view.nodes_table.cellWidget(0, 4)
+    assert button.text() == "Open PowerShell"
+    assert "PowerShell" in button.toolTip() and "'host'" in button.toolTip()
+    assert button.accessibleName() == "Open PowerShell on host"
+
+    button.click()
+
+    assert launched == [("practicum-lab-1-host", "host", "windows", "powershell")]
+    assert "Opened PowerShell on 'host'" in view.nodes_status_label.text()
+
+    # A stopped Windows node: the button is disabled and says what to do.
+    view.api.status = "stopped"
+    view.refresh()
+    button = view.nodes_table.cellWidget(0, 4)
+    assert button.isEnabled() is False
+    assert "Start the lab to open PowerShell on 'host'" == button.toolTip()
 
 
 def test_embedded_view_loads_the_published_port_when_running(view: RunningLabView) -> None:
@@ -422,9 +470,191 @@ def test_polling_stops_when_hidden(view: RunningLabView) -> None:
 def test_container_state_text_wording() -> None:
     from practicum_desktop.running_view import container_state_text
 
-    assert container_state_text(ResourceStatusInfo("container", "a", "n", True, "running")) == "running"
+    assert (
+        container_state_text(ResourceStatusInfo("container", "a", "n", True, "running"))
+        == "running"
+    )
     assert container_state_text(ResourceStatusInfo("container", "a", "n", False)) == "not created"
     gone = ResourceStatusInfo("container", "a", "n", False, error="Error: No such object: n")
     assert container_state_text(gone) == "not created"
     down = ResourceStatusInfo("container", "a", "n", False, error="Docker CLI could not be run")
     assert container_state_text(down) == "unknown (Docker CLI could not be run)"
+
+
+def test_package_install_status_is_visible_in_the_nodes_table(view: RunningLabView) -> None:
+    """designer-windows-quick-start-packages (and the Ubuntu marker before it): the node's
+    self-reported install marker shows as state suffix, tooltip and status line."""
+    view.api.note = (
+        "Practicum: installing tools (git 7zip) with Chocolatey - this takes several minutes; "
+        "re-open PowerShell to check"
+    )
+    view.show_lab(_lab())
+
+    state = view.nodes_table.item(0, 3)
+    assert state.text() == "running \u00b7 installing\u2026"
+    assert "Chocolatey" in state.toolTip()
+    status_text = view.nodes_status_label.text()
+    assert status_text.startswith("host: Practicum: installing tools (git 7zip)")
+
+    view.api.note = (
+        "Practicum: tool install FAILED for 7zip - check each package id at "
+        "community.chocolatey.org and that the container is online "
+        "(see C:\\practicum\\packages.log)"
+    )
+    view.refresh()
+    assert view.nodes_table.item(0, 3).text() == "running \u00b7 install failed"
+    assert "FAILED for 7zip" in view.nodes_status_label.text()
+
+    view.api.note = "Practicum: tools ready (git 7zip)"
+    view.refresh()
+    assert view.nodes_table.item(0, 3).text() == "running"
+    assert "tools ready (git 7zip)" in view.nodes_status_label.text()
+
+
+def test_shell_launch_failure_is_shown_with_the_command_to_copy(
+    view: RunningLabView, monkeypatch
+) -> None:
+    """windows-desktop-open-windows-shell: a stopped/missing container never ends in a silent
+    console flash - the in-app status line carries the reason and the docker command."""
+    monkeypatch.setattr(
+        running_view,
+        "open_node_shell",
+        lambda name, node, os, shell: ShellLaunchResult(
+            False,
+            "Cannot open PowerShell on 'host': its container is not running (state: exited). "
+            "Start the lab (or Reset it if it is in an error state), wait until the node shows "
+            "'running', then try again.",
+            ["docker", "exec", "-it", name, "powershell.exe", "-NoLogo"],
+        ),
+    )
+    view.api.topology_nodes = [TopologyNodeInfo("host", "servercore", "windows", "powershell")]
+    view.show_lab(_lab())
+
+    view.nodes_table.cellWidget(0, 4).click()
+
+    text = view.nodes_status_label.text()
+    assert "Cannot open PowerShell on 'host'" in text
+    assert "not running (state: exited)" in text
+    assert "docker exec -it practicum-lab-1-host powershell.exe -NoLogo" in text
+
+
+def test_lifecycle_toolbar_buttons_carry_design_icons(view: RunningLabView) -> None:
+    view.show_lab(_lab())
+
+    assert view.start_button.text() == "Start lab" and not view.start_button.icon().isNull()
+    assert view.restart_button.text() == "Restart" and not view.restart_button.icon().isNull()
+    assert view.stop_button.text() == "Stop lab" and not view.stop_button.icon().isNull()
+    assert view.back_button.accessibleName() == "Back to my labs"
+
+
+def test_two_desktops_are_offered_by_machine_name_in_the_lab_view(view: RunningLabView) -> None:
+    view.api.port_mappings = [  # the flat lab-wide list the API also sends
+        PortMappingInfo(3000, 3000, "tcp"),
+        PortMappingInfo(3001, 3001, "tcp"),
+        PortMappingInfo(3002, 3000, "tcp"),
+        PortMappingInfo(3003, 3001, "tcp"),
+    ]
+    view.api.topology_nodes = [
+        TopologyNodeInfo(
+            "desktop-1",
+            "lscr.io/linuxserver/webtop:ubuntu-xfce",
+            port_mappings=[
+                PortMappingInfo(3000, 3000, "tcp", node_id="desktop-1"),
+                PortMappingInfo(3001, 3001, "tcp", node_id="desktop-1"),
+            ],
+        ),
+        TopologyNodeInfo(
+            "desktop-2",
+            "lscr.io/linuxserver/webtop:ubuntu-xfce",
+            port_mappings=[
+                PortMappingInfo(3002, 3000, "tcp", node_id="desktop-2"),
+                PortMappingInfo(3003, 3001, "tcp", node_id="desktop-2"),
+            ],
+        ),
+    ]
+    view.show_lab(_lab())
+
+    picker = view.embedded_view.port_picker
+    assert picker.isVisibleTo(view.embedded_view)
+    assert picker.itemText(0) == "desktop-1 \u00b7 localhost:3000"
+    assert picker.itemText(2) == "desktop-2 \u00b7 localhost:3002"
+    assert view.web.urls[-1] == "http://localhost:3000/"
+
+    picker.setCurrentIndex(2)
+
+    assert view.embedded_view.current_url == "http://localhost:3002/"
+    assert view.web.urls[-1] == "http://localhost:3002/"
+
+
+def test_export_results_request_carries_the_results_document(view: RunningLabView) -> None:
+    requests: list[tuple[str, dict]] = []
+    view.export_results_requested.connect(
+        lambda lab_id, results: requests.append((lab_id, results))
+    )
+    view.show_lab(_lab())
+    view.manual_flyout.mark_next_step_complete()
+
+    view.manual_flyout.export_button.click()
+
+    lab_id, results = requests[0]
+    assert lab_id == "lab-1"
+    assert results["lab"]["name"] == "Build a Python API"
+    assert results["lab"]["origin"] == "imported"
+    assert results["lab"]["source_file"] == "python-api-lab.json"
+    assert results["summary"] == {
+        "completed": 1,
+        "total": 2,
+        "all_complete": False,
+        "percent": 50,
+        "screenshots_required": 0,
+        "screenshots_attached": 0,
+        "first_completed_at": results["steps"][0]["tasks"][0]["completed_at"],
+        "last_completed_at": results["steps"][0]["tasks"][0]["completed_at"],
+    }
+    assert [s["title"] for s in results["steps"]] == ["Install", "Run"]
+    assert results["student"]["name"] == ""  # the owner asks for it
+
+    view.show_export_note("Results saved to /tmp/x.json", "ok")
+    assert "Results saved" in view.message_label.text()
+
+
+def test_capture_and_upload_attach_screenshots_to_the_requesting_step(
+    view: RunningLabView, tmp_path: Path
+) -> None:
+    view.api.sections = [
+        ManualSectionInfo(
+            "s1",
+            "Show it",
+            "Open the desktop",
+            [ManualTaskInfo("t1", "Opened")],
+            requires_screenshot=True,
+        )
+    ]
+    uploads: list[tuple[str, str]] = []
+    view.screenshot_upload_requested.connect(lambda lab, sec: uploads.append((lab, sec)))
+    view.show_lab(_lab())
+    row = view.manual_flyout._screenshot_rows["s1"]
+    assert view.embedded_view.stack.currentWidget() is view.web  # the lab view is showing
+
+    row.capture_button.click()
+
+    shots = view.manual_flyout.screenshots()
+    assert len(shots) == 1 and shots[0].source == "lab_view" and shots[0].path.is_file()
+    assert view.results()["summary"]["screenshots_attached"] == 1
+
+    row.upload_button.click()
+    assert uploads == [("lab-1", "s1")]
+    image = tmp_path / "own.png"
+    pix = QPixmap(4, 4)
+    pix.fill(QColor("black"))
+    pix.save(str(image), "PNG")
+    assert view.attach_uploaded_screenshot("s1", image) is True
+    assert view.manual_flyout.screenshots()[0].source == "upload"
+
+    # a lab without a web page: capture explains, nothing is attached
+    view.api.port_mappings = []
+    view.api.status = "running"
+    view.show_lab(LabSummary("lab-2", "Terminal lab", "running", "quick_start"))
+    view.manual_flyout._screenshot_rows["s1"].capture_button.click()
+    assert view.manual_flyout.screenshots() == []
+    assert "Upload image" in view.manual_flyout._screenshot_rows["s1"].status_label.text()

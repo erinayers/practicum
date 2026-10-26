@@ -12,6 +12,9 @@ DEFAULT_TIMEOUT_SECONDS = 3.0
 # share the short timeout used for quick lookups, or the desktop reports a failure while the
 # server is still (successfully) working. See Tigre/06 #3.
 LIFECYCLE_TIMEOUT_SECONDS = 900.0
+# `docker info` behind GET /docker/engine can take a few seconds while Docker Desktop is
+# (re)starting after an engine switch; the server itself gives up after 15 s.
+ENGINE_CHECK_TIMEOUT_SECONDS = 20.0
 
 
 @dataclass
@@ -43,6 +46,7 @@ class LabSummary:
     node_count: int = 0
     network_count: int = 0
     description: str = ""
+    container_os: str = "linux"  # "linux" | "windows": the engine mode the lab needs
 
 
 @dataclass
@@ -75,6 +79,9 @@ class PortCheckResult:
     has_conflicts: bool = False
     conflicts: list[PortConflict] = field(default_factory=list)
     detail: str = ""
+    # A fix removed the lab's existing machines (they had run before): the next start builds
+    # them fresh, previous session data is gone.
+    machines_reset: bool = False
 
 
 @dataclass
@@ -182,6 +189,7 @@ class NetworkCheckResult:
     has_conflicts: bool = False
     conflicts: list[SubnetConflict] = field(default_factory=list)
     detail: str = ""
+    machines_reset: bool = False  # see PortCheckResult.machines_reset
 
 
 @dataclass
@@ -234,6 +242,7 @@ class ImportLabResult:
     lab_name: str = ""
     errors: list[FieldIssue] = field(default_factory=list)
     detail: str = ""
+    container_os: str = "linux"  # the engine mode the imported lab needs
 
 
 @dataclass
@@ -248,6 +257,7 @@ class ManualSectionInfo:
     title: str
     content_markdown: str
     tasks: list[ManualTaskInfo] = field(default_factory=list)
+    requires_screenshot: bool = False  # the instructor asked for a screenshot of this step
 
 
 @dataclass
@@ -255,12 +265,17 @@ class PortMappingInfo:
     host: int
     container: int
     protocol: str
+    node_id: str = ""  # which machine publishes it (empty for the lab-wide flat list)
 
 
 @dataclass
 class TopologyNodeInfo:
     id: str
     image: str
+    os: str = "linux"  # declared container OS ("linux" | "windows")
+    shell: str | None = None  # declared shell (bash | sh | powershell | cmd); None = OS default
+    # Host ports this machine publishes (port mappings + exposed ports), in spec order.
+    port_mappings: list[PortMappingInfo] = field(default_factory=list)
 
 
 @dataclass
@@ -290,6 +305,22 @@ class EstimatedResourcesInfo:
 
 
 @dataclass
+class DockerEngineResult:
+    """Outcome of GET /docker/engine: which kind of container the daemon serves. `success`
+    is False only when the API itself could not answer; an unreachable Docker daemon is a
+    successful answer with `available=False`."""
+
+    success: bool
+    available: bool = False
+    os_type: str | None = None  # "linux" | "windows"
+    server_version: str | None = None
+    operating_system: str | None = None
+    host_build: int | None = None
+    isolation: str | None = None
+    detail: str = ""
+
+
+@dataclass
 class PreviewResult:
     success: bool
     name: str = ""
@@ -297,6 +328,7 @@ class PreviewResult:
     description: str = ""
     author: str = ""
     version: str = ""
+    container_os: str = "linux"
     required_images: list[str] = field(default_factory=list)
     estimated_resources: EstimatedResourcesInfo = field(default_factory=EstimatedResourcesInfo)
     topology: TopologyInfo = field(default_factory=TopologyInfo)
@@ -392,10 +424,42 @@ class ApiClient:
                 node_count=len(item.get("nodes") or []),
                 network_count=len(item.get("networks") or []),
                 description=item.get("description") or "",
+                container_os=_container_os(item.get("nodes")),
             )
             for item in body
         ]
         return LabsResult(success=True, labs=labs)
+
+    def get_docker_engine(self) -> DockerEngineResult:
+        """GET /docker/engine: read-only engine mode (Linux/Windows containers)."""
+        try:
+            response = httpx.get(
+                f"{self.base_url}/docker/engine", timeout=ENGINE_CHECK_TIMEOUT_SECONDS
+            )
+        except httpx.HTTPError as exc:
+            return DockerEngineResult(success=False, detail=f"Could not check Docker: {exc}")
+        if response.status_code != 200:
+            return DockerEngineResult(
+                success=False, detail=f"Could not check Docker (status {response.status_code})."
+            )
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return DockerEngineResult(
+                success=False, detail="The Practicum API returned an unexpected Docker response."
+            )
+        return DockerEngineResult(
+            success=True,
+            available=bool(body.get("available")),
+            os_type=body.get("os_type"),
+            server_version=body.get("server_version"),
+            operating_system=body.get("operating_system"),
+            host_build=body.get("host_build"),
+            isolation=body.get("isolation"),
+            detail=str(body.get("detail") or ""),
+        )
 
     def check_ports(self, lab_id: str) -> PortCheckResult:
         try:
@@ -424,15 +488,31 @@ class ApiClient:
             )
             for item in body.get("conflicts", [])
         ]
-        return PortCheckResult(success=True, has_conflicts=body.get("has_conflicts", False), conflicts=conflicts)
+        return PortCheckResult(
+            success=True,
+            has_conflicts=body.get("has_conflicts", False),
+            conflicts=conflicts,
+            machines_reset=bool(body.get("machines_reset")),
+        )
 
     def apply_port_recommendation(
-        self, lab_id: str, node_id: str, host_port: int, protocol: str
+        self,
+        lab_id: str,
+        node_id: str,
+        host_port: int,
+        protocol: str,
+        new_host_port: int | None = None,
     ) -> PortCheckResult:
+        """Moves a conflicting host port to the server's recommendation, or to
+        `new_host_port` when the user picked one (the API refuses an unusable port with 409
+        and a reason, surfaced as `detail`)."""
+        body: dict[str, object] = {"node_id": node_id, "host_port": host_port, "protocol": protocol}
+        if new_host_port is not None:
+            body["new_host_port"] = new_host_port
         try:
             response = httpx.post(
                 f"{self.base_url}/labs/{lab_id}/ports/apply-recommendation",
-                json={"node_id": node_id, "host_port": host_port, "protocol": protocol},
+                json=body,
                 timeout=self.timeout,
             )
         except httpx.HTTPError as exc:
@@ -459,7 +539,12 @@ class ApiClient:
             )
             for item in body.get("conflicts", [])
         ]
-        return PortCheckResult(success=True, has_conflicts=body.get("has_conflicts", False), conflicts=conflicts)
+        return PortCheckResult(
+            success=True,
+            has_conflicts=body.get("has_conflicts", False),
+            conflicts=conflicts,
+            machines_reset=bool(body.get("machines_reset")),
+        )
 
     def validate_lab(self, definition: dict[str, object]) -> ValidateLabResult:
         try:
@@ -627,7 +712,10 @@ class ApiClient:
         if body.get("imported") and isinstance(body.get("lab"), dict):
             lab = body["lab"]
             return ImportLabResult(
-                success=True, lab_id=lab.get("id"), lab_name=lab.get("name") or ""
+                success=True,
+                lab_id=lab.get("id"),
+                lab_name=lab.get("name") or "",
+                container_os=_container_os(lab.get("nodes")),
             )
 
         errors = [
@@ -888,7 +976,10 @@ class ApiClient:
             for item in body.get("conflicts", [])
         ]
         return NetworkCheckResult(
-            success=True, has_conflicts=body.get("has_conflicts", False), conflicts=conflicts
+            success=True,
+            has_conflicts=body.get("has_conflicts", False),
+            conflicts=conflicts,
+            machines_reset=bool(body.get("machines_reset")),
         )
 
     def get_preview(self, lab_id: str) -> PreviewResult:
@@ -913,6 +1004,7 @@ class ApiClient:
                     ManualTaskInfo(id=task["id"], text=task["text"])
                     for task in section.get("tasks", [])
                 ],
+                requires_screenshot=bool(section.get("requires_screenshot")),
             )
             for section in manual.get("sections", [])
         ]
@@ -926,7 +1018,13 @@ class ApiClient:
         topology_body = body.get("topology") or {}
         topology = TopologyInfo(
             nodes=[
-                TopologyNodeInfo(id=node["id"], image=node["image"])
+                TopologyNodeInfo(
+                    id=node["id"],
+                    image=node["image"],
+                    os=node.get("os") or "linux",
+                    shell=node.get("shell"),
+                    port_mappings=_node_port_mappings(node),
+                )
                 for node in topology_body.get("nodes", [])
             ],
             networks=[
@@ -949,6 +1047,7 @@ class ApiClient:
             description=body.get("description") or "",
             author=body.get("author") or "",
             version=body.get("version") or "",
+            container_os=body.get("container_os") or _container_os(topology_body.get("nodes")),
             required_images=list(body.get("required_images", [])),
             estimated_resources=EstimatedResourcesInfo(
                 total_cpu=estimated.get("total_cpu"),
@@ -970,6 +1069,35 @@ def _json_detail(response: httpx.Response) -> str | None:
         return None
     detail = body.get("detail") if isinstance(body, dict) else None
     return detail if isinstance(detail, str) else None
+
+
+def _node_port_mappings(node: dict) -> list[PortMappingInfo]:
+    """A node's published host ports: `resources.port_mappings` plus `exposed_ports`
+    (host == container, tcp), each tagged with the node id."""
+    resources = node.get("resources") or {}
+    if not isinstance(resources, dict):
+        return []
+    node_id = str(node.get("id") or "")
+    mappings = [
+        PortMappingInfo(
+            host=int(mapping["host"]),
+            container=int(mapping["container"]),
+            protocol=str(mapping.get("protocol") or "tcp"),
+            node_id=node_id,
+        )
+        for mapping in resources.get("port_mappings") or []
+        if isinstance(mapping, dict) and "host" in mapping and "container" in mapping
+    ]
+    for port in resources.get("exposed_ports") or []:
+        mappings.append(PortMappingInfo(int(port), int(port), "tcp", node_id=node_id))
+    return mappings
+
+
+def _container_os(nodes: object) -> str:
+    """The OS a lab's nodes declare ("linux" unless the first node says otherwise)."""
+    if isinstance(nodes, list) and nodes and isinstance(nodes[0], dict):
+        return str(nodes[0].get("os") or "linux")
+    return "linux"
 
 
 def _parse_timestamp(value: object) -> datetime | None:

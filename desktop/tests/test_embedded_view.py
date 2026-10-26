@@ -251,3 +251,82 @@ def test_clear_resets_everything(view: EmbeddedLabView) -> None:
     assert view.current_url == ""
     assert view.message_title.text() == "No lab open."
     assert view.web.urls[-1] == "about:blank"
+
+
+def test_toolbar_buttons_carry_icon_or_name(monkeypatch) -> None:
+    view = EmbeddedLabView(web_view_factory=lambda parent: FakeWebView())
+
+    assert not view.open_external_button.icon().isNull()  # the design "forward" icon
+    assert view.open_external_button.text() == ""
+    assert view.open_external_button.accessibleName() == "Open in your system browser"
+    assert view.open_external_button.toolTip() == "Open in your system browser"
+    assert not view.reload_button.icon().isNull()  # the derived "refresh" icon
+    assert view.reload_button.text() == ""
+    assert view.reload_button.accessibleName() == "Reload"
+    assert view.reload_button.toolTip() == "Reload"
+
+
+def test_picker_lists_machines_by_name_and_switches_between_desktops(
+    view: EmbeddedLabView,
+) -> None:
+    """Two Ubuntu Desktop machines: the picker names them, defaults to the first one's plain
+    web port, and choosing the other loads that machine's port."""
+    view.set_port_mappings(
+        [
+            PortMappingInfo(3000, 3000, "tcp", node_id="desktop-1"),
+            PortMappingInfo(3001, 3001, "tcp", node_id="desktop-1"),
+            PortMappingInfo(3002, 3000, "tcp", node_id="desktop-2"),
+            PortMappingInfo(3003, 3001, "tcp", node_id="desktop-2"),
+        ]
+    )
+    view.set_lab_running(True)
+
+    assert view.port_picker.isVisibleTo(view)
+    assert [view.port_picker.itemText(i) for i in range(view.port_picker.count())] == [
+        "desktop-1 \u00b7 localhost:3000",
+        "desktop-1 \u00b7 localhost:3001 (https)",
+        "desktop-2 \u00b7 localhost:3002",
+        "desktop-2 \u00b7 localhost:3003 (https)",
+    ]
+    assert view.selected_mapping().node_id == "desktop-1"
+    assert view.probes[-1] == 3000
+    assert view.port_picker.accessibleName() == "Machine to show"
+
+    view.outcome["result"] = ProbeResult(True, "http://localhost:3002/")
+    view.port_picker.setCurrentIndex(2)
+
+    assert view.selected_mapping().node_id == "desktop-2"
+    assert view.probes[-1] == 3002
+    assert view.current_url == "http://localhost:3002/"
+
+
+def test_waiting_message_names_the_machine(view: EmbeddedLabView) -> None:
+    view.outcome["result"] = ProbeResult(False, detail="refused")
+    view.set_port_mappings([PortMappingInfo(3002, 3000, "tcp", node_id="desktop-2")])
+    view.set_lab_running(True)
+
+    assert view.message_title.text() == "Waiting for 'desktop-2' on localhost:3002\u2026"
+
+    view.set_lab_running(False)
+    assert "Start it to load 'desktop-2' on localhost:3002 here." == view.message_detail.text()
+
+
+def test_mapping_labels_without_a_machine_keep_the_port_form() -> None:
+    from practicum_desktop.embedded_view import mapping_label
+
+    assert mapping_label(PortMappingInfo(8080, 80, "tcp")) == "localhost:8080 \u2192 80/tcp"
+    dns = PortMappingInfo(5353, 53, "udp", node_id="dns")
+    assert mapping_label(dns) == "dns \u00b7 localhost:5353/udp"
+
+
+def test_capture_grabs_the_web_page_only_when_it_is_showing(view: EmbeddedLabView) -> None:
+    view.set_port_mappings([])
+    pixmap, problem = view.capture()
+    assert pixmap is None
+    assert "not showing a web interface" in problem and "Upload image" in problem
+
+    view.set_port_mappings([PortMappingInfo(3001, 3001, "tcp")])
+    view.set_lab_running(True)  # the fake probe answers → the web page is shown
+    assert view.stack.currentWidget() is view.web
+    pixmap, problem = view.capture()
+    assert pixmap is not None and not pixmap.isNull() and problem == ""

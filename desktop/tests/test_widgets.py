@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QWidget
 
 from practicum_desktop import theme
@@ -49,9 +50,15 @@ def test_make_button_sets_style_properties() -> None:
 def test_status_pill_text_and_colour() -> None:
     pill = StatusPill("Ready", theme.GREEN)
     assert pill.text_label.text() == "Ready"
+    assert pill.dot.property("icon") == "success"  # green = the design check icon
     pill.set_state("Busy", theme.AMBER)
     assert pill.text_label.text() == "Busy"
-    assert theme.AMBER in pill.dot.styleSheet()
+    assert pill.dot.property("icon") == "warning"
+    pill.set_state("Failed", theme.DANGER)
+    assert pill.dot.property("icon") == "error"
+    pill.set_state("Idle", theme.MUTED_2)  # no icon has that meaning: a plain coloured dot
+    assert pill.dot.property("icon") == ""
+    assert theme.MUTED_2 in pill.dot.styleSheet()
 
 
 def test_node_role_is_derived_from_interface_count() -> None:
@@ -118,3 +125,83 @@ def test_auto_size_stack_follows_current_page() -> None:
     assert stack.sizeHint().height() < 100
     stack.setCurrentIndex(1)
     assert stack.sizeHint().height() == 300
+
+
+# ----- banners with design icons (windows-desktop-design-icons) -------------------------------
+
+
+def test_message_banner_shows_the_icon_for_its_kind_and_reads_like_a_label() -> None:
+    from practicum_desktop.widgets import MessageBanner
+
+    banner = MessageBanner("info")
+    assert banner.icon_label.isHidden()  # info has no icon: text only
+
+    banner.set_message("1 port conflict must be resolved before starting.", "warn")
+    assert banner.text() == "1 port conflict must be resolved before starting."
+    assert banner.property("banner") == "warn"
+    assert banner.icon_label.property("icon") == "warning"
+    assert banner.icon_label.isHidden() is False
+    assert banner.isHidden() is False
+
+    banner.set_message("No port conflicts detected.", "ok")
+    assert banner.icon_label.property("icon") == "success"
+    banner.set_message("Docker is unavailable", "error")
+    assert banner.icon_label.property("icon") == "error"
+    assert (
+        banner.message_label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+    )
+
+    banner.set_message("")  # empty text hides it
+    assert banner.isHidden()
+    banner.setText("plain setText works too")
+    assert banner.text() == "plain setText works too"
+
+
+def test_note_banner_is_a_dismissible_message_banner() -> None:
+    from practicum_desktop.widgets import NoteBanner
+
+    note = NoteBanner()
+    fired: list[str] = []
+    note.dismissed.connect(lambda: fired.append("dismissed"))
+    assert note.isHidden()
+
+    note.show_note("Deleted 'X'.", "ok")
+    assert note.isHidden() is False
+    assert note.text() == "Deleted 'X'." and note.property("banner") == "ok"
+    assert note.icon_label.property("icon") == "success"
+    assert note.close_button.accessibleName() == "Dismiss"
+
+    note.close_button.click()
+    assert note.isHidden() and note.text() == ""
+    assert fired == ["dismissed"]
+
+
+def test_back_link_and_icon_buttons_keep_their_meaning_in_text_or_accessible_name() -> None:
+    from practicum_desktop.widgets import BackLink
+
+    link = BackLink("Back to my labs")
+    assert link.text() == "Back to my labs"
+    assert not link.icon().isNull()
+    assert link.accessibleName() == "Back to my labs"
+
+    icon_only = BackLink("")
+    assert icon_only.text() == ""
+    assert icon_only.accessibleName() == "Back"
+
+    start = make_button("Start lab", kind="primary", small=True, icon="play")
+    assert not start.icon().isNull() and start.text() == "Start lab"
+    cta = make_button("Quick start", kind="primary", icon="forward", icon_trailing=True)
+    assert cta.layoutDirection() == Qt.LayoutDirection.RightToLeft
+
+
+def test_topology_cards_and_machine_rows_use_design_icons_by_role() -> None:
+    from practicum_desktop.widgets import NODE_ICON_NAMES, node_icon_name
+
+    assert NODE_ICON_NAMES == {"host": "desktop", "gateway": "forward", "unconnected": "desktop"}
+    assert node_icon_name(0) == "desktop"
+    assert node_icon_name(1) == "desktop"
+    assert node_icon_name(2) == "forward"  # a gateway forwards traffic between its networks
+    view = TopologyView()
+    view.set_topology(NODES, NETWORKS, LINKS)
+    view.resize(520, 180)
+    view.grab()  # paints the cards with pixmaps (no exception, no glyph fallback needed)

@@ -58,3 +58,20 @@ Done 2026-10-24 (Session 5) in `desktop/src/practicum_desktop/embedded_view.py` 
 ## Update 2026-10-24 (user report: "400 Bad Request — The plain HTTP request was sent to HTTPS port")
 
 The embedded view had loaded `http://localhost:3001` on a webtop lab: nginx's 400 counted as "the port answers over HTTP", and the picker could prefer 3001 over 3000 once the gate had re-mapped 3000 (the fixed mapping is appended after 3001). Fixed: `probe_service` treats a 400 whose body says "plain HTTP request was sent to HTTPS port" as a TLS port and retries `https://`; `pick_default_mapping` scores ports (plain-web first, TLS-only ports such as 443/8443/3001 next, non-web ports last) regardless of mapping order. Tests: `test_probe_treats_nginx_plain_http_on_tls_port_as_https`, `test_default_mapping_prefers_web_like_tcp_ports`.
+
+### Addendum 2026-10-25 — several desktops in one lab (user request)
+
+A lab with two Ubuntu Desktop machines showed only one of them: the picker above the lab view
+listed raw host ports ("localhost:3002 → 3000/tcp") with no hint which machine they belonged to.
+Now the preview carries each machine's published ports (`TopologyNodeInfo.port_mappings`,
+`PortMappingInfo.node_id`) and the picker lists them **by machine** - "desktop-1 ·
+localhost:3000", "desktop-1 · localhost:3001 (https)", "desktop-2 · localhost:3002", … - with
+the first machine's plain web port selected by default and the waiting/not-running messages
+naming the machine. The lab-wide flat list remains the fallback for labs whose preview has no
+per-node ports. In the designer, a second machine from a preset that publishes ports (Ubuntu
+Desktop, Web server) is given the next free host ports (`node_catalog.free_host_ports`) so the
+lab no longer needs a port fix in the gate first. Tests: `test_embedded_view.py`
+(`test_picker_lists_machines_by_name_and_switches_between_desktops`, waiting message, labels),
+`test_running_view.py::test_two_desktops_are_offered_by_machine_name_in_the_lab_view`,
+`test_api_client.py::test_get_preview_carries_each_machines_published_ports`,
+`test_designer.py::test_second_desktop_gets_free_host_ports_instead_of_clashing`.

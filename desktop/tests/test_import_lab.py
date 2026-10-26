@@ -10,6 +10,7 @@ from qt_helpers import ImmediateWorker, StalledWorker
 
 from practicum_desktop import import_lab
 from practicum_desktop.api_client import (
+    DockerEngineResult,
     FieldIssue,
     ImportLabResult,
     NetworkCheckResult,
@@ -53,6 +54,8 @@ class FakeApiClient:
         self._ports = ports or PortCheckResult(success=True, has_conflicts=False)
         self._networks = networks or NetworkCheckResult(success=True, has_conflicts=False)
         self._start = start or StartResult(success=True, detail="Lab started.")
+        self.engine = DockerEngineResult(success=True, available=True, os_type="linux")
+        self.engine_calls = 0
         self.import_calls: list[dict] = []
         self.source_files: list[str | None] = []
         self.ports_calls: list[str] = []
@@ -65,6 +68,10 @@ class FakeApiClient:
     def check_networks(self, lab_id: str) -> NetworkCheckResult:
         self.networks_calls.append(lab_id)
         return self._networks
+
+    def get_docker_engine(self) -> DockerEngineResult:
+        self.engine_calls += 1
+        return self.engine
 
     def import_lab(self, definition: dict, source_file: str | None = None) -> ImportLabResult:
         self.import_calls.append(definition)
@@ -166,7 +173,12 @@ def test_dialog_lists_bundled_samples_with_open_disabled(settings: QSettings) ->
     dialog = ImportLabDialog(FakeApiClient(), settings)
 
     names = [_row_text(dialog, i).splitlines()[0] for i in range(dialog.files_list.count())]
-    assert names == ["static-routing.json", "ubuntu-quickstart.json", "ubuntu-webtop.json"]
+    assert names == [
+        "static-routing.json",
+        "ubuntu-quickstart.json",
+        "ubuntu-webtop.json",
+        "windows-quickstart.json",
+    ]
     assert dialog.open_button.isEnabled() is False
     assert dialog.api_banner.isHidden() is True
 
@@ -184,7 +196,7 @@ def test_dialog_lists_recent_files_first_and_disables_missing_ones(
     assert _row_text(dialog, 0) == f"static-routing.json\nRecent · {lab_file.stat().st_size} B"
     assert _row_text(dialog, 1) == "moved-away.json\nRecent · file not found"
     assert bool(second.flags() & Qt.ItemFlag.ItemIsEnabled) is False
-    assert dialog.files_list.count() == 2 + 3  # recent + bundled samples
+    assert dialog.files_list.count() == 2 + 4  # recent + bundled samples
 
 
 def test_selecting_an_existing_row_enables_open(settings: QSettings, lab_file: Path) -> None:
@@ -354,6 +366,59 @@ def test_failed_port_check_defers_to_the_gate(
     assert api.start_calls == []
     assert dialog.outcome is not None and dialog.outcome.gate_required is True
     assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_windows_lab_on_a_linux_engine_defers_to_the_gate_instead_of_starting(
+    settings: QSettings, lab_file: Path, monkeypatch, immediate
+) -> None:
+    _pick_file(monkeypatch, lab_file)
+    api = FakeApiClient(
+        import_result=ImportLabResult(
+            success=True, lab_id="lab-w", lab_name="Windows Quick Start", container_os="windows"
+        )
+    )
+    dialog = ImportLabDialog(api, settings)
+
+    dialog.browse_button.click()
+
+    assert api.engine_calls == 1
+    assert api.start_calls == []  # never a blind start that fails with a Docker error
+    assert dialog.outcome is not None
+    assert dialog.outcome.container_os == "windows"
+    assert dialog.outcome.gate_required is True
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_matching_engine_mode_starts_the_imported_lab(
+    settings: QSettings, lab_file: Path, monkeypatch, immediate
+) -> None:
+    _pick_file(monkeypatch, lab_file)
+    api = FakeApiClient(
+        import_result=ImportLabResult(
+            success=True, lab_id="lab-w", lab_name="Windows Quick Start", container_os="windows"
+        )
+    )
+    api.engine = DockerEngineResult(success=True, available=True, os_type="windows")
+    dialog = ImportLabDialog(api, settings)
+
+    dialog.browse_button.click()
+
+    assert api.start_calls == ["lab-w"]
+    assert dialog.outcome is not None and dialog.outcome.started is True
+
+
+def test_unreachable_docker_at_import_defers_to_the_gate(
+    settings: QSettings, lab_file: Path, monkeypatch, immediate
+) -> None:
+    _pick_file(monkeypatch, lab_file)
+    api = FakeApiClient()
+    api.engine = DockerEngineResult(success=True, available=False, detail="Docker is not running.")
+    dialog = ImportLabDialog(api, settings)
+
+    dialog.browse_button.click()
+
+    assert api.start_calls == []
+    assert dialog.outcome is not None and dialog.outcome.gate_required is True
 
 
 def test_malformed_file_shows_specific_error_and_never_reaches_api(

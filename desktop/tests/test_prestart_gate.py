@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QDialog, QPushButton
+from PySide6.QtWidgets import QDialog, QLineEdit, QPushButton
 
 from practicum_desktop import prestart_gate
 from practicum_desktop.api_client import (
+    DockerEngineResult,
     EstimatedResourcesInfo,
     ManualSectionInfo,
     ManualTaskInfo,
@@ -43,12 +44,26 @@ class ImmediateWorker(QObject):
         return False
 
 
+LINUX_ENGINE = DockerEngineResult(
+    success=True, available=True, os_type="linux", server_version="27.3.1"
+)
+WINDOWS_ENGINE = DockerEngineResult(
+    success=True, available=True, os_type="windows", server_version="27.3.1", host_build=22631
+)
+NO_ENGINE = DockerEngineResult(success=True, available=False, detail="Docker is not running.")
+
+
 class FakeApiClient:
-    def __init__(self, preview=None, ports=None, start=None, networks=None) -> None:
+    def __init__(
+        self, preview=None, ports=None, start=None, networks=None, engine=LINUX_ENGINE
+    ) -> None:
         self._preview = preview
         self._ports = ports
         self._start = start
         self._networks = networks or NetworkCheckResult(success=True, has_conflicts=False)
+        self.engine = engine
+        self.engine_calls = 0
+        self.custom_port_result: PortCheckResult | None = None
         self.apply_calls: list[tuple[str, str, int, str]] = []
         self.start_calls: list[str] = []
         self.subnet_apply_calls: list[tuple[str, str]] = []
@@ -61,6 +76,10 @@ class FakeApiClient:
 
     def check_networks(self, lab_id: str) -> NetworkCheckResult:
         return self._networks
+
+    def get_docker_engine(self) -> DockerEngineResult:
+        self.engine_calls += 1
+        return self.engine
 
     def apply_subnet_recommendation(self, lab_id: str, network_id: str) -> NetworkCheckResult:
         self.subnet_apply_calls.append((lab_id, network_id))
@@ -81,9 +100,11 @@ class FakeApiClient:
         return self._ports
 
     def apply_port_recommendation(
-        self, lab_id: str, node_id: str, host_port: int, protocol: str
+        self, lab_id: str, node_id: str, host_port: int, protocol: str, new_host_port=None
     ) -> PortCheckResult:
-        self.apply_calls.append((lab_id, node_id, host_port, protocol))
+        self.apply_calls.append((lab_id, node_id, host_port, protocol, new_host_port))
+        if new_host_port is not None and self.custom_port_result is not None:
+            return self.custom_port_result
         return self._ports
 
     def start_lab(self, lab_id: str, wait: bool = True) -> StartResult:
@@ -103,6 +124,7 @@ def _preview(
     cpu: float | None = None,
     memory: int | None = None,
     manual_tasks: int = 0,
+    container_os: str = "linux",
 ) -> PreviewResult:
     sections = []
     if manual_tasks:
@@ -120,6 +142,7 @@ def _preview(
         description="A 3-host topology.",
         author="You",
         version="0.1.0",
+        container_os=container_os,
         required_images=list(images),
         estimated_resources=EstimatedResourcesInfo(total_cpu=cpu, total_memory_mb=memory),
         topology=TopologyInfo(
@@ -150,6 +173,89 @@ def test_dialog_shows_preview_details(monkeypatch) -> None:
     assert dialog.topology_canvas.view.connector_network("client", "client").id == "lan"
     assert "2 steps" in dialog.manual_label.text()
     assert dialog.status_pill.text_label.text() == "Ready to start"
+    assert (
+        dialog.engine_banner.text() == "Docker Desktop serves Linux containers, as this lab needs."
+    )
+    assert dialog.engine_banner.property("banner") == "ok"
+    assert api.engine_calls == 1
+
+
+# ----- container engine mode (windows-desktop-windows-container-readiness) --------------------
+
+
+def test_windows_lab_on_a_linux_engine_blocks_start_until_retry_sees_windows_mode(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(
+            images=("mcr.microsoft.com/windows/servercore:ltsc2022",), container_os="windows"
+        ),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        engine=LINUX_ENGINE,
+    )
+
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert dialog.start_button.isEnabled() is False
+    assert dialog.conflicts_banner.text() == "No port conflicts detected."  # not the reason
+    banner = dialog.engine_banner.text()
+    assert "needs Windows containers" in banner
+    assert "serving Linux containers" in banner
+    assert "Switch to Windows containers" in banner
+    assert "never switches the mode" in banner
+    assert dialog.engine_banner.property("banner") == "warn"
+    assert (
+        dialog.status_pill.text_label.text()
+        == "Switch Docker Desktop's container mode to continue"
+    )
+
+    api.engine = WINDOWS_ENGINE  # the user switched Docker Desktop and presses Retry
+    dialog.engine_retry_button.click()
+
+    assert api.engine_calls == 2
+    assert (
+        dialog.engine_banner.text()
+        == "Docker Desktop serves Windows containers, as this lab needs."
+    )
+    assert dialog.engine_banner.property("banner") == "ok"
+    assert dialog.start_button.isEnabled() is True
+    assert dialog.status_pill.text_label.text() == "Ready to start"
+
+
+def test_linux_lab_on_a_windows_engine_is_blocked_with_the_switch_back_hint(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        engine=WINDOWS_ENGINE,
+    )
+
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert dialog.start_button.isEnabled() is False
+    assert "needs Linux containers" in dialog.engine_banner.text()
+    assert "Switch to Linux containers" in dialog.engine_banner.text()
+
+
+def test_unreachable_docker_blocks_start_from_the_engine_check(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        engine=NO_ENGINE,
+    )
+
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    assert dialog.start_button.isEnabled() is False
+    assert "Docker is not reachable: Docker is not running." in dialog.engine_banner.text()
+    assert dialog.engine_banner.property("banner") == "error"
+
+    api.engine = DockerEngineResult(success=False, detail="Could not check Docker: boom")
+    dialog.engine_retry_button.click()
+    assert "Could not check the Docker engine" in dialog.engine_banner.text()
+    assert dialog.start_button.isEnabled() is False
 
 
 def test_dialog_shows_no_manual_message_when_lab_has_none(monkeypatch) -> None:
@@ -182,13 +288,13 @@ def test_start_disabled_with_conflicts_and_enabled_once_resolved(monkeypatch) ->
     dialog = PreStartGateDialog(api, "lab-1")
 
     assert dialog.start_button.isEnabled() is False
-    assert dialog.conflicts_table.rowCount() == 1
+    assert len(dialog.conflict_rows) == 1
     assert "1 port conflict" in dialog.conflicts_banner.text()
 
     api._ports = PortCheckResult(success=True, has_conflicts=False, conflicts=[])
     dialog._on_apply_recommendation(conflict)
 
-    assert api.apply_calls == [("lab-1", "server", 80, "tcp")]
+    assert api.apply_calls == [("lab-1", "server", 80, "tcp", None)]
     assert dialog.start_button.isEnabled() is True
     assert dialog.conflicts_banner.text() == "No port conflicts detected."
 
@@ -548,3 +654,165 @@ class NodeStartProgressFixture:
         return NodeProgressInfo(
             node_id, "alpine", "pulling_image", percent=40, detail="2 of 5 layers"
         )
+
+
+def test_windows_lab_starts_through_the_same_gate_flow_with_pull_progress(monkeypatch) -> None:
+    """designer-windows-quick-start: the Windows lab uses the normal gate - checks, Start with
+    wait=false, real per-node progress for the (large) Server Core pull, accept when running."""
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    image = "mcr.microsoft.com/windows/servercore:ltsc2022"
+    api = FakeApiClient(
+        preview=_preview(
+            images=(image,), cpu=2.0, memory=2048, manual_tasks=2, container_os="windows"
+        ),
+        ports=PortCheckResult(success=True, has_conflicts=False, conflicts=[]),
+        start=StartResult(success=True, detail="Start requested.", pending=True),
+        engine=WINDOWS_ENGINE,
+    )
+    api.statuses = [
+        StatusResult(
+            success=True,
+            lab_status="starting",
+            progress=[
+                NodeProgressInfo(
+                    "host", image, "pulling_image", percent=12, detail="3 of 9 layers"
+                )
+            ],
+        ),
+        StatusResult(
+            success=True,
+            lab_status="running",
+            progress=[NodeProgressInfo("host", image, "ready")],
+        ),
+    ]
+    dialog = PreStartGateDialog(api, "lab-w")
+
+    assert [chip.text() for chip in dialog.image_chips] == [image]
+    assert dialog.engine_banner.property("banner") == "ok"
+    assert dialog.start_button.isEnabled() is True
+    assert "2 steps" in dialog.manual_label.text()
+
+    dialog._on_start_clicked()
+    assert api.start_waits == [False]
+    assert dialog.footer_stack.currentIndex() == 1
+    assert "Downloading mcr.microsoft.com/windows/servercore:ltsc2022" in (
+        dialog.progress_panel.summary_label.text()
+    )
+    assert "12%" in dialog.progress_panel.summary_label.text()
+
+    dialog._poll_status()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+# ----- choosing a port of one's own (user request 2026-10-25) ---------------------------------
+
+
+def _conflict_row_widgets(dialog: PreStartGateDialog, row: int = 0):
+    cell = dialog.conflict_rows[row]
+    buttons = cell.findChildren(QPushButton)
+    field = cell.findChildren(QLineEdit)[0]
+    return buttons, field
+
+
+def test_conflict_row_offers_the_recommendation_and_a_port_of_your_own(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    conflict = PortConflict("server", 80, 80, "tcp", "in_use_on_host", recommended_port=8080)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=True, conflicts=[conflict]),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    buttons, field = _conflict_row_widgets(dialog)
+    assert [b.text() for b in buttons] == ["Use 8080", "Apply"]
+    assert field.placeholderText() == "port"
+    assert "server" in field.accessibleName() and "80/tcp" in field.accessibleName()
+    assert dialog.start_button.isEnabled() is False
+
+    api._ports = PortCheckResult(success=True, has_conflicts=False, conflicts=[])
+    field.setText("9090")
+    buttons[1].click()
+
+    assert api.apply_calls == [("lab-1", "server", 80, "tcp", 9090)]
+    assert dialog.start_button.isEnabled() is True
+    assert dialog.conflicts_banner.text() == "No port conflicts detected."
+
+
+def test_enter_in_the_port_field_applies_too(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    conflict = PortConflict("server", 80, 80, "tcp", "in_use_on_host", recommended_port=None)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=True, conflicts=[conflict]),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+    buttons, field = _conflict_row_widgets(dialog)
+    assert [b.text() for b in buttons] == ["Apply"]  # no recommendation: only your own port
+    assert field.placeholderText() == "port"
+
+    api._ports = PortCheckResult(success=True, has_conflicts=False, conflicts=[])
+    field.setText("8088")
+    field.returnPressed.emit()
+
+    assert api.apply_calls[-1] == ("lab-1", "server", 80, "tcp", 8088)
+
+
+def test_unusable_chosen_port_is_explained_and_the_conflict_stays(monkeypatch) -> None:
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    conflict = PortConflict("server", 80, 80, "tcp", "in_use_on_host", recommended_port=8080)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=True, conflicts=[conflict]),
+    )
+    api.custom_port_result = PortCheckResult(
+        success=False, detail="Port 8000/tcp is reserved by the Practicum API"
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+    buttons, field = _conflict_row_widgets(dialog)
+
+    field.setText("8000")
+    buttons[1].click()
+
+    assert "reserved by the Practicum API" in dialog.conflicts_banner.text()
+    assert dialog.conflicts_banner.property("banner") == "error"
+    assert len(dialog.conflict_rows) == 1  # still there to fix
+    assert dialog.start_button.isEnabled() is False
+
+    # obvious mistakes never reach the API
+    field.setText("")
+    buttons[1].click()
+    assert "between 1 and 65535" in dialog.conflicts_banner.text()
+    field.setText("80")
+    buttons[1].click()
+    assert "is the port that is in conflict" in dialog.conflicts_banner.text()
+    assert [c for c in api.apply_calls if c[4] in (None, 80)] == []
+    assert len(api.apply_calls) == 1
+
+
+def test_a_fix_that_recreated_the_machines_says_so(monkeypatch) -> None:
+    """D-48: moving a port/subnet on a lab that has run removes its old containers; the
+    gate tells the user the machines start fresh and refreshes the (now Ready) preview."""
+    monkeypatch.setattr(prestart_gate, "CallableWorker", ImmediateWorker)
+    conflict = PortConflict("server", 80, 80, "tcp", "in_use_on_host", recommended_port=8080)
+    api = FakeApiClient(
+        preview=_preview(),
+        ports=PortCheckResult(success=True, has_conflicts=True, conflicts=[conflict]),
+    )
+    dialog = PreStartGateDialog(api, "lab-1")
+
+    api._ports = PortCheckResult(
+        success=True, has_conflicts=False, conflicts=[], machines_reset=True
+    )
+    dialog._on_apply_recommendation(conflict)
+
+    text = dialog.conflicts_banner.text()
+    assert text.startswith("No port conflicts detected.")
+    assert "machines were removed and will start fresh" in text
+    assert "from earlier sessions is gone" in text
+    assert dialog.start_button.isEnabled() is True
+
+    # a never-started lab gets no such note
+    dialog2 = PreStartGateDialog(api, "lab-2")
+    api._ports = PortCheckResult(success=True, has_conflicts=False, conflicts=[])
+    dialog2._on_apply_recommendation(conflict)
+    assert dialog2.conflicts_banner.text() == "No port conflicts detected."

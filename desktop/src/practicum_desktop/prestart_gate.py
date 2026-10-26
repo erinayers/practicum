@@ -1,17 +1,25 @@
 """Pre-start readiness gate (windows-desktop-prestart-lab-gate, runtime-subnet-conflicts,
-runtime-image-pull-progress on the desktop side).
+runtime-image-pull-progress on the desktop side, windows-desktop-windows-container-readiness).
 
 Laid out like the mockup's `screen-preview`: title + status badge + description, a main
 column (Required images as chips, the read-only schematic topology, the manual preview) and
-a side column (Estimated resources tiles, Port conflicts, Network conflicts), over a bottom
-bar with a status pill and Cancel / Start Lab. Start asks the API to start without waiting
-(`wait=False`) and then polls GET /status, turning the bottom of the dialog into the real
-per-node progress (image downloads, container creation) until the lab is running or failed.
+a side column (Estimated resources tiles, Container engine, Port conflicts, Network
+conflicts), over a bottom bar with a status pill and Cancel / Start Lab. Start asks the API
+to start without waiting (`wait=False`) and then polls GET /status, turning the bottom of
+the dialog into the real per-node progress (image downloads, container creation) until the
+lab is running or failed.
+
+The Container engine check compares what the lab is built for (the preview's
+`container_os`) with what the Docker daemon serves right now (`GET /docker/engine`): a
+Windows lab while Docker Desktop is in Linux-container mode - or the other way round -
+keeps Start disabled with the switch instructions and a Retry, because the start would
+only fail later with a less friendly Docker error.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -19,6 +27,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -32,6 +41,7 @@ from practicum_desktop import theme
 from practicum_desktop.api_client import (
     PORT_CONFLICT_REASONS,
     ApiClient,
+    DockerEngineResult,
     NetworkCheckResult,
     PortCheckResult,
     PortConflict,
@@ -47,6 +57,7 @@ from practicum_desktop.widgets import (
     Badge,
     Chip,
     FlowLayout,
+    MessageBanner,
     Panel,
     StatTile,
     StatusPill,
@@ -61,13 +72,44 @@ from practicum_desktop.widgets import (
     make_button,
     payload_of,
     role_label,
-    set_role,
 )
 from practicum_desktop.workers import CallableWorker
 
 START_POLL_MS = 1000
+MACHINES_RESET_NOTE = (
+    "This lab had run before, so its machines were removed and will start fresh with the new "
+    "setting; anything saved inside them from earlier sessions is gone."
+)
+OS_LABELS = {"linux": "Linux", "windows": "Windows"}
+SWITCH_HINTS = {
+    "windows": "right-click the Docker whale icon and choose 'Switch to Windows containers...'",
+    "linux": "right-click the Docker whale icon and choose 'Switch to Linux containers...'",
+}
 
 _copyable_label = copyable_label
+
+
+def engine_verdict(container_os: str, engine: DockerEngineResult) -> tuple[bool, str, str]:
+    """(ok, text, banner kind) comparing the lab's OS with the daemon's engine mode."""
+    needed = OS_LABELS.get(container_os, container_os)
+    if not engine.success:
+        return False, f"Could not check the Docker engine: {engine.detail}", "error"
+    if not engine.available:
+        return (
+            False,
+            f"Docker is not reachable: {engine.detail} Start Docker Desktop, then Retry.",
+            "error",
+        )
+    if engine.os_type == container_os:
+        return True, f"Docker Desktop serves {needed} containers, as this lab needs.", "ok"
+    serving = OS_LABELS.get(engine.os_type or "", engine.os_type or "unknown")
+    hint = SWITCH_HINTS.get(container_os, "switch the engine mode")
+    text = (
+        f"This lab needs {needed} containers, but Docker Desktop is serving {serving} "
+        f"containers. To run it, {hint}, wait for Docker to restart, then select Retry. "
+        "Practicum never switches the mode for you."
+    )
+    return False, text, "warn"
 
 
 def _fit_table_height(table: QTableWidget, max_rows: int = 5) -> None:
@@ -117,7 +159,11 @@ class PreStartGateDialog(QDialog):
         self._subnet_conflicts: list[SubnetConflict] = []
         self._ports_known = False
         self._networks_known = False
+        self._container_os: str | None = None  # from the preview
+        self._engine: DockerEngineResult | None = None  # from GET /docker/engine
+        self._engine_ok = False
         self._starting = False
+        self._engine_worker: CallableWorker | None = None
         self._preview_worker: CallableWorker | None = None
         self._ports_worker: CallableWorker | None = None
         self._networks_worker: CallableWorker | None = None
@@ -205,7 +251,7 @@ class PreStartGateDialog(QDialog):
         manual_panel.body_layout.addWidget(self.manual_steps_host)
         main_column.addWidget(manual_panel)
         main_column.addStretch(1)
-        columns.addLayout(main_column, 14)
+        columns.addLayout(main_column, 13)
 
         side_column = QVBoxLayout()
         side_column.setSpacing(16)
@@ -222,31 +268,39 @@ class PreStartGateDialog(QDialog):
         resources_panel.body_layout.addLayout(tiles)
         side_column.addWidget(resources_panel)
 
+        engine_panel = Panel(padding=14)
+        engine_head = QHBoxLayout()
+        engine_head.setSpacing(8)
+        engine_head.addWidget(role_label("Container engine", "h3"), 1)
+        self.engine_retry_button = make_button("Retry", small=True)
+        self.engine_retry_button.setToolTip(
+            "Check again which containers Docker Desktop serves (after switching its mode)"
+        )
+        self.engine_retry_button.clicked.connect(self._check_engine)
+        engine_head.addWidget(self.engine_retry_button)
+        engine_panel.body_layout.addLayout(engine_head)
+        self.engine_banner = MessageBanner("info")
+        engine_panel.body_layout.addWidget(self.engine_banner)
+        side_column.addWidget(engine_panel)
+
         conflicts_panel = Panel(padding=14)
         conflicts_panel.body_layout.addWidget(role_label("Port conflicts", "h3"))
-        self.conflicts_banner = copyable_label("")
-        self.conflicts_banner.setProperty("banner", "info")
+        self.conflicts_banner = MessageBanner("info")
         conflicts_panel.body_layout.addWidget(self.conflicts_banner)
-        self.conflicts_table = QTableWidget(0, 4)
-        self.conflicts_table.setHorizontalHeaderLabels(["Node", "Port", "Issue", ""])
-        header = self.conflicts_table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.conflicts_table.setColumnWidth(3, 104)
-        self.conflicts_table.verticalHeader().hide()
-        self.conflicts_table.verticalHeader().setDefaultSectionSize(36)
-        self.conflicts_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.conflicts_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.conflicts_table.hide()
-        conflicts_panel.body_layout.addWidget(self.conflicts_table)
+        # One card per conflict (what clashes, then the fix controls underneath): a table
+        # cannot fit "Use <port>" + a port field + Apply in this narrow column.
+        self.conflicts_host = QWidget()
+        self.conflicts_layout = QVBoxLayout(self.conflicts_host)
+        self.conflicts_layout.setContentsMargins(0, 0, 0, 0)
+        self.conflicts_layout.setSpacing(6)
+        self.conflict_rows: list[QWidget] = []
+        self.conflicts_host.hide()
+        conflicts_panel.body_layout.addWidget(self.conflicts_host)
         side_column.addWidget(conflicts_panel)
 
         networks_panel = Panel(padding=14)
         networks_panel.body_layout.addWidget(role_label("Network conflicts", "h3"))
-        self.networks_banner = copyable_label("")
-        self.networks_banner.setProperty("banner", "info")
+        self.networks_banner = MessageBanner("info")
         networks_panel.body_layout.addWidget(self.networks_banner)
         self.networks_table = QTableWidget(0, 4)
         self.networks_table.setHorizontalHeaderLabels(["Network", "Subnet", "Issue", "Fix"])
@@ -263,7 +317,7 @@ class PreStartGateDialog(QDialog):
         networks_panel.body_layout.addWidget(self.networks_table)
         side_column.addWidget(networks_panel)
         side_column.addStretch(1)
-        columns.addLayout(side_column, 10)
+        columns.addLayout(side_column, 11)
         columns_scroll.setWidget(columns_host)
         layout.addWidget(columns_scroll, 1)
 
@@ -275,8 +329,7 @@ class PreStartGateDialog(QDialog):
         idle_layout.setContentsMargins(0, 0, 0, 0)
         self.status_pill = StatusPill("Loading lab details\u2026", theme.AMBER)
         idle_layout.addWidget(self.status_pill)
-        self.status_label = copyable_label("")
-        self.status_label.setProperty("banner", "error")
+        self.status_label = MessageBanner("error")
         self.status_label.hide()
         idle_layout.addWidget(self.status_label)
         self.footer_stack.addWidget(idle)
@@ -289,7 +342,7 @@ class PreStartGateDialog(QDialog):
         self.cancel_button = make_button("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         bar_row.addWidget(self.cancel_button, 0, Qt.AlignmentFlag.AlignBottom)
-        self.start_button = make_button("Start Lab", kind="primary")
+        self.start_button = make_button("Start Lab", kind="primary", icon="play")
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self._on_start_clicked)
         bar_row.addWidget(self.start_button, 0, Qt.AlignmentFlag.AlignBottom)
@@ -315,6 +368,34 @@ class PreStartGateDialog(QDialog):
         self._networks_worker.finished_call.connect(self._on_networks_checked)
         self._networks_worker.start()
 
+        self._check_engine()
+
+    # ----- container engine -------------------------------------------------------------
+
+    def _check_engine(self) -> None:
+        if self._engine_worker is not None and self._engine_worker.isRunning():
+            return
+        self._banner(self.engine_banner, "Checking which containers Docker serves\u2026", "info")
+        self.engine_retry_button.setEnabled(False)
+        self._engine_worker = CallableWorker(self._api_client.get_docker_engine)
+        self._engine_worker.finished_call.connect(self._on_engine_checked)
+        self._engine_worker.start()
+
+    def _on_engine_checked(self, result: DockerEngineResult) -> None:
+        self._engine = result
+        self.engine_retry_button.setEnabled(True)
+        self._render_engine()
+
+    def _render_engine(self) -> None:
+        """Needs both answers (preview for the lab's OS, engine for Docker's mode)."""
+        if self._engine is None or self._container_os is None:
+            self._engine_ok = False
+            return
+        ok, text, kind = engine_verdict(self._container_os, self._engine)
+        self._engine_ok = ok
+        self._banner(self.engine_banner, text, kind)
+        self._update_start_enabled()
+
     def _reload_preview(self) -> None:
         self._preview_worker = CallableWorker(self._api_client.get_preview, self._lab_id)
         self._preview_worker.finished_call.connect(self._on_preview_loaded)
@@ -330,6 +411,8 @@ class PreStartGateDialog(QDialog):
         self.description_label.setText(result.description or "No description provided.")
         if result.status:
             self.badge.set_status(result.status)
+        self._container_os = result.container_os or "linux"
+        self._render_engine()
         self._update_start_enabled()
 
         author_parts = [part for part in (result.author, result.version) if part]
@@ -402,10 +485,12 @@ class PreStartGateDialog(QDialog):
             self.manual_steps_layout.addWidget(host)
 
     def _update_start_enabled(self) -> None:
-        """Start is allowed only once both checks have answered and neither found anything."""
+        """Start is allowed only once every check has answered and none found anything:
+        host ports, Docker subnets, and the engine mode matching the lab's OS."""
         ready = (
             self._ports_known
             and self._networks_known
+            and self._engine_ok
             and not self._conflicts
             and not self._subnet_conflicts
         )
@@ -414,8 +499,12 @@ class PreStartGateDialog(QDialog):
             return
         if ready:
             self.status_pill.set_state("Ready to start", theme.GREEN)
-        elif not self._ports_known or not self._networks_known:
+        elif not self._ports_known or not self._networks_known or self._engine is None:
             self.status_pill.set_state("Checking this computer\u2026", theme.AMBER)
+        elif not self._engine_ok:
+            self.status_pill.set_state(
+                "Switch Docker Desktop's container mode to continue", theme.AMBER
+            )
         else:
             self.status_pill.set_state("Resolve conflicts to continue", theme.AMBER)
 
@@ -431,25 +520,15 @@ class PreStartGateDialog(QDialog):
         self._render_conflicts()
 
     def _render_conflicts(self) -> None:
-        self.conflicts_table.setRowCount(len(self._conflicts))
-        for row, conflict in enumerate(self._conflicts):
-            self.conflicts_table.setItem(row, 0, QTableWidgetItem(conflict.node_id))
-            self.conflicts_table.setItem(
-                row, 1, QTableWidgetItem(f"{conflict.host_port}/{conflict.protocol}")
-            )
-            reason_text = PORT_CONFLICT_REASONS.get(conflict.reason, conflict.reason)
-            self.conflicts_table.setItem(row, 2, QTableWidgetItem(reason_text))
-
-            if conflict.recommended_port is not None:
-                apply_button = QPushButton(f"Use {conflict.recommended_port}")
-                apply_button.setProperty("small", True)
-                bind(apply_button, self._on_apply_recommendation_clicked, conflict)
-                self.conflicts_table.setCellWidget(row, 3, apply_button)
-            else:
-                self.conflicts_table.setItem(row, 3, QTableWidgetItem("No port available"))
-
-        self.conflicts_table.setVisible(bool(self._conflicts))
-        _fit_table_height(self.conflicts_table)
+        for row_widget in self.conflict_rows:
+            self.conflicts_layout.removeWidget(row_widget)
+            discard(row_widget)
+        self.conflict_rows = []
+        for conflict in self._conflicts:
+            card = self._conflict_card(conflict)
+            self.conflicts_layout.addWidget(card)
+            self.conflict_rows.append(card)
+        self.conflicts_host.setVisible(bool(self._conflicts))
         if not self._conflicts:
             self._banner(self.conflicts_banner, "No port conflicts detected.", "ok")
         else:
@@ -462,10 +541,119 @@ class PreStartGateDialog(QDialog):
             )
         self._update_start_enabled()
 
+    def _conflict_card(self, conflict: PortConflict) -> QWidget:
+        """'web-1 8080/tcp · Already in use on this machine' over its fix controls."""
+        card = QFrame()
+        card.setProperty("panel", "soft")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+        reason_text = PORT_CONFLICT_REASONS.get(conflict.reason, conflict.reason)
+        title = role_label(
+            f"{conflict.node_id} \u00b7 host port {conflict.host_port}/{conflict.protocol}",
+            "label",
+        )
+        title.setToolTip(
+            f"Container port {conflict.container_port}/{conflict.protocol} of "
+            f"'{conflict.node_id}' is published on host port {conflict.host_port}"
+        )
+        layout.addWidget(title)
+        layout.addWidget(role_label(reason_text, "muted", wrap=True))
+        layout.addWidget(self._port_fix_widget(conflict))
+        return card
+
+    def _port_fix_widget(self, conflict: PortConflict) -> QWidget:
+        """'Use <recommended>' plus a field for a port of the user's own choosing."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        if conflict.recommended_port is not None:
+            use_button = QPushButton(f"Use {conflict.recommended_port}")
+            use_button.setProperty("small", True)
+            use_button.setToolTip("Move this mapping to the next free port Practicum found")
+            bind(use_button, self._on_apply_recommendation_clicked, conflict)
+            row.addWidget(use_button)
+        port_field = QLineEdit()
+        port_field.setPlaceholderText("port")
+        port_field.setValidator(QIntValidator(1, 65535, port_field))
+        port_field.setFixedWidth(84)
+        port_field.setToolTip(
+            f"Or type a host port (1-65535) for {conflict.node_id}'s {conflict.host_port}/"
+            f"{conflict.protocol} and press Enter or Apply"
+        )
+        port_field.setAccessibleName(
+            f"Other host port for {conflict.node_id} {conflict.host_port}/{conflict.protocol}"
+        )
+        row.addWidget(port_field)
+        apply_button = QPushButton("Apply")
+        apply_button.setProperty("small", True)
+        apply_button.setToolTip("Use the port typed on the left")
+        bind(apply_button, self._on_apply_custom_port_clicked, (conflict, port_field))
+        port_field.returnPressed.connect(apply_button.click)
+        row.addWidget(apply_button)
+        row.addStretch(1)
+        return container
+
+    def _on_apply_custom_port_clicked(self) -> None:
+        conflict, port_field = payload_of(self.sender())
+        self._on_apply_custom_port(conflict, port_field.text())
+
+    def _on_apply_custom_port(self, conflict: PortConflict, text: str) -> None:
+        """Applies a port the user typed; obvious mistakes are caught here, the API checks
+        that the port is really usable (free, not its own, not elsewhere in the lab)."""
+        try:
+            port = int(text.strip())
+        except ValueError:
+            port = 0
+        if not 1 <= port <= 65535:
+            self._banner(
+                self.conflicts_banner, "Type a host port between 1 and 65535, then Apply.", "warn"
+            )
+            return
+        if port == conflict.host_port:
+            self._banner(
+                self.conflicts_banner,
+                f"{port}/{conflict.protocol} is the port that is in conflict; choose another.",
+                "warn",
+            )
+            return
+        self._banner(self.conflicts_banner, f"Moving to port {port}\u2026", "info")
+        self.start_button.setEnabled(False)
+        self._apply_worker = CallableWorker(
+            self._api_client.apply_port_recommendation,
+            self._lab_id,
+            conflict.node_id,
+            conflict.host_port,
+            conflict.protocol,
+            port,
+        )
+        self._apply_worker.finished_call.connect(self._on_port_fix_done)
+        self._apply_worker.start()
+
+    def _on_port_fix_done(self, result: PortCheckResult) -> None:
+        if not result.success:
+            # The conflict list is unchanged; say why the port was refused and keep the rows.
+            self._banner(self.conflicts_banner, f"{result.detail}", "error")
+            self._update_start_enabled()
+            return
+        self._on_ports_checked(result)
+        if result.machines_reset:
+            self._note_machines_reset(self.conflicts_banner)
+
+    def _note_machines_reset(self, banner: MessageBanner) -> None:
+        """The fix removed machines that had run before (D-48): say so, and refresh the
+        preview so the badge shows the lab is back to Ready."""
+        self._banner(
+            banner,
+            f"{banner.text()} {MACHINES_RESET_NOTE}",
+            "info" if banner.property("banner") in ("ok", "info") else banner.property("banner"),
+        )
+        self._reload_preview()
+
     @staticmethod
-    def _banner(label: QLabel, text: str, kind: str) -> None:
-        label.setText(text)
-        set_role(label, "banner", kind)
+    def _banner(banner: MessageBanner, text: str, kind: str) -> None:
+        banner.set_message(text, kind)
 
     # ----- subnet conflicts -------------------------------------------------------------
 
@@ -634,6 +822,8 @@ class PreStartGateDialog(QDialog):
             )
             self._subnet_moved_note = ""
             self._reload_preview()  # topology addresses changed
+        if result.machines_reset:
+            self._note_machines_reset(self.networks_banner)
 
     def _on_apply_recommendation(self, conflict: PortConflict) -> None:
         self._banner(self.conflicts_banner, "Applying recommended port\u2026", "info")
@@ -645,7 +835,7 @@ class PreStartGateDialog(QDialog):
             conflict.host_port,
             conflict.protocol,
         )
-        self._apply_worker.finished_call.connect(self._on_ports_checked)
+        self._apply_worker.finished_call.connect(self._on_port_fix_done)
         self._apply_worker.start()
 
     def _on_start_clicked(self) -> None:

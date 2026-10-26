@@ -21,3 +21,4 @@ Provide a native-feeling Windows application shell that lets instructors and stu
 - [Create New Lab Screen](windows-desktop-create-lab-screen.md)
 - [Desktop Visual Theme (Mockup Look and Feel)](windows-desktop-visual-theme.md)
 - [Live Status Polling in the Running View](windows-desktop-status-polling.md)
+- [Use Design Icons Across the Desktop UI](windows-desktop-design-icons.md)

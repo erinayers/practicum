@@ -8,6 +8,7 @@ from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from typing import Protocol
 
 from practicum.models import (
+    DockerEngineInfo,
     DockerNetworkInfo,
     Interface,
     Lab,
@@ -32,6 +33,28 @@ _LAYER_FINISHED = {"Pull complete", "Already exists"}
 # A running container may keep a one-line status marker here (written by the desktop's
 # quick-start install script); GET /status surfaces it as the container's `note`.
 CONTAINER_NOTE_FILE = "/run/practicum-packages.status"
+WINDOWS_CONTAINER_NOTE_FILE = r"C:\practicum\packages.status"
+# How to print that marker per container OS (a Windows container has no `cat`).
+CONTAINER_NOTE_COMMANDS: dict[str, list[str]] = {
+    "linux": ["cat", CONTAINER_NOTE_FILE],
+    "windows": ["cmd", "/c", "type", WINDOWS_CONTAINER_NOTE_FILE],
+}
+# Docker network driver per container OS: Windows has no `bridge` driver; `nat` is its
+# equivalent (user-defined subnets and static --ip are supported on it).
+NETWORK_DRIVERS: dict[str, str] = {"linux": "bridge", "windows": "nat"}
+OS_LABELS = {"linux": "Linux", "windows": "Windows"}
+# Docker Desktop's own wording for the mode switch, so the message matches what users see.
+SWITCH_HINT = {
+    "windows": (
+        "switch Docker Desktop to Windows containers (right-click the Docker whale icon in "
+        "the notification area and choose 'Switch to Windows containers...')"
+    ),
+    "linux": (
+        "switch Docker Desktop back to Linux containers (right-click the Docker whale icon "
+        "in the notification area and choose 'Switch to Linux containers...')"
+    ),
+}
+_KERNEL_BUILD = re.compile(r"^10\.0 (\d{4,6})\b")
 _SIZE_UNITS = {"B": 1, "kB": 1e3, "MB": 1e6, "GB": 1e9}
 _NO_CONSOLE_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -64,6 +87,51 @@ def _parse_size(text: str) -> float:
     return float(match.group(1)) * _SIZE_UNITS.get(match.group(2), 1)
 
 
+def parse_engine_info(returncode: int, stdout: str, stderr: str) -> DockerEngineInfo:
+    """Turns `docker info --format '{{json .}}'` output into a DockerEngineInfo.
+
+    With the daemon down, the CLI still prints the client half of the JSON (with
+    `ServerErrors`) and exits non-zero; with no JSON at all the stderr text is the reason.
+    """
+    try:
+        raw = json.loads(stdout or "")
+    except json.JSONDecodeError:
+        raw = None
+    if not isinstance(raw, dict):
+        message = (stderr or stdout or "").strip() or "Docker is installed but not running."
+        return DockerEngineInfo(available=False, detail=message)
+
+    server_errors = [str(e) for e in raw.get("ServerErrors") or [] if e]
+    os_type = str(raw.get("OSType") or "").lower() or None
+    if server_errors or os_type not in ("linux", "windows"):
+        message = "; ".join(server_errors) or (stderr or "").strip()
+        return DockerEngineInfo(
+            available=False, detail=message or "Docker is installed but not running."
+        )
+
+    kernel = str(raw.get("KernelVersion") or "") or None
+    host_build: int | None = None
+    if os_type == "windows" and kernel:
+        match = _KERNEL_BUILD.match(kernel)
+        if match:
+            host_build = int(match.group(1))
+    version = str(raw.get("ServerVersion") or "") or None
+    isolation = str(raw.get("Isolation") or "").lower() or None
+    summary = f"Docker {version or '?'} is serving {OS_LABELS[os_type]} containers"
+    if os_type == "windows" and host_build:
+        summary += f" (host build {host_build}, {isolation or 'default'} isolation)"
+    return DockerEngineInfo(
+        available=True,
+        os_type=os_type,
+        server_version=version,
+        operating_system=str(raw.get("OperatingSystem") or "") or None,
+        kernel_version=kernel,
+        host_build=host_build,
+        isolation=isolation,
+        detail=summary + ".",
+    )
+
+
 class RuntimeFailure(Exception):
     def __init__(self, message: str, command: list[str] | None = None) -> None:
         super().__init__(message)
@@ -72,6 +140,9 @@ class RuntimeFailure(Exception):
 
 
 class LabRuntime(Protocol):
+    def engine_info(self) -> DockerEngineInfo:
+        pass
+
     def start(self, lab: Lab, on_progress: ProgressCallback | None = None) -> None:
         pass
 
@@ -98,6 +169,41 @@ class LabRuntime(Protocol):
 
 
 class DockerRuntime:
+    def engine_info(self) -> DockerEngineInfo:
+        """Read-only: what the active daemon serves (`docker info`). Never switches the engine."""
+        command = ["docker", "info", "--format", "{{json .}}"]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=15,
+                creationflags=_NO_CONSOLE_WINDOW,
+            )
+        except OSError as exc:
+            return DockerEngineInfo(available=False, detail=_docker_cli_error(exc))
+        except subprocess.TimeoutExpired:
+            return DockerEngineInfo(
+                available=False, detail="Docker did not answer `docker info` in time."
+            )
+        return parse_engine_info(completed.returncode, completed.stdout, completed.stderr)
+
+    def _require_engine_os(self, lab: Lab) -> None:
+        """Fails the start early, with a message that says what to do, when the daemon serves
+        the other kind of container than this lab is built for. Unknown = let Docker decide."""
+        engine = self.engine_info()
+        if engine.os_type is None or engine.os_type == lab.container_os:
+            return
+        needed, serving = OS_LABELS[lab.container_os], OS_LABELS[engine.os_type]
+        raise RuntimeFailure(
+            f"This lab needs {needed} containers, but Docker Desktop is currently serving "
+            f"{serving} containers. Practicum never changes that mode for you: "
+            f"{SWITCH_HINT[lab.container_os]}, wait for Docker to restart, then start the lab "
+            "again.",
+            ["docker", "info"],
+        )
+
     def start(self, lab: Lab, on_progress: ProgressCallback | None = None) -> None:
         """Creates the lab's networks, then brings up each node in spec order.
 
@@ -106,6 +212,8 @@ class DockerRuntime:
         `docker run` a fresh one and connect its extra interfaces. Every step is reported
         through `on_progress` so a UI can show where a slow first start actually is.
         A failure is attributed to its node, and everything created so far is removed.
+        The engine mode (Linux/Windows containers) is re-checked first: a lab built for the
+        other kind fails before anything is created, with the switch instructions.
         """
         progress = {
             node.id: NodeStartProgress(node_id=node.id, image=node.image) for node in lab.nodes
@@ -118,6 +226,9 @@ class DockerRuntime:
             entry.detail = detail
             if on_progress is not None:
                 on_progress(entry.model_copy())
+
+        # Before anything is created (and outside the cleanup below: there is nothing to clean).
+        self._require_engine_os(lab)
 
         current: Node | None = None
         try:
@@ -306,14 +417,15 @@ class DockerRuntime:
                 command=["docker", "inspect", "--format", "{{.State.Status}}", name],
             )
             if resource.exists and resource.status == "running":
-                resource.note = self._container_note(name)
+                resource.note = self._container_note(name, node.os)
             resources.append(resource)
 
         return resources
 
-    def _container_note(self, name: str) -> str | None:
+    def _container_note(self, name: str, os: str = "linux") -> str | None:
         """The first line of the container's self-reported status marker, if it keeps one."""
-        command = ["docker", "exec", name, "cat", CONTAINER_NOTE_FILE]
+        note_command = CONTAINER_NOTE_COMMANDS.get(os, CONTAINER_NOTE_COMMANDS["linux"])
+        command = ["docker", "exec", name, *note_command]
         try:
             completed = subprocess.run(
                 command,
@@ -452,7 +564,7 @@ class DockerRuntime:
                     "network",
                     "create",
                     "--driver",
-                    "bridge",
+                    NETWORK_DRIVERS.get(lab.container_os, "bridge"),
                     "--subnet",
                     str(network.subnet),
                     "--gateway",

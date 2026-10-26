@@ -15,6 +15,19 @@ EnvironmentName = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 # net.ipv4.ip_forward=1 for a router node.
 SysctlName = Annotated[str, Field(pattern=r"^(net|kernel|fs)\.[A-Za-z0-9_.\-]+$")]
 
+# The operating system a node's image is built for. Docker Desktop serves one kind at a
+# time (its "Linux containers" / "Windows containers" engine mode), so every node of a lab
+# must agree, and a lab can only start while the engine serves that kind.
+NodeOS = Literal["linux", "windows"]
+# The interactive shell "Open shell" launches in the node. None = the OS default: bash
+# (falling back to sh) on Linux, PowerShell on Windows.
+NodeShell = Literal["bash", "sh", "powershell", "cmd"]
+SHELLS_BY_OS: dict[str, tuple[str, ...]] = {
+    "linux": ("bash", "sh"),
+    "windows": ("powershell", "cmd"),
+}
+DEFAULT_SHELL_BY_OS: dict[str, str] = {"linux": "bash", "windows": "powershell"}
+
 
 class PortMapping(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -65,6 +78,9 @@ class ManualSection(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     content_markdown: str = Field(min_length=1, max_length=10000)
     tasks: list[ManualTask] = Field(default_factory=list)
+    # The instructor asks for evidence: the student attaches a screenshot (captured from the
+    # embedded lab view or uploaded) to this step; it travels with the exported results.
+    requires_screenshot: bool = False
 
     @model_validator(mode="after")
     def validate_tasks(self) -> "ManualSection":
@@ -99,6 +115,30 @@ class Node(BaseModel):
     command: list[str] | None = Field(default_factory=lambda: ["sleep", "infinity"])
     environment: dict[EnvironmentName, str] = Field(default_factory=dict)
     resources: ResourceRequirements | None = None
+    # Declared, not guessed from the image name: the runtime picks the Docker network driver
+    # and the start-time engine check from it, and the desktop's Open shell picks the shell.
+    os: NodeOS = "linux"
+    shell: NodeShell | None = None
+
+    @property
+    def effective_shell(self) -> str:
+        return self.shell or DEFAULT_SHELL_BY_OS[self.os]
+
+    @model_validator(mode="after")
+    def validate_os_options(self) -> "Node":
+        if self.shell is not None and self.shell not in SHELLS_BY_OS[self.os]:
+            allowed = " or ".join(SHELLS_BY_OS[self.os])
+            raise ValueError(
+                f"shell '{self.shell}' is not available on a {self.os} node (use {allowed})"
+            )
+        if self.os == "windows" and self.resources is not None:
+            # Docker on Windows has neither /dev/shm nor sysctls; refusing them here beats a
+            # cryptic `docker run` error at start.
+            if self.resources.shm_size_mb is not None:
+                raise ValueError("shm_size_mb is not supported on windows nodes")
+            if self.resources.sysctls:
+                raise ValueError("sysctls are not supported on windows nodes")
+        return self
 
 
 class Network(BaseModel):
@@ -141,6 +181,11 @@ class LabDefinition(BaseModel):
             )
         return value
 
+    @property
+    def container_os(self) -> str:
+        """The operating system every node of this lab is built for (validated to agree)."""
+        return self.nodes[0].os if self.nodes else "linux"
+
     @model_validator(mode="after")
     def validate_topology(self) -> "LabDefinition":
         node_ids = [node.id for node in self.nodes]
@@ -150,6 +195,13 @@ class LabDefinition(BaseModel):
             raise ValueError("node ids must be unique")
         if len(network_ids) != len(set(network_ids)):
             raise ValueError("network ids must be unique")
+
+        operating_systems = {node.os for node in self.nodes}
+        if len(operating_systems) > 1:
+            raise ValueError(
+                "all nodes must use the same operating system (Docker serves either Linux or "
+                "Windows containers, never both at once)"
+            )
 
         for index, network in enumerate(self.networks):
             for other in self.networks[index + 1 :]:
@@ -231,6 +283,9 @@ class LabPreview(BaseModel):
     description: str | None = None
     author: str | None = None
     version: str | None = None
+    # Which Docker engine mode the lab needs ("linux" | "windows"); shown by the pre-start
+    # gate next to what the daemon currently serves (GET /docker/engine).
+    container_os: NodeOS = "linux"
     required_images: list[str]
     estimated_resources: ResourceEstimate
     topology: TopologyPreview
@@ -327,6 +382,9 @@ class PortCheckResult(BaseModel):
     lab_id: str
     has_conflicts: bool
     conflicts: list[PortConflict] = Field(default_factory=list)
+    # True when applying a fix removed the lab's existing containers/networks so the next
+    # start builds them from the new definition (previous session data is gone - D-48).
+    machines_reset: bool = False
 
 
 class DockerNetworkInfo(BaseModel):
@@ -356,6 +414,24 @@ class NetworkCheckResult(BaseModel):
     has_conflicts: bool
     conflicts: list[SubnetConflict] = Field(default_factory=list)
     error: str | None = None  # set when Docker could not be queried; conflicts unknown
+    machines_reset: bool = False  # see PortCheckResult.machines_reset
+
+
+class DockerEngineInfo(BaseModel):
+    """What the active Docker daemon serves, from a read-only `docker info`
+    (windows-desktop-windows-container-readiness). Practicum only reports the engine mode;
+    switching Docker Desktop between Linux and Windows containers is always the user's call."""
+
+    available: bool
+    os_type: NodeOS | None = None  # "linux" | "windows" - the containers the daemon runs
+    server_version: str | None = None
+    operating_system: str | None = None  # e.g. "Docker Desktop" / "Windows 11 Pro ..."
+    kernel_version: str | None = None
+    # Windows build number of the daemon's host when it serves Windows containers (from
+    # KernelVersion "10.0 22631 (...)"); decides which Server Core image tag is compatible.
+    host_build: int | None = None
+    isolation: str | None = None  # Windows: "process" | "hyperv"
+    detail: str = ""  # why it is unavailable, or a one-line summary when it is
 
 
 class PracticumContainerInfo(BaseModel):
@@ -393,4 +469,8 @@ class ApplyPortRecommendationRequest(BaseModel):
     node_id: str
     host_port: PortNumber
     protocol: Literal["tcp", "udp"] = "tcp"
+    # A port of the user's choosing instead of the server's recommendation. It must be free
+    # on the host, not the Practicum API's port and not used by another mapping in the lab;
+    # otherwise the request is refused (409) with the reason.
+    new_host_port: PortNumber | None = None
 

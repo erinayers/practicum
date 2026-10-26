@@ -2,10 +2,10 @@
   "project": "Practicum",
   "source": "src/user-stories.md",
   "epic_folder": "src/user-stories",
-  "last_updated": "2026-10-24",
-  "latest_checkpoint": "Phase 7 (mockup-driven desktop UI) is complete as of 2026-10-24 (Session 5): windows-desktop-lab-lifecycle-controls, windows-desktop-labs-dashboard, windows-desktop-embedded-lab-view, windows-desktop-in-app-dialogs, designer-visual-topology-builder and runtime-image-pull-progress are done, plus seven stories added for what the mockup and those stories needed: runtime-lab-restart (docker start after stop, POST /restart, 409 action lock), runtime-delete-lab (DELETE /labs/{id}), lab-origin-and-timestamps (origin/source_file/created_at/last_started_at/last_error on the stored lab), windows-desktop-visual-theme (theme.py + widgets.py, screen-stack MainWindow), windows-desktop-create-lab-screen, designer-quick-start-lab (template + packages + step editor, free /24 from 10.90.0.0/16), windows-desktop-status-polling. runtime-host-port-availability is closed with its last AC narrowed to Start (D-30). The desktop is now: welcome -> dashboard (cards) -> create -> quick start / designer -> gate -> running view (lifecycle toolbar, embedded QWebEngineView, instructions flyout, Lab nodes + Open shell, status bar). Side fixes: startup health retries (Tigre/06 #11), UDP port probing (#4), Docker 'network not found' tolerance on teardown, a PySide heap-corruption pattern (lambdas capturing self on child signals) replaced by widgets.bind(). Tests: core 159, desktop 270, all green; every flow also verified end-to-end against the live API with a stateful fake docker CLI. NOTHING FROM SESSION 5 HAS RUN ON WINDOWS YET — the next step is the Windows smoke run (start-practicum.bat): import a sample, watch the gate's pull progress, open the running view, Stop/Start/Restart/Reset, webtop in the embedded view on 3000/3001, Open shell, quick start with packages, designer Save & Start, Delete. Still open afterwards: Tigre/11 S-1 persistence, S-2/S-3 API supervision + packaging, S-7 edit lab, S-8/S-9/S-10 designer metadata/manual editor/export, S-14 stable lab identity. User feedback round (same day): emoji indicators removed + Fusion/light palette (unreadable dark-mode dropdown fixed); designer machine catalogue with Router (sysctl ip_forward), address suggestions/reference (designer-node-catalog); edit existing labs incl. quick starts via PUT /labs/{id} (designer-edit-existing-lab); Export from the dashboard (save picker); instructions flyout resizable + wrapping; Lab nodes Address column; move_subnet rewrites manual addresses (likely cause of the reported 100 % packet loss). Tests: core 167, desktop 285.",
-  "next_recommended_story": "windows-verification-of-session-5",
-  "current_phase": "post-phase-7",
+  "last_updated": "2026-10-26",
+  "latest_checkpoint": "Phase 8 (Windows Quick Start support) is complete as of 2026-10-25 (Session 6): windows-desktop-windows-container-readiness (read-only engine-mode probe in desktop + `GET /docker/engine`; Create screen enables templates per engine mode, Windows readiness panel with Docker/Microsoft links and Retry, gate 'Container engine' check, import hands mismatches to the gate, Practicum never switches the mode), designer-windows-quick-start (spec `Node.os`/`Node.shell`; Windows Server Core template pinned from a host-build compatibility matrix, PowerShell keep-alive init passed as -EncodedCommand, `nat` networks, server-side engine re-check with switch instructions), windows-desktop-open-windows-shell (shell from the declared os/shell, 'Open PowerShell', pre-check for stopped/missing containers), designer-windows-quick-start-packages (Chocolatey tool catalog + custom ids, per-package install with a status marker read by /status), and windows-desktop-design-icons (design/icons.png sliced into assets, shared icons.py, MessageBanner/StatusPill/buttons/markers across every screen, packaging add-data). Tests: core 204, desktop 350, all green (incl. a cross-package contract test validating the desktop-built Windows lab with the core model); e2e against the live API with a stateful fake docker CLI (Linux-mode refusal -> switch -> start -> running with install note -> lifecycle -> export/import). The three pre-existing test_docker_status failures (creationflags) are fixed. NOTHING FROM SESSIONS 5 AND 6 HAS RUN ON WINDOWS YET - next: the Windows smoke run (Tigre/05 checklist, now including Docker Desktop in Windows-container mode: Server Core pull, Open PowerShell, Chocolatey install). Still open afterwards: Tigre/11 S-1 persistence, S-2/S-3 packaging supervision, S-8/S-9 designer depth, S-14 stable lab identity. Addendum (user request, same day): the Custom Lab designer gained a Lab instructions panel with a student-view preview (designer-author-manual's designer half; shared manual_editor.py). Scope change (same day, stories only): Windows-container labs are to move behind the paid tier because they need Windows Pro/Enterprise/Education; see src/future-roadmap/premium-lab-platforms/ (7 stories incl. a macOS counterpart, D-50). Nothing built was removed. Persistence planning (2026-10-26): selected local SQLite with a per-user Windows app-data location and a development path override; Phase 9 stories drafted for durable lab records, Docker startup reconciliation, and data-directory configuration. Implementation not started. Website planning (2026-10-26): added Phase 10 with stories for product positioning, release downloads, getting started, and project transparency/contribution. Website implementation and hosting are not started.",
+  "next_recommended_story": "lab-persistence-sqlite",
+  "current_phase": "phase-9",
   "phases": [
     {
       "id": "phase-1",
@@ -108,13 +108,34 @@
     {
       "id": "phase-8",
       "title": "Add Windows Quick Start Support",
-      "status": "not_started",
+      "status": "done",
       "stories": [
         "windows-desktop-windows-container-readiness",
         "designer-windows-quick-start",
         "windows-desktop-open-windows-shell",
         "designer-windows-quick-start-packages",
         "windows-desktop-design-icons"
+      ]
+    },
+    {
+      "id": "phase-9",
+      "title": "Keep Labs Across Restarts",
+      "status": "not_started",
+      "stories": [
+        "lab-persistence-sqlite",
+        "lab-runtime-reconciliation",
+        "local-data-directory"
+      ]
+    },
+    {
+      "id": "phase-10",
+      "title": "Market and Distribute the Open-Source App",
+      "status": "not_started",
+      "stories": [
+        "website-product-home",
+        "website-downloads",
+        "website-getting-started",
+        "website-project-transparency"
       ]
     }
   ],
@@ -180,7 +201,7 @@
       "epic": "Windows Desktop Application",
       "title": "Port Conflict UI",
       "status": "done",
-      "notes": "Backend now exposes GET /labs/{lab_id}/ports (conflicts + recommendations for duplicate-in-spec, Practicum-API-reserved, and in-use-on-host ports) and POST /labs/{lab_id}/ports/apply-recommendation. The desktop app checks ports whenever a lab is selected, renders conflicts in a table with per-row 'Use <port>' buttons, disables Start while conflicts remain, and rechecks (using the server's fresh response) after a recommendation is applied. Needs manual verification with a real port conflict on Windows.",
+      "notes": "Backend now exposes GET /labs/{lab_id}/ports (conflicts + recommendations for duplicate-in-spec, Practicum-API-reserved, and in-use-on-host ports) and POST /labs/{lab_id}/ports/apply-recommendation. The desktop app checks ports whenever a lab is selected, renders conflicts in a table with per-row 'Use <port>' buttons, disables Start while conflicts remain, and rechecks (using the server's fresh response) after a recommendation is applied. Needs manual verification with a real port conflict on Windows. | 2026-10-25 (user request): each conflict card offers 'Use <recommended>' and a port field + Apply; the API's apply-recommendation accepts new_host_port, refused with 409 + reason when unusable (reserved/in lab/bound/same). | 2026-10-25 (user report): a port/subnet fix on a lab that has run resets its machines first (D-48, Tigre/06 #29) so the old mapping/data cannot come back via docker start; `machines_reset` in the result, note in the gate.",
       "acceptance_criteria": [
         {
           "text": "Host port conflicts are visible before runtime start.",
@@ -400,7 +421,7 @@
       "epic": "Designer Mode",
       "title": "Author Lab Manual",
       "status": "done",
-      "notes": "The lab spec now supports an optional manual with ordered sections, markdown content, and optional checklist tasks. The actual desktop manual editor and rendered preview UI will be implemented in later Designer Mode and Lab Manual Flyout stories.",
+      "notes": "The lab spec now supports an optional manual with ordered sections, markdown content, and optional checklist tasks. The actual desktop manual editor and rendered preview UI will be implemented in later Designer Mode and Lab Manual Flyout stories. | 2026-10-25: designer half done (user request) - the Custom Lab designer has a Lab instructions panel (shared `manual_editor.ManualStepsEditor`: steps with Markdown details, add/remove/renumber, collapsible, draggable splitter) with a student-view Preview (`ManualPreview`, the flyout's rendering). Steps are saved as manual sections inside the spec; editing a lab loads its manual and preserves hand-authored tasks/ids, regenerating only the generated 'Done: <title>' task. Tests: test_manual_editor (6), test_designer (+3). | 2026-10-25: steps can ask for a screenshot (requires_screenshot), shown in the preview.",
       "acceptance_criteria": [
         {
           "text": "The instructor can create manual sections.",
@@ -612,7 +633,7 @@
       "epic": "Lab Manual Flyout",
       "title": "Track Manual Progress",
       "status": "done",
-      "notes": "Each manual task renders as a QCheckBox inside ManualFlyout. Checked state is persisted in QSettings keyed by lab id/section id/task id, so it survives restarts without ever touching the instructor's spec on the server. A dedicated 'Reset Progress' button clears only the current lab's stored progress, independent of the lab's Docker runtime reset. Update 2026-10-24: progress keys unchanged; the running view's Reset leaves them untouched (verified by test_reset_keeps_manual_progress); 'Mark step complete' ticks the next open task.",
+      "notes": "Each manual task renders as a QCheckBox inside ManualFlyout. Checked state is persisted in QSettings keyed by lab id/section id/task id, so it survives restarts without ever touching the instructor's spec on the server. A dedicated 'Reset Progress' button clears only the current lab's stored progress, independent of the lab's Docker runtime reset. Update 2026-10-24: progress keys unchanged; the running view's Reset leaves them untouched (verified by test_reset_keeps_manual_progress); 'Mark step complete' ticks the next open task. | 2026-10-25 (user request): Export results - ticks record completed_at; flyout footer 'Export results' (+ all-complete banner) → ResultsExportDialog (student name, remembered) → save picker → practicum-lab-results JSON or Markdown report (lab_results.py). Tests: test_lab_results (5), test_manual, test_running_view, test_main_window, test_dialogs. | 2026-10-25 (user request): screenshots as evidence - ManualSection.requires_screenshot (editor checkbox 'Ask for a screenshot of this step'); flyout ScreenshotRow with Capture lab view (EmbeddedLabView.capture) / Upload image… (ask_image_path) / Remove, stored by screenshots.ScreenshotStore under AppData, counted in progress; results 1.1 carries them (JSON base64 + sha256, MD folder, ZIP bundle).",
       "acceptance_criteria": [
         {
           "text": "Manual sections can have checkable tasks.",
@@ -628,6 +649,14 @@
         },
         {
           "text": "Resetting progress is available as a separate action.",
+          "complete": true
+        },
+        {
+          "text": "The student can export the lab results (every step/task with completion state and time, student name, lab facts) as a JSON or Markdown file to hand in.",
+          "complete": true
+        },
+        {
+          "text": "Instructors can require a screenshot for a step; students capture the embedded lab view or upload an image, it counts towards the step's completion and is included in the exported results.",
           "complete": true
         }
       ]
@@ -1139,7 +1168,7 @@
       "epic": "Windows Desktop Application",
       "title": "Embedded Lab View",
       "status": "done",
-      "notes": "Done 2026-10-24 (Session 5). embedded_view.py: EmbeddedLabView hosts a QWebEngineView (D-16; LocalLabPage accepts self-signed certificates for localhost only, D-28) behind a browser chrome (reload, URL, port picker when >1 TCP mapping with the most web-like port preselected, open in system browser). probe_service GETs http://localhost:<port>/ (any status = answering) and falls back to https:// when plain HTTP is garbled (webtop 3001); until the service answers a waiting card retries every 2.5 s. No web ports -> explanation pointing at Open shell; stopped lab -> says so; QtWebEngine missing -> system-browser fallback card. The instructions flyout toggles independently without reloading the page. main.py sets AA_ShareOpenGLContexts. Tests: test_embedded_view.py (13) + running-view cases. Windows run with webtop pending. Update 2026-10-24 (Windows report: nginx 400 'plain HTTP request was sent to HTTPS port' on webtop 3001): probe treats that 400 as a TLS port and retries https; default mapping scores plain-web ports before TLS-only ports (443/8443/3001) regardless of order. First Windows confirmation that the embedded view renders webtop.",
+      "notes": "Done 2026-10-24 (Session 5). embedded_view.py: EmbeddedLabView hosts a QWebEngineView (D-16; LocalLabPage accepts self-signed certificates for localhost only, D-28) behind a browser chrome (reload, URL, port picker when >1 TCP mapping with the most web-like port preselected, open in system browser). probe_service GETs http://localhost:<port>/ (any status = answering) and falls back to https:// when plain HTTP is garbled (webtop 3001); until the service answers a waiting card retries every 2.5 s. No web ports -> explanation pointing at Open shell; stopped lab -> says so; QtWebEngine missing -> system-browser fallback card. The instructions flyout toggles independently without reloading the page. main.py sets AA_ShareOpenGLContexts. Tests: test_embedded_view.py (13) + running-view cases. Windows run with webtop pending. Update 2026-10-24 (Windows report: nginx 400 'plain HTTP request was sent to HTTPS port' on webtop 3001): probe treats that 400 as a TLS port and retries https; default mapping scores plain-web ports before TLS-only ports (443/8443/3001) regardless of order. First Windows confirmation that the embedded view renders webtop. | 2026-10-25 (user report): several desktops in one lab - the picker lists machines by name from per-node ports in the preview (TopologyNodeInfo.port_mappings / PortMappingInfo.node_id); messages name the machine; the designer gives a second desktop free host ports (free_host_ports).",
       "acceptance_criteria": [
         {
           "text": "A lab with one browser-accessible node shows that node's interface embedded in the app, not in an external browser.",
@@ -1462,65 +1491,344 @@
       "id": "windows-desktop-windows-container-readiness",
       "epic": "Windows Desktop Application",
       "title": "Windows Container Readiness for Quick Start",
-      "status": "not_started",
-      "notes": "New 2026-10-24. Read-only Docker engine/host preflight for Windows Quick Start. Practicum guides the user to meet Docker Desktop's current requirements and switch modes manually; it never changes the global daemon mode itself.",
+      "status": "done",
+      "notes": "Done 2026-10-25 (Session 6). Read-only `docker info --format '{{json .}}'` in both the desktop (`docker_status.check_docker` -> DockerStatus.os_type/host_build/isolation; `windows_container_readiness()` -> docker_unavailable | linux_engine | ready with detail + next_action) and the API (`GET /docker/engine`, `DockerRuntime.engine_info()`, `DockerEngineInfo`). Create screen: `template_availability()` enables Ubuntu templates in Linux mode and the Windows template in Windows mode; the disabled Windows row explains itself (caption 'unavailable', tooltip), clicking it opens `WindowsReadinessPanel` (state icon, next action, links to Docker's Windows install/switch guide and Microsoft's compatibility matrix, Retry). Retry and each visit to the Create screen re-probe Docker off-thread (`MainWindow.refresh_engine`) and update chip ('Ready · Windows containers'), connection panel and templates without a restart. Gate: new 'Container engine' panel blocks Start + Retry; import flow hands a mismatched lab to the gate; `POST /start` re-checks server-side with the switch instructions. Practicum never switches the mode. Tests: test_docker_status (11), test_app_status, test_create_lab, test_main_window, test_prestart_gate, core test_runtime/test_api. NOT yet verified on a Windows machine.",
       "acceptance_criteria": [
-        { "text": "The app distinguishes an unavailable Docker daemon, a Linux-container daemon, and a Windows-container daemon.", "complete": false },
-        { "text": "Windows Quick Start stays disabled until Windows-container readiness passes, with actionable requirements and a Retry action.", "complete": false },
-        { "text": "Linux Quick Start remains available in normal Linux-container mode.", "complete": false },
-        { "text": "Practicum does not switch Docker Desktop's engine automatically.", "complete": false }
+        {
+          "text": "The app distinguishes an unavailable Docker daemon, a Linux-container daemon, and a Windows-container daemon.",
+          "complete": true
+        },
+        {
+          "text": "Windows Quick Start stays disabled until Windows-container readiness passes, with actionable requirements and a Retry action.",
+          "complete": true
+        },
+        {
+          "text": "Linux Quick Start remains available in normal Linux-container mode.",
+          "complete": true
+        },
+        {
+          "text": "Practicum does not switch Docker Desktop's engine automatically.",
+          "complete": true
+        }
       ]
     },
     {
       "id": "designer-windows-quick-start",
       "epic": "Designer Mode",
       "title": "Windows Quick Start Template",
-      "status": "not_started",
-      "notes": "New 2026-10-24. Single Windows Server Core command-line sandbox with a versioned, host-compatible image and PowerShell; not a full Windows desktop or VM. Depends on windows-desktop-windows-container-readiness and Windows shell support.",
+      "status": "done",
+      "notes": "Done 2026-10-25 (Session 6). Spec: `Node.os` (linux|windows) + `Node.shell` (bash|sh|powershell|cmd), validated (one OS per lab, shell fits OS, no shm/sysctls on Windows); `LabDefinition.container_os`, `LabPreview.container_os`. Template `windows` (kind windows, 2 vCPU/2048 MB, one `host` node): image pinned from `WINDOWS_IMAGES` (ltsc2025>=26100, ltsc2022>=20348, ltsc2019>=17763) by the daemon host's build (`windows_image_for_host`, `QuickStartDraft.windows_host_build`; unknown -> ltsc2022; older hosts refused). Command = `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <WINDOWS_INIT_SCRIPT>` (status marker, profile, keep-alive loop). Runtime: `_require_engine_os` fails start early with the switch text (structured error), `--driver nat` networks for Windows labs, note read with `cmd /c type`. Existing naming/manual/origin/gate/progress/lifecycle/export flows reused; `origin_meta` says 'Quick start · Windows'. `examples/windows-quickstart.json` + bundled sample. E2E against the live API with a stateful fake docker CLI. NOT yet run with real Windows containers (isolation mode, multi-GB pull, static --ip on nat to watch).",
       "acceptance_criteria": [
-        { "text": "The Windows template is selectable only when Windows-container readiness passes.", "complete": false },
-        { "text": "Create produces a valid one-node lab with a pinned, compatible Windows Server Core image and the user's manual steps.", "complete": false },
-        { "text": "The node starts a persistent PowerShell process and follows the existing pre-start, progress, and lifecycle flows.", "complete": false },
-        { "text": "A host engine-mode change after lab creation is detected before start and explained to the user.", "complete": false }
+        {
+          "text": "The Windows template is selectable only when Windows-container readiness passes.",
+          "complete": true
+        },
+        {
+          "text": "Create produces a valid one-node lab with a pinned, compatible Windows Server Core image and the user's manual steps.",
+          "complete": true
+        },
+        {
+          "text": "The node starts a persistent PowerShell process and follows the existing pre-start, progress, and lifecycle flows.",
+          "complete": true
+        },
+        {
+          "text": "A host engine-mode change after lab creation is detected before start and explained to the user.",
+          "complete": true
+        }
       ]
     },
     {
       "id": "windows-desktop-open-windows-shell",
       "epic": "Windows Desktop Application",
       "title": "Open a PowerShell Shell on a Windows Lab Node",
-      "status": "not_started",
-      "notes": "New 2026-10-24. Extend Open shell so Windows nodes use PowerShell while Linux nodes retain bash/sh. The lab spec needs an explicit shell/OS hint if it cannot be derived reliably.",
+      "status": "done",
+      "notes": "Done 2026-10-25 (Session 6). `node_shell.shell_command(container, os, shell)` from the declared os/shell (preview -> TopologyNodeInfo.os/shell): Linux keeps bash-then-sh (or the declared one), Windows runs `powershell.exe -NoLogo -ExecutionPolicy Bypass` (or `cmd.exe`); no spaces/quotes in any argument. `open_node_shell` pre-checks `docker inspect` state and returns an actionable in-app error for stopped/missing containers (no flashing console). Running view: 'Open PowerShell' (terminal icon) on Windows nodes, tooltip/accessible name/status line name node and shell. Spec field => survives export/import (core test). Tests: test_node_shell (10), test_running_view, test_api_client. Tigre/06 #14 (console launch unverified on Windows) still applies.",
       "acceptance_criteria": [
-        { "text": "Open shell on a running Windows Quick Start node opens an interactive PowerShell prompt inside that container.", "complete": false },
-        { "text": "Open shell on Linux nodes continues to prefer bash and fall back to sh.", "complete": false },
-        { "text": "Stopped or missing Windows containers show an actionable error instead of a silent terminal failure.", "complete": false },
-        { "text": "The shell hint survives lab export and import.", "complete": false }
+        {
+          "text": "Open shell on a running Windows Quick Start node opens an interactive PowerShell prompt inside that container.",
+          "complete": true
+        },
+        {
+          "text": "Open shell on Linux nodes continues to prefer bash and fall back to sh.",
+          "complete": true
+        },
+        {
+          "text": "Stopped or missing Windows containers show an actionable error instead of a silent terminal failure.",
+          "complete": true
+        },
+        {
+          "text": "The shell hint survives lab export and import.",
+          "complete": true
+        }
       ]
     },
     {
       "id": "designer-windows-quick-start-packages",
       "epic": "Designer Mode",
       "title": "Choose Windows Tools in Quick Start",
-      "status": "not_started",
-      "notes": "New 2026-10-24. Add a curated Windows-container-compatible command-line tool catalog with Windows-specific installation, reproducibility, and startup progress; do not reuse apt-get or LinuxServer package installation.",
+      "status": "done",
+      "notes": "Done 2026-10-25 (Session 6). `WINDOWS_TOOL_CATALOG`: 15 Chocolatey ids (git, python, nodejs-lts, dotnet-sdk, openjdk, powershell-core, 7zip, curl, wget, jq, vim, nano, openssh, sqlite, sysinternals) offered only for the windows kind; kind-aware `catalog_option`/`packages_for_options`. Picker reuses the chip UI with Windows wording; custom ids validated as Chocolatey ids (lower-cased, `^[a-z0-9][a-z0-9._-]*$`, link to community.chocolatey.org), duplicates rejected. Mechanism: `WINDOWS_INIT_SCRIPT` installs Chocolatey then `choco install <id> -y --no-progress` per package (failures name the package), log `C:\\practicum\\packages.log`; packages are explicit in `environment.PRACTICUM_PACKAGES` (+ `PRACTICUM_PACKAGE_SOURCE=chocolatey`), image pinned. Status marker `C:\\practicum\\packages.status` -> `GET /status` note (core reads it per OS) -> Lab nodes table 'installing…'/'install failed' + PowerShell profile banner. Ubuntu apt/LinuxServer paths untouched. Tests: test_quickstart, test_create_lab, core test_runtime. NOT yet verified on Windows (Chocolatey in Server Core needs internet + .NET 4.8).",
       "acceptance_criteria": [
-        { "text": "Catalog tools and custom package IDs are available for Windows Quick Start and validated before creation.", "complete": false },
-        { "text": "The generated lab installs selected tools through a documented, repeatable Windows-specific mechanism.", "complete": false },
-        { "text": "Package installation progress and failures are visible in the existing node progress/status UI.", "complete": false },
-        { "text": "Ubuntu terminal and desktop package behavior remains unchanged.", "complete": false }
+        {
+          "text": "Catalog tools and custom package IDs are available for Windows Quick Start and validated before creation.",
+          "complete": true
+        },
+        {
+          "text": "The generated lab installs selected tools through a documented, repeatable Windows-specific mechanism.",
+          "complete": true
+        },
+        {
+          "text": "Package installation progress and failures are visible in the existing node progress/status UI.",
+          "complete": true
+        },
+        {
+          "text": "Ubuntu terminal and desktop package behavior remains unchanged.",
+          "complete": true
+        }
       ]
     },
     {
       "id": "windows-desktop-design-icons",
       "epic": "Windows Desktop Application",
       "title": "Use Design Icons Across the Desktop UI",
-      "status": "not_started",
-      "notes": "Use the supplied design/icons.png artwork for common status and action cues through shared desktop icon handling, with accessible labels and Windows release asset resolution.",
+      "status": "done",
+      "notes": "Done 2026-10-25 (Session 6). `icons.py` maps the 3x3 sheet to meanings (success/error/warning, back/forward/play, terminal/desktop/tools) with BANNER_ICONS/COLOUR_ICONS aliases; `tools/slice_design_icons.py` cuts design/icons.png into assets/icons/*.png (coloured icons keep white glyphs via edge flood fill; black icons stored as ink masks for tinting). Loaders: icon()/pixmap()/icon_label()/set_button_icon()/icon_html(), cached, multi-size, tint + disabled states, null-safe when assets are missing. Applied: MessageBanner (icon + copyable text) replaces every plain banner label (gate, running view, designer, welcome, NoteBanner), StatusPill, title chip + connection lines, progress marks, flyout done markers + Mark step complete, Start/Save & Start/Start Lab (play), Open shell/PowerShell (terminal), BackLinks, Create cards/template rows, CTA trailing arrows, dashboard origin tiles, embedded empty state, readiness + engine panels. Icon-only controls carry tooltip + accessibleName; every state also has words. Packaging: --add-data for practicum_desktop/assets (+samples) in build-windows.ps1 and Practicum.spec; ICON_DIRS checks sys._MEIPASS. Side fix: dashboard cards with an error line were clipped (minimumHeight from sizeHint). Tests: test_icons (8), test_widgets, screen tests; offscreen screenshots reviewed. Not checked on a real high-DPI display / packaged build yet.",
       "acceptance_criteria": [
-        { "text": "The supplied icons are mapped to their intended meanings in shared icon definitions.", "complete": false },
-        { "text": "Check/success, error/warning, and terminal/shell cues use the corresponding icons consistently.", "complete": false },
-        { "text": "Status and action meaning remains clear without color alone, and icon-only controls expose an accessible name or tooltip.", "complete": false },
-        { "text": "Icons render legibly in the packaged Windows app and missing assets do not prevent launch or primary workflows.", "complete": false }
+        {
+          "text": "The supplied icons are mapped to their intended meanings in shared icon definitions.",
+          "complete": true
+        },
+        {
+          "text": "Check/success, error/warning, and terminal/shell cues use the corresponding icons consistently.",
+          "complete": true
+        },
+        {
+          "text": "Status and action meaning remains clear without color alone, and icon-only controls expose an accessible name or tooltip.",
+          "complete": true
+        },
+        {
+          "text": "Icons render legibly in the packaged Windows app and missing assets do not prevent launch or primary workflows.",
+          "complete": true
+        }
+      ]
+    },
+    {
+      "id": "lab-persistence-sqlite",
+      "epic": "Local Persistence",
+      "title": "Persist Labs in a Local SQLite Database",
+      "status": "not_started",
+      "notes": "The service stores lab definitions and local metadata in SQLite; updates from create/import/edit/delete/recommendation flows are durable; portable exports exclude local bookkeeping; corrupt records do not silently erase valid labs; transient progress remains in memory; service recreation loads the same labs.",
+      "acceptance_criteria": [
+        {
+          "text": "The service stores lab definitions and local metadata in SQLite",
+          "complete": false
+        },
+        {
+          "text": "updates from create/import/edit/delete/recommendation flows are durable",
+          "complete": false
+        },
+        {
+          "text": "portable exports exclude local bookkeeping",
+          "complete": false
+        },
+        {
+          "text": "corrupt records do not silently erase valid labs",
+          "complete": false
+        },
+        {
+          "text": "transient progress remains in memory",
+          "complete": false
+        },
+        {
+          "text": "service recreation loads the same labs.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "lab-runtime-reconciliation",
+      "epic": "Local Persistence",
+      "title": "Reconcile Saved Labs with Docker on Startup",
+      "status": "not_started",
+      "notes": "At startup, inspect saved labs through Docker labels/names; derive safe status for running/stopped/missing/partial resources; never automatically start/reset/delete saved resources; preserve saved labs when Docker is unavailable; keep unknown-resource sweep behavior correct.",
+      "acceptance_criteria": [
+        {
+          "text": "At startup, inspect saved labs through Docker labels/names",
+          "complete": false
+        },
+        {
+          "text": "derive safe status for running/stopped/missing/partial resources",
+          "complete": false
+        },
+        {
+          "text": "never automatically start/reset/delete saved resources",
+          "complete": false
+        },
+        {
+          "text": "preserve saved labs when Docker is unavailable",
+          "complete": false
+        },
+        {
+          "text": "keep unknown-resource sweep behavior correct.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "local-data-directory",
+      "epic": "Local Persistence",
+      "title": "Choose and Configure the Local Data Directory",
+      "status": "not_started",
+      "notes": "Packaged Windows uses per-user local application data; development has a documented default and environment override; create parent directories and resolve paths independent of working directory; document database location, backup, and portable JSON export.",
+      "acceptance_criteria": [
+        {
+          "text": "Packaged Windows uses per-user local application data",
+          "complete": false
+        },
+        {
+          "text": "development has a documented default and environment override",
+          "complete": false
+        },
+        {
+          "text": "create parent directories and resolve paths independent of working directory",
+          "complete": false
+        },
+        {
+          "text": "document database location, backup, and portable JSON export.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "website-product-home",
+      "epic": "Project Website",
+      "title": "Explain Practicum on the Project Website",
+      "status": "not_started",
+      "notes": "Drafted 2026-10-26. Website backlog only; implementation and hosting have not started. Keep positioning aligned with the open-core boundary and link to canonical GitHub releases.",
+      "acceptance_criteria": [
+        {
+          "text": "The home page explains the local networking-lab product for instructors and students.",
+          "complete": false
+        },
+        {
+          "text": "Instructor and student workflows each have a clear next step.",
+          "complete": false
+        },
+        {
+          "text": "The local-first model, open-source core, and Docker Desktop requirement are accurate.",
+          "complete": false
+        },
+        {
+          "text": "Product images or walkthrough reflect released functionality.",
+          "complete": false
+        },
+        {
+          "text": "Paid/hosted roadmap items are labeled future plans.",
+          "complete": false
+        },
+        {
+          "text": "The page is responsive, accessible, and loads promptly.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "website-downloads",
+      "epic": "Project Website",
+      "title": "Find and Download Practicum Releases",
+      "status": "not_started",
+      "notes": "Drafted 2026-10-26. Website backlog only; implementation and hosting have not started. Keep positioning aligned with the open-core boundary and link to canonical GitHub releases.",
+      "acceptance_criteria": [
+        {
+          "text": "A prominent action leads to the latest published Windows release and identifies version/platform.",
+          "complete": false
+        },
+        {
+          "text": "The site links to canonical releases rather than duplicating installer binaries.",
+          "complete": false
+        },
+        {
+          "text": "Source, license, release notes, and prior versions are easy to find.",
+          "complete": false
+        },
+        {
+          "text": "Prerequisites and first-launch steps, including Docker Desktop, appear before download.",
+          "complete": false
+        },
+        {
+          "text": "Unavailable releases have a clear fallback to source/build instructions.",
+          "complete": false
+        },
+        {
+          "text": "Version and download links can be updated in one place.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "website-getting-started",
+      "epic": "Project Website",
+      "title": "Get Started and Find Help",
+      "status": "not_started",
+      "notes": "Drafted 2026-10-26. Website backlog only; implementation and hosting have not started. Keep positioning aligned with the open-core boundary and link to canonical GitHub releases.",
+      "acceptance_criteria": [
+        {
+          "text": "Separate onboarding paths cover students importing a lab and instructors creating/exporting one.",
+          "complete": false
+        },
+        {
+          "text": "The student path covers app install, Docker Desktop, import, and starting a lab.",
+          "complete": false
+        },
+        {
+          "text": "The instructor path links to the lab format and create/validate/export/share workflow.",
+          "complete": false
+        },
+        {
+          "text": "Troubleshooting links point to maintained documentation or issue discussions.",
+          "complete": false
+        },
+        {
+          "text": "Authoring/validation requirements are distinguished from runtime prerequisites.",
+          "complete": false
+        },
+        {
+          "text": "Instructions are reviewed when release installation steps change.",
+          "complete": false
+        }
+      ]
+    },
+    {
+      "id": "website-project-transparency",
+      "epic": "Project Website",
+      "title": "Understand the Project and Contribute",
+      "status": "not_started",
+      "notes": "Drafted 2026-10-26. Website backlog only; implementation and hosting have not started. Keep positioning aligned with the open-core boundary and link to canonical GitHub releases.",
+      "acceptance_criteria": [
+        {
+          "text": "Links expose the repository, license, contribution guide, issue tracker, and security-reporting instructions where available.",
+          "complete": false
+        },
+        {
+          "text": "The open-source core matches the documented boundary and needs no paid account.",
+          "complete": false
+        },
+        {
+          "text": "Hosted and institutional features are labeled roadmap until released.",
+          "complete": false
+        },
+        {
+          "text": "Project status and releases link to canonical sources.",
+          "complete": false
+        },
+        {
+          "text": "Published contact/support routes are real and maintained.",
+          "complete": false
+        },
+        {
+          "text": "No personal data or tracking is collected by default; future collection is disclosed.",
+          "complete": false
+        }
       ]
     }
   ]

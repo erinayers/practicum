@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QLabel
 
 from practicum_desktop import dialogs
 from practicum_desktop.dialogs import DESTRUCTIVE_BUTTON_STYLE, ConfirmDialog, confirm
@@ -75,3 +75,24 @@ def test_confirm_returns_false_when_user_cancels(monkeypatch) -> None:
     monkeypatch.setattr(dialogs, "ConfirmDialog", FakeDialog)
 
     assert confirm(None, title="t", message="m") is False
+
+
+def test_results_export_dialog_collects_the_student_name() -> None:
+    from practicum_desktop.dialogs import ResultsExportDialog
+
+    dialog = ResultsExportDialog(None, "Static Routing", 3, 3, student_name="Ada")
+
+    assert dialog.windowTitle() == "Export lab results"
+    assert dialog.name_field.text() == "Ada"
+    assert dialog.name_field.accessibleName() == "Your name"
+    labels = [w.text() for w in dialog.findChildren(QLabel)]
+    assert any("3 of 3 tasks complete" in t and "all steps done" in t for t in labels)
+    assert any("JSON" in t and "Markdown" in t for t in labels)
+
+    dialog.name_field.setText("  Ada Lovelace ")
+    assert dialog.student_name == "Ada Lovelace"
+    assert dialog.export_button.text() == "Choose file\u2026"
+
+    partial = ResultsExportDialog(None, "Static Routing", 1, 3)
+    texts = [w.text() for w in partial.findChildren(QLabel)]
+    assert any("1 of 3 tasks complete." in t for t in texts)

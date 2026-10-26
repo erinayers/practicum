@@ -4,6 +4,7 @@ from practicum import ports
 from practicum.main import app, service
 from practicum.models import (
     LAB_RUNTIME_FIELDS,
+    DockerEngineInfo,
     DockerNetworkInfo,
     Lab,
     NodeStartProgress,
@@ -22,6 +23,12 @@ class RecordingRuntime:
         self.networks: list[DockerNetworkInfo] = []
         self.removed_containers: list[str] = []
         self.removed_networks: list[str] = []
+        self.engine = DockerEngineInfo(
+            available=True, os_type="linux", server_version="27.3.1", detail="Linux containers"
+        )
+
+    def engine_info(self) -> DockerEngineInfo:
+        return self.engine
 
     def list_practicum_containers(self) -> list[PracticumContainerInfo]:
         return list(self.containers)
@@ -69,6 +76,9 @@ class RecordingRuntime:
 
 
 class FailingRuntime:
+    def engine_info(self) -> DockerEngineInfo:
+        raise RuntimeFailure("Docker is unavailable", ["docker", "info"])
+
     def start(self, lab: Lab, on_progress=None) -> None:
         raise RuntimeFailure("Docker is unavailable", ["docker", "ps"])
 
@@ -780,6 +790,98 @@ def test_apply_port_recommendation_without_conflict_returns_409(
     assert response.status_code == 409
 
 
+def test_apply_a_chosen_port_instead_of_the_recommendation(
+    monkeypatch, client: TestClient, lab_definition: dict
+) -> None:
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
+    created = client.post("/labs", json=lab_definition).json()
+
+    response = client.post(
+        f"/labs/{created['id']}/ports/apply-recommendation",
+        json={"node_id": "router", "host_port": 2222, "protocol": "tcp", "new_host_port": 9022},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["has_conflicts"] is False
+    nodes = client.get(f"/labs/{created['id']}").json()["nodes"]
+    router = next(n for n in nodes if n["id"] == "router")
+    mappings = router["resources"]["port_mappings"]
+    assert {"host": 9022, "container": 22, "protocol": "tcp"} in mappings
+    assert 2222 not in [m["host"] for m in router["resources"]["port_mappings"]]
+
+
+def test_a_chosen_port_is_refused_with_the_reason(
+    monkeypatch, client: TestClient, lab_definition: dict
+) -> None:
+    monkeypatch.setattr(
+        ports, "is_local_port_free", lambda port, protocol="tcp": port not in (2222, 5000)
+    )
+    created = client.post("/labs", json=lab_definition).json()
+    url = f"/labs/{created['id']}/ports/apply-recommendation"
+    base = {"node_id": "router", "host_port": 2222, "protocol": "tcp"}
+
+    taken_on_host = client.post(url, json={**base, "new_host_port": 5000})
+    assert taken_on_host.status_code == 409
+    assert "5000/tcp is already in use on this machine" in taken_on_host.json()["detail"]
+
+    api_port = client.post(url, json={**base, "new_host_port": 8000})
+    assert api_port.status_code == 409
+    assert "reserved by the Practicum API" in api_port.json()["detail"]
+
+    in_lab = client.post(url, json={**base, "new_host_port": 22})  # router's own exposed 22
+    assert in_lab.status_code == 409
+    assert "already used by node 'router' in this lab" in in_lab.json()["detail"]
+
+    same = client.post(url, json={**base, "new_host_port": 2222})
+    assert same.status_code == 409
+
+    out_of_range = client.post(url, json={**base, "new_host_port": 70000})
+    assert out_of_range.status_code == 422
+
+    # nothing changed: the conflict is still there, on the original port
+    check = client.get(f"/labs/{created['id']}/ports").json()
+    assert [c["host_port"] for c in check["conflicts"]] == [2222]
+
+
+def test_port_fix_on_a_stopped_lab_recreates_its_machines(
+    monkeypatch, client: TestClient, lab_definition: dict
+) -> None:
+    """A stopped lab keeps its containers for `docker start`; moving a port must not bring
+    them back with the old mapping and the old session data (D-48)."""
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
+    runtime = RecordingRuntime()
+    service.runtime = runtime
+    created = client.post("/labs", json=lab_definition).json()
+    lab_id = created["id"]
+    # The lab must start for this test: make the start-time port re-check pass.
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": True)
+    assert client.post(f"/labs/{lab_id}/start").json()["lab"]["status"] == "running"
+    assert client.post(f"/labs/{lab_id}/stop").json()["lab"]["status"] == "stopped"
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 2222)
+
+    response = client.post(
+        f"/labs/{lab_id}/ports/apply-recommendation",
+        json={"node_id": "router", "host_port": 2222, "protocol": "tcp", "new_host_port": 9022},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["machines_reset"] is True
+    assert [lab.id for lab in runtime.reset_labs] == [lab_id]
+    lab = client.get(f"/labs/{lab_id}").json()
+    assert lab["status"] == "defined"
+    router = next(n for n in lab["nodes"] if n["id"] == "router")
+    assert 9022 in [m["host"] for m in router["resources"]["port_mappings"]]
+
+    # A never-started lab is rewritten without any Docker work.
+    other = client.post("/labs", json=lab_definition).json()
+    again = client.post(
+        f"/labs/{other['id']}/ports/apply-recommendation",
+        json={"node_id": "router", "host_port": 2222, "protocol": "tcp"},
+    )
+    assert again.json()["machines_reset"] is False
+    assert len(runtime.reset_labs) == 1
+
+
 # ----- lifecycle enablers: restart, delete, action lock, origin, progress -------------------
 
 
@@ -1136,3 +1238,206 @@ def test_put_on_a_stopped_lab_resets_its_resources_first(
 
 def test_put_missing_lab_returns_404(client: TestClient, lab_definition: dict) -> None:
     assert client.put("/labs/not-a-real-id", json=lab_definition).status_code == 404
+
+
+# ----- docker engine mode (windows quick start, phase 8) --------------------------------------
+
+
+def test_docker_engine_reports_what_the_daemon_serves(client: TestClient) -> None:
+    runtime = RecordingRuntime()
+    runtime.engine = DockerEngineInfo(
+        available=True,
+        os_type="windows",
+        server_version="27.3.1",
+        operating_system="Windows 11 Pro",
+        host_build=22631,
+        isolation="hyperv",
+        detail="Docker 27.3.1 is serving Windows containers.",
+    )
+    service.runtime = runtime
+
+    response = client.get("/docker/engine")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["os_type"] == "windows"
+    assert body["host_build"] == 22631
+    assert body["isolation"] == "hyperv"
+
+
+def test_docker_engine_reports_an_unreachable_daemon_without_failing(client: TestClient) -> None:
+    service.runtime = FailingRuntime()
+
+    response = client.get("/docker/engine")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "available": False,
+        "os_type": None,
+        "server_version": None,
+        "operating_system": None,
+        "kernel_version": None,
+        "host_build": None,
+        "isolation": None,
+        "detail": "Docker is unavailable",
+    }
+
+
+def _windows_definition() -> dict:
+    return {
+        "name": "Windows Quick Start",
+        "nodes": [
+            {
+                "id": "host",
+                "image": "mcr.microsoft.com/windows/servercore:ltsc2022",
+                "os": "windows",
+                "shell": "powershell",
+                "command": ["powershell", "-NoLogo", "-Command", "Start-Sleep 3600"],
+                "resources": {"cpu": 2, "memory_mb": 2048},
+            }
+        ],
+        "networks": [{"id": "lab-net", "subnet": "10.90.0.0/24"}],
+        "interfaces": [{"node": "host", "network": "lab-net", "address": "10.90.0.10/24"}],
+    }
+
+
+def test_windows_lab_os_and_shell_survive_export_and_import(client: TestClient) -> None:
+    created = client.post("/labs", json=_windows_definition(), params={"origin": "quick_start"})
+    assert created.status_code == 201
+    lab_id = created.json()["id"]
+
+    exported = client.get(f"/labs/{lab_id}/export").json()
+    assert exported["nodes"][0]["os"] == "windows"
+    assert exported["nodes"][0]["shell"] == "powershell"
+
+    imported = client.post("/labs/import", json=exported).json()
+    assert imported["imported"] is True
+    assert imported["lab"]["nodes"][0]["os"] == "windows"
+    assert imported["lab"]["nodes"][0]["shell"] == "powershell"
+
+    preview = client.get(f"/labs/{lab_id}/preview").json()
+    assert preview["container_os"] == "windows"
+    assert preview["topology"]["nodes"][0]["shell"] == "powershell"
+
+
+def test_preview_of_a_linux_lab_says_linux(client: TestClient, lab_definition: dict) -> None:
+    created = client.post("/labs", json=lab_definition).json()
+
+    preview = client.get(f"/labs/{created['id']}/preview").json()
+
+    assert preview["container_os"] == "linux"
+    assert preview["topology"]["nodes"][0]["os"] == "linux"
+    assert preview["topology"]["nodes"][0]["shell"] is None
+
+
+def test_validate_rejects_mixed_operating_systems(client: TestClient, lab_definition: dict) -> None:
+    lab_definition["nodes"][0]["os"] = "windows"
+
+    response = client.post("/labs/validate", json=lab_definition)
+
+    body = response.json()
+    assert body["valid"] is False
+    assert any("same operating system" in error["message"] for error in body["errors"])
+
+
+def test_start_failure_from_engine_mode_is_a_structured_runtime_error(
+    client: TestClient,
+) -> None:
+    class WrongModeRuntime(RecordingRuntime):
+        def start(self, lab: Lab, on_progress=None) -> None:
+            raise RuntimeFailure(
+                "This lab needs Windows containers, but Docker Desktop is currently serving "
+                "Linux containers.",
+                ["docker", "info"],
+            )
+
+    service.runtime = WrongModeRuntime()
+    created = client.post("/labs", json=_windows_definition()).json()
+
+    response = client.post(f"/labs/{created['id']}/start")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["lab"]["status"] == "error"
+    assert "needs Windows containers" in body["lab"]["last_error"]
+    assert body["errors"][0]["command"] == ["docker", "info"]
+
+
+def test_windows_quick_start_follows_the_existing_lifecycle_flows(client: TestClient) -> None:
+    """designer-windows-quick-start: pre-start checks, async start with per-node progress,
+    status, stop, restart, reset, export and delete are the same endpoints as for any lab."""
+    runtime = RecordingRuntime()
+    runtime.engine = DockerEngineInfo(
+        available=True, os_type="windows", server_version="27.3.1", host_build=22631
+    )
+    service.runtime = runtime
+    created = client.post(
+        "/labs", json=_windows_definition(), params={"origin": "quick_start"}
+    ).json()
+    lab_id = created["id"]
+    assert created["origin"] == "quick_start"
+    assert created["nodes"][0]["os"] == "windows"
+
+    # pre-start gate data: preview says windows, engine says windows, no conflicts
+    assert client.get(f"/labs/{lab_id}/preview").json()["container_os"] == "windows"
+    assert client.get("/docker/engine").json()["os_type"] == "windows"
+    assert client.get(f"/labs/{lab_id}/ports").json()["has_conflicts"] is False
+
+    # async start + progress, as the gate drives it
+    response = client.post(f"/labs/{lab_id}/start", params={"wait": "false"})
+    assert response.status_code == 202 and response.json()["pending"] is True
+    thread = service._background_starts.get(lab_id)
+    if thread is not None:
+        thread.join(timeout=5)
+    status = client.get(f"/labs/{lab_id}/status").json()
+    assert status["lab"]["status"] == "running"
+    assert [(p["node_id"], p["step"]) for p in status["progress"]] == [("host", "ready")]
+    assert status["progress"][0]["image"] == "mcr.microsoft.com/windows/servercore:ltsc2022"
+    started = runtime.started_labs[-1]
+    assert started.nodes[0].command[0] == "powershell"  # the persistent PowerShell process
+
+    assert client.post(f"/labs/{lab_id}/stop").json()["lab"]["status"] == "stopped"
+    assert client.post(f"/labs/{lab_id}/restart").json()["lab"]["status"] == "running"
+    assert client.post(f"/labs/{lab_id}/reset").json()["lab"]["status"] == "defined"
+    exported = client.get(f"/labs/{lab_id}/export").json()
+    assert exported["nodes"][0]["os"] == "windows" and "id" not in exported
+    assert client.delete(f"/labs/{lab_id}").status_code == 204
+    assert client.get("/labs").json() == []
+    # stop once; restart of a stopped lab only starts; reset + delete both reset
+    assert len(runtime.stopped_labs) == 1
+    assert len(runtime.started_labs) == 2
+    assert len(runtime.reset_labs) == 2
+
+
+def test_engine_mode_change_after_creation_blocks_the_start(client: TestClient) -> None:
+    """A Windows lab created while Docker served Windows containers; the engine is switched back
+    before Start: the API reports the mismatch (what the gate shows) and Start fails with the
+    same explanation instead of a raw Docker error."""
+    runtime = RecordingRuntime()
+    runtime.engine = DockerEngineInfo(available=True, os_type="windows", server_version="27.3.1")
+    service.runtime = runtime
+    lab_id = client.post("/labs", json=_windows_definition()).json()["id"]
+
+    runtime.engine = DockerEngineInfo(available=True, os_type="linux", server_version="27.3.1")
+    engine = client.get("/docker/engine").json()
+    preview = client.get(f"/labs/{lab_id}/preview").json()
+    assert engine["os_type"] == "linux" and preview["container_os"] == "windows"  # gate: mismatch
+
+    class RealCheckRuntime(RecordingRuntime):
+        def start(self, lab: Lab, on_progress=None) -> None:
+            from practicum.runtime import DockerRuntime
+
+            DockerRuntime._require_engine_os(self, lab)  # the real check, fake engine answer
+            super().start(lab, on_progress)
+
+    checked = RealCheckRuntime()
+    checked.engine = runtime.engine
+    service.runtime = checked
+    result = client.post(f"/labs/{lab_id}/start").json()
+    assert result["success"] is False
+    assert result["lab"]["status"] == "error"
+    assert "needs Windows containers" in result["lab"]["last_error"]
+    assert "Switch to Windows containers" in result["lab"]["last_error"]
+    assert checked.started_labs == []  # nothing was started

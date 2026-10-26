@@ -17,6 +17,7 @@ containers change outside Practicum.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 from practicum_desktop.api_client import (
     ApiClient,
     LabSummary,
@@ -41,23 +42,26 @@ from practicum_desktop.api_client import (
     ResourceStatusInfo,
     StartResult,
     StatusResult,
+    TopologyNodeInfo,
 )
 from practicum_desktop.dialogs import confirm
 from practicum_desktop.embedded_view import EmbeddedLabView, default_web_view_factory
+from practicum_desktop.lab_results import LabFacts, build_results
 from practicum_desktop.labels import origin_meta, plural
 from practicum_desktop.manual import ManualFlyout
-from practicum_desktop.node_shell import ShellLaunchResult, open_node_shell
+from practicum_desktop.node_shell import ShellLaunchResult, open_node_shell, shell_label
 from practicum_desktop.progress_panel import StartProgressPanel
+from practicum_desktop.screenshots import SOURCE_LAB_VIEW
 from practicum_desktop.widgets import (
     BackLink,
     Badge,
+    MessageBanner,
     Panel,
     bind,
     copyable_label,
     edge_frame,
     make_button,
     payload_of,
-    set_role,
 )
 from practicum_desktop.workers import CallableWorker
 
@@ -97,6 +101,12 @@ class RunningLabView(QWidget):
     back_requested = Signal()
     start_requested = Signal(str)  # lab_id - the owner routes this through the gate (D-4)
     lab_changed = Signal(str, str)  # lab_id, new status - after a lifecycle action
+    # The student wants to hand in their results: (lab_id, results document without the
+    # student's name yet - the owner asks for it and writes the file).
+    export_results_requested = Signal(str, object)
+    # A step asks for a screenshot and the student wants to upload one: (lab_id, section_id);
+    # the owner shows the image picker and calls `attach_uploaded_screenshot`.
+    screenshot_upload_requested = Signal(str, str)
 
     def __init__(
         self,
@@ -104,11 +114,14 @@ class RunningLabView(QWidget):
         settings,
         parent: QWidget | None = None,
         web_view_factory: Callable = default_web_view_factory,
+        screenshot_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self._api_client = api_client
         self._lab: LabSummary | None = None
         self._addresses: dict[str, list[str]] = {}  # node id -> "ip (network)" entries
+        self._nodes: dict[str, TopologyNodeInfo] = {}  # node id -> declared image/os/shell
+        self._preview: PreviewResult | None = None
         self._lab_status = ""
         self._busy = False
         self._docker_available = True
@@ -117,6 +130,7 @@ class RunningLabView(QWidget):
         self._status_worker: CallableWorker | None = None
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self.refresh)
+        self._screenshot_dir = screenshot_dir
         self._build_ui(settings, web_view_factory)
 
     # ----- UI --------------------------------------------------------------------------
@@ -133,9 +147,9 @@ class RunningLabView(QWidget):
         header_row.setContentsMargins(14, 10, 20, 10)
         header_row.setSpacing(12)
 
-        self.back_button = BackLink("")
-        self.back_button.setText("\u2190")
+        self.back_button = BackLink("")  # icon-only: meaning in the tooltip/accessible name
         self.back_button.setToolTip("Back to my labs")
+        self.back_button.setAccessibleName("Back to my labs")
         self.back_button.setStyleSheet("padding: 2px 8px; font-size: 16px;")
         self.back_button.clicked.connect(self.back_requested.emit)
         header_row.addWidget(self.back_button)
@@ -154,13 +168,13 @@ class RunningLabView(QWidget):
         header_row.addWidget(self.badge)
         header_row.addStretch(1)
 
-        self.start_button = make_button("\u25b6 Start lab", kind="primary", small=True)
+        self.start_button = make_button("Start lab", kind="primary", small=True, icon="play")
         self.start_button.clicked.connect(self._on_start_clicked)
         header_row.addWidget(self.start_button)
-        self.restart_button = make_button("\u21bb Restart", small=True)
+        self.restart_button = make_button("Restart", small=True, icon="refresh")
         self.restart_button.clicked.connect(self._on_restart_clicked)
         header_row.addWidget(self.restart_button)
-        self.stop_button = make_button("\u25a0 Stop lab", small=True)
+        self.stop_button = make_button("Stop lab", small=True, icon="stop")
         self.stop_button.clicked.connect(self._on_stop_clicked)
         header_row.addWidget(self.stop_button)
         self.reset_button = make_button("Reset", kind="danger", small=True)
@@ -177,9 +191,7 @@ class RunningLabView(QWidget):
         layout.addWidget(header)
 
         # action feedback ------------------------------------------------------------
-        self.message_label = copyable_label("")
-        self.message_label.setProperty("banner", "info")
-        self.message_label.setContentsMargins(0, 0, 0, 0)
+        self.message_label = MessageBanner("info")
         self.message_label.hide()
         message_wrap = QWidget()
         message_layout = QVBoxLayout(message_wrap)
@@ -226,8 +238,8 @@ class RunningLabView(QWidget):
         header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.nodes_table.setColumnWidth(0, 130)
         self.nodes_table.setColumnWidth(1, 190)
-        self.nodes_table.setColumnWidth(3, 110)
-        self.nodes_table.setColumnWidth(4, 132)  # cell widgets are not measured by Qt
+        self.nodes_table.setColumnWidth(3, 150)  # "running · installing…" fits
+        self.nodes_table.setColumnWidth(4, 174)  # cell widgets are not measured by Qt
         self.nodes_table.verticalHeader().hide()
         self.nodes_table.verticalHeader().setDefaultSectionSize(NODE_ROW_HEIGHT)
         self.nodes_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -243,9 +255,14 @@ class RunningLabView(QWidget):
         left_widget.setMinimumWidth(420)
         self.body_splitter.addWidget(left_widget)
 
-        self.manual_flyout = ManualFlyout(settings)
+        self.manual_flyout = ManualFlyout(settings, screenshot_dir=self._screenshot_dir)
         self.manual_flyout.setMinimumWidth(FLYOUT_MIN_WIDTH)
         self.manual_flyout.close_requested.connect(self._on_flyout_close_requested)
+        self.manual_flyout.export_requested.connect(self._on_export_results_clicked)
+        self.manual_flyout.screenshot_capture_requested.connect(self._on_capture_screenshot)
+        self.manual_flyout.screenshot_upload_requested.connect(
+            self._on_upload_screenshot
+        )
         self.body_splitter.addWidget(self.manual_flyout)
         self.body_splitter.setStretchFactor(0, 1)
         self.body_splitter.setStretchFactor(1, 0)
@@ -257,8 +274,7 @@ class RunningLabView(QWidget):
         status_row = QHBoxLayout(status_bar)
         status_row.setContentsMargins(20, 7, 20, 7)
         status_row.setSpacing(14)
-        self.docker_dot = QLabel()
-        self.docker_dot.setFixedSize(7, 7)
+        self.docker_dot = icons.icon_label("success", 12, "Docker")
         status_row.addWidget(self.docker_dot)
         self.docker_label = QLabel("Docker connected")
         self.docker_label.setProperty("role", "hint")
@@ -305,6 +321,8 @@ class RunningLabView(QWidget):
         if switching:
             self._last_running = None
             self._addresses = {}
+            self._nodes = {}
+            self._preview = None
             self.embedded_view.clear()
             self.nodes_table.setRowCount(0)
             self.nodes_status_label.setText("")
@@ -335,8 +353,14 @@ class RunningLabView(QWidget):
 
     def set_docker_available(self, available: bool) -> None:
         self._docker_available = available
-        colour = theme.GREEN if available else theme.DANGER
-        self.docker_dot.setStyleSheet(f"background: {colour}; border-radius: 3px;")
+        name = "success" if available else "error"
+        if icons.icon_available(name):
+            icons.set_label_icon(self.docker_dot, name, 12)
+        else:
+            colour = theme.GREEN if available else theme.DANGER
+            self.docker_dot.setStyleSheet(
+                f"background: {colour}; border-radius: 6px; margin: 3px;"
+            )
         self.docker_label.setText("Docker connected" if available else "Docker unavailable")
 
     # ----- visibility / polling -----------------------------------------------------------
@@ -374,14 +398,20 @@ class RunningLabView(QWidget):
             self.manual_flyout.show_empty(result.detail)
             self.embedded_view.set_port_mappings([])
             return
+        self._preview = result
         self.manual_flyout.show_lab(self._lab.id, result.name, result.manual_sections)
-        self.embedded_view.set_port_mappings(result.port_mappings)
+        # Per machine when the preview says who publishes what (several desktops → a picker
+        # by machine name); the lab-wide list is the fallback for older API responses.
+        per_node = [m for node in result.topology.nodes for m in node.port_mappings]
+        self.embedded_view.set_port_mappings(per_node or result.port_mappings)
+        self._nodes = {node.id: node for node in result.topology.nodes}
         self._addresses = {}
         for interface in result.topology.interfaces:
             self._addresses.setdefault(interface.node, []).append(
                 f"{interface.address.split('/')[0]} ({interface.network})"
             )
         self._apply_addresses()
+        self._apply_shell_buttons()
         if result.description:
             self.title_label.setToolTip(result.description)
 
@@ -441,16 +471,8 @@ class RunningLabView(QWidget):
                 elif "failed" in container.note.lower():
                     state_item.setText(f"{container_state_text(container)} \u00b7 install failed")
             self.nodes_table.setItem(row, 3, state_item)
-            shell_button = QPushButton("Open shell")
-            shell_button.setProperty("small", True)
             is_running = container.exists and container.status == "running"
-            shell_button.setEnabled(is_running)
-            shell_button.setToolTip(
-                "Opens a terminal window inside this node"
-                if is_running
-                else "Start the lab to open a shell on this node"
-            )
-            bind(shell_button, self._on_open_shell_clicked, container)
+            shell_button = self._shell_button(container, is_running)
             self.nodes_table.setCellWidget(row, 4, shell_button)
             running += int(is_running)
 
@@ -476,6 +498,31 @@ class RunningLabView(QWidget):
                 "the nodes see (reachable from inside the lab, not from this computer)."
             )
 
+    def _node_shell(self, node_id: str) -> tuple[str, str | None]:
+        """(os, shell) the node declares; Linux with the bash/sh default until the preview
+        has arrived or for nodes the preview does not know."""
+        node = self._nodes.get(node_id)
+        if node is None:
+            return "linux", None
+        return node.os, node.shell
+
+    def _shell_button(self, container: ResourceStatusInfo, is_running: bool) -> QPushButton:
+        """'Open shell' / 'Open PowerShell' with the terminal icon; the tooltip names the
+        node and shell so the action is unambiguous before it is clicked."""
+        os, shell = self._node_shell(container.id)
+        label = shell_label(os, shell)
+        text = "Open PowerShell" if os == "windows" and shell != "cmd" else "Open shell"
+        button = make_button(text, small=True, icon="terminal")
+        button.setEnabled(is_running)
+        button.setAccessibleName(f"{text} on {container.id}")
+        button.setToolTip(
+            f"Opens {label} inside '{container.id}' in a new terminal window"
+            if is_running
+            else f"Start the lab to open {label} on '{container.id}'"
+        )
+        bind(button, self._on_open_shell_clicked, container)
+        return button
+
     def _apply_addresses(self) -> None:
         """Fills the Address column once the preview (topology) has arrived."""
         for row in range(self.nodes_table.rowCount()):
@@ -486,12 +533,27 @@ class RunningLabView(QWidget):
                 row, 1, QTableWidgetItem(", ".join(self._addresses.get(item.text(), [])))
             )
 
+    def _apply_shell_buttons(self) -> None:
+        """Re-labels the shell buttons once the preview says which OS/shell each node has."""
+        for row in range(self.nodes_table.rowCount()):
+            button = self.nodes_table.cellWidget(row, 4)
+            container = payload_of(button) if button is not None else None
+            if container is None:
+                continue
+            enabled = button.isEnabled()
+            self.nodes_table.setCellWidget(row, 4, self._shell_button(container, enabled))
+
     def _on_open_shell_clicked(self) -> None:
         container = payload_of(self.sender())
         if container is None:
             return
-        self.nodes_status_label.setText(f"Opening a shell on '{container.id}'\u2026")
-        self._run(open_node_shell, container.name, container.id, on_done=self._on_shell_opened)
+        os, shell = self._node_shell(container.id)
+        self.nodes_status_label.setText(
+            f"Opening {shell_label(os, shell)} on '{container.id}'\u2026"
+        )
+        self._run(
+            open_node_shell, container.name, container.id, os, shell, on_done=self._on_shell_opened
+        )
 
     def _on_shell_opened(self, result: ShellLaunchResult) -> None:
         text = result.detail
@@ -579,6 +641,53 @@ class RunningLabView(QWidget):
     def _on_flyout_close_requested(self) -> None:
         self.instructions_button.setChecked(False)
 
+    def results(self) -> dict | None:
+        """The results document for the current lab (student name left for the owner)."""
+        if self._lab is None:
+            return None
+        preview = self._preview
+        facts = LabFacts(
+            id=self._lab.id,
+            name=self._lab.name,
+            description=(preview.description if preview else "") or self._lab.description,
+            author=preview.author if preview else "",
+            version=preview.version if preview else "",
+            origin=self._lab.origin,
+            source_file=self._lab.source_file,
+        )
+        return build_results(
+            facts,
+            self.manual_flyout.sections,
+            self.manual_flyout.task_completions(),
+            screenshots=self.manual_flyout.screenshots(),
+        )
+
+    # ----- screenshots -------------------------------------------------------------------
+
+    def _on_capture_screenshot(self, section_id: str) -> None:
+        """Grabs the embedded lab view for the step (what the student sees right now)."""
+        pixmap, problem = self.embedded_view.capture()
+        if pixmap is None:
+            self.manual_flyout.show_screenshot_problem(section_id, problem)
+            return
+        self.manual_flyout.attach_screenshot(section_id, pixmap, SOURCE_LAB_VIEW)
+
+    def _on_upload_screenshot(self, section_id: str) -> None:
+        if self._lab is not None:
+            self.screenshot_upload_requested.emit(self._lab.id, section_id)
+
+    def attach_uploaded_screenshot(self, section_id: str, path: Path) -> bool:
+        return self.manual_flyout.attach_screenshot_file(section_id, path)
+
+    def _on_export_results_clicked(self) -> None:
+        results = self.results()
+        if results is None or self._lab is None:
+            return
+        self.export_results_requested.emit(self._lab.id, results)
+
+    def show_export_note(self, text: str, kind: str = "ok") -> None:
+        self._show_message(text, kind)
+
     def _on_instructions_toggled(self, checked: bool) -> None:
         # Hiding the flyout only hides it; its task state lives in QSettings and the widget.
         self.manual_flyout.setVisible(checked)
@@ -586,9 +695,7 @@ class RunningLabView(QWidget):
     # ----- messages --------------------------------------------------------------------
 
     def _show_message(self, text: str, banner: str) -> None:
-        self.message_label.setText(text)
-        set_role(self.message_label, "banner", banner)
-        self.message_label.show()
+        self.message_label.set_message(text, banner)
         self._message_wrap.show()
 
     def _hide_message(self) -> None:

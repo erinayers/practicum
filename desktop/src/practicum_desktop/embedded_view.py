@@ -3,8 +3,10 @@
 The running view's left pane: whatever the lab publishes on a host port - a noVNC desktop,
 code-server, a web app under test - rendered inside the app with QWebEngineView instead of
 the system browser. A thin browser chrome gives context: reload, the URL, a picker when the
-lab maps more than one host port, and "open in system browser" for content the embedded
-view can't render well (downloads, OS prompts).
+lab publishes more than one host port - listed **per machine** ("desktop-1 · localhost:3000",
+"desktop-2 · localhost:3002"), so a lab with several desktops switches between them by name -
+and "open in system browser" for content the embedded view can't render well (downloads,
+OS prompts).
 
 Before loading, the view probes the port (`probe_service`) and shows a waiting state while
 the container's service boots, retrying every few seconds; webtop-style images that only
@@ -22,7 +24,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -33,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 from practicum_desktop.api_client import PortMappingInfo
 from practicum_desktop.widgets import edge_frame, make_button
 from practicum_desktop.workers import CallableWorker
@@ -107,10 +110,24 @@ def _short(detail: str) -> str:
     return detail.strip().splitlines()[0][:120] if detail.strip() else ""
 
 
+def mapping_label(mapping: PortMappingInfo) -> str:
+    """What the picker shows: the machine first, then the host port, with the https hint for
+    TLS-only container ports (webtop's 3001)."""
+    port = f"localhost:{mapping.host}"
+    if mapping.protocol != "tcp":
+        port += f"/{mapping.protocol}"
+    elif mapping.container in TLS_PORTS:
+        port += " (https)"
+    if mapping.node_id:
+        return f"{mapping.node_id} \u00b7 {port}"
+    return f"{port} \u2192 {mapping.container}/{mapping.protocol}"
+
+
 def pick_default_mapping(mappings: list[PortMappingInfo]) -> PortMappingInfo | None:
     """The mapping most likely to be a plain web UI: TCP, not a known non-web port, and a
     plain-HTTP port before a TLS-only sibling (webtop publishes http 3000 and https 3001; the
-    order of the mappings must not matter - the gate's port fixes re-append them)."""
+    order of the mappings must not matter - the gate's port fixes re-append them). Ties keep
+    the spec order, so the first machine's desktop wins when several publish one."""
     tcp = [m for m in mappings if m.protocol == "tcp"]
     if not tcp:
         return None
@@ -188,8 +205,13 @@ class EmbeddedLabView(QWidget):
         chrome_row.setContentsMargins(12, 6, 12, 6)
         chrome_row.setSpacing(8)
 
-        self.reload_button = make_button("\u21bb", kind="ghost")
+        if icons.icon_available("refresh"):
+            self.reload_button = make_button("", kind="ghost", icon="refresh")
+            self.reload_button.setIconSize(QSize(16, 16))
+        else:
+            self.reload_button = make_button("\u21bb", kind="ghost")
         self.reload_button.setToolTip("Reload")
+        self.reload_button.setAccessibleName("Reload")
         self.reload_button.setStyleSheet("padding: 2px 8px; font-size: 14px;")
         self.reload_button.clicked.connect(self.reload)
         chrome_row.addWidget(self.reload_button)
@@ -200,14 +222,23 @@ class EmbeddedLabView(QWidget):
         chrome_row.addWidget(self.url_label, 1)
 
         self.port_picker = QComboBox()
-        self.port_picker.setToolTip("Choose which published port to show")
+        self.port_picker.setToolTip(
+            "Choose which machine (and published port) to show - each desktop in the lab is "
+            "listed here"
+        )
+        self.port_picker.setAccessibleName("Machine to show")
         self.port_picker.setStyleSheet("padding: 3px 8px; font-size: 12px;")
         self.port_picker.currentIndexChanged.connect(self._on_port_picked)
         self.port_picker.hide()
         chrome_row.addWidget(self.port_picker)
 
-        self.open_external_button = make_button("\u2197", kind="ghost")
-        self.open_external_button.setToolTip("Open in system browser")
+        if icons.icon_available("forward"):
+            self.open_external_button = make_button("", kind="ghost", icon="forward")
+            self.open_external_button.setIconSize(QSize(16, 16))
+        else:
+            self.open_external_button = make_button("\u2197", kind="ghost")
+        self.open_external_button.setToolTip("Open in your system browser")
+        self.open_external_button.setAccessibleName("Open in your system browser")
         self.open_external_button.setStyleSheet("padding: 2px 8px; font-size: 14px;")
         self.open_external_button.clicked.connect(self.open_in_system_browser)
         chrome_row.addWidget(self.open_external_button)
@@ -232,10 +263,13 @@ class EmbeddedLabView(QWidget):
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(28, 24, 28, 24)
         card_layout.setSpacing(8)
-        icon = QLabel("\u25a1")  # an empty screen
-        icon.setStyleSheet("font-size: 26px;")
+        if icons.icon_available("desktop"):
+            icon = icons.icon_label("desktop", 34, "Lab view", colour="#94a3b8")
+        else:
+            icon = QLabel("\u25a1")  # an empty screen
+            icon.setStyleSheet("font-size: 26px;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        card_layout.addWidget(icon)
+        card_layout.addWidget(icon, 0, Qt.AlignmentFlag.AlignHCenter)
         self.message_title = QLabel("")
         self.message_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message_title.setWordWrap(True)
@@ -280,9 +314,7 @@ class EmbeddedLabView(QWidget):
         self.port_picker.blockSignals(True)
         self.port_picker.clear()
         for mapping in self._mappings:
-            self.port_picker.addItem(
-                f"localhost:{mapping.host} \u2192 {mapping.container}/{mapping.protocol}"
-            )
+            self.port_picker.addItem(mapping_label(mapping))
         default = pick_default_mapping(self._mappings)
         if default is not None:
             self.port_picker.setCurrentIndex(self._mappings.index(default))
@@ -317,14 +349,15 @@ class EmbeddedLabView(QWidget):
             )
             return
         self._set_url(url_for(mapping.host))
+        who = f"'{mapping.node_id}'" if mapping.node_id else "the service"
         if not self._running:
             self._show_message(
                 "The lab is not running.",
-                f"Start it to load localhost:{mapping.host} here.",
+                f"Start it to load {who} on localhost:{mapping.host} here.",
             )
             return
         self._show_message(
-            f"Waiting for the service on localhost:{mapping.host}\u2026",
+            f"Waiting for {who} on localhost:{mapping.host}\u2026",
             "The container is starting its web service. This view loads automatically "
             "as soon as it answers.",
         )
@@ -378,6 +411,21 @@ class EmbeddedLabView(QWidget):
         self.stack.setCurrentWidget(self.message_page)
 
     # ----- actions ---------------------------------------------------------------------
+
+    def capture(self) -> tuple[QPixmap | None, str]:
+        """A screenshot of what the lab view shows (the embedded page), or (None, why not):
+        a lab without a web interface has nothing to capture here - the student uploads a
+        screenshot of their terminal instead."""
+        if self.web_view is None or self.stack.currentWidget() is not self.web_view:
+            return None, (
+                "The lab view is not showing a web interface right now, so there is nothing "
+                "to capture here. Take a screenshot of your work yourself (for example of the "
+                "node's shell window) and use Upload image."
+            )
+        pixmap = self.web_view.grab()
+        if pixmap.isNull():
+            return None, "The lab view could not be captured; try again in a moment."
+        return pixmap, ""
 
     def reload(self) -> None:
         if self.web_view is not None and self.stack.currentWidget() is self.web_view:

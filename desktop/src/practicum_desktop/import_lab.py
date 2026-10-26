@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from practicum_desktop.api_client import (
     ApiClient,
+    DockerEngineResult,
     ImportLabResult,
     NetworkCheckResult,
     PortCheckResult,
@@ -119,9 +120,11 @@ class ImportOutcome:
     lab_name: str
     source_path: Path
     started: bool = False
-    # True when host port conflicts were found (or could not be checked): the caller must
-    # open PreStartGateDialog for this lab instead of starting it blind.
+    # True when host port / subnet conflicts were found, the Docker engine serves the other
+    # kind of container than the lab needs, or a check could not be answered: the caller
+    # must open PreStartGateDialog for this lab instead of starting it blind.
     gate_required: bool = False
+    container_os: str = "linux"
 
 
 def _copyable_label(text: str = "") -> QLabel:
@@ -444,7 +447,10 @@ class ImportLabDialog(QDialog):
 
         assert self._source_path is not None
         self.outcome = ImportOutcome(
-            lab_id=result.lab_id, lab_name=result.lab_name, source_path=self._source_path
+            lab_id=result.lab_id,
+            lab_name=result.lab_name,
+            source_path=self._source_path,
+            container_os=result.container_os,
         )
         self._recent.add(self._source_path)
         self.file_label.setText(result.lab_name or self._source_path.name)
@@ -466,6 +472,17 @@ class ImportLabDialog(QDialog):
         if not result.success or result.has_conflicts:
             self._hand_over_to_gate()
             return
+        self._run(self._api_client.get_docker_engine, on_done=self._on_engine_checked)
+
+    def _on_engine_checked(self, result: DockerEngineResult) -> None:
+        """A lab built for the other kind of container than Docker Desktop serves (a Windows
+        lab in Linux-container mode, or vice versa) goes to the gate, which explains the
+        switch and offers Retry, instead of failing mid-start."""
+        assert self.outcome is not None
+        mismatch = result.os_type != self.outcome.container_os
+        if not result.success or not result.available or mismatch:
+            self._hand_over_to_gate()
+            return
 
         self._set_stage(STAGE_STARTING, START_STAGE_BASE)
         self.detail_label.setText(START_HINT)
@@ -474,8 +491,9 @@ class ImportLabDialog(QDialog):
         )
 
     def _hand_over_to_gate(self) -> None:
-        """Never start blind: with port/subnet conflicts (or no answer from a check) hand
-        over to the gate, which shows the conflicts and the fixes and owns the Start decision."""
+        """Never start blind: with port/subnet conflicts, the wrong engine mode (or no answer
+        from a check) hand over to the gate, which shows the problem and the fixes and owns
+        the Start decision."""
         assert self.outcome is not None
         self.outcome.gate_required = True
         self._set_busy(False)

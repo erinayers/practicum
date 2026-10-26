@@ -17,6 +17,8 @@ from practicum_desktop.api_client import (
     LabDefinitionResult,
     LabsResult,
     LabSummary,
+    ManualSectionInfo,
+    ManualTaskInfo,
     PortCheckResult,
     PreviewResult,
     ResourceStatusInfo,
@@ -28,14 +30,25 @@ from practicum_desktop.docker_status import DockerStatus
 from practicum_desktop.embedded_view import ProbeResult
 from practicum_desktop.import_lab import ImportOutcome
 from practicum_desktop.main_window import MainWindow
-from practicum_desktop.quickstart import QuickStartDraft
+from practicum_desktop.quickstart import QuickStartDraft, template_by_key
+
+LINUX_DOCKER = DockerStatus(
+    available=True, detail="Docker is available (Linux containers).", os_type="linux"
+)
+WINDOWS_DOCKER = DockerStatus(
+    available=True,
+    detail="Docker is available (Windows containers).",
+    os_type="windows",
+    host_build=22631,
+)
 
 
-def _ready_status() -> AppStatus:
+def _ready_status(docker: DockerStatus | None = None) -> AppStatus:
     return AppStatus(
         readiness="ready",
         api=HealthStatus(reachable=True, healthy=True, detail="The Practicum API is healthy."),
-        docker=DockerStatus(available=True, detail="Docker is available."),
+        docker=docker
+        or DockerStatus(available=True, detail="Docker is available.", os_type="linux"),
         next_action="",
     )
 
@@ -206,15 +219,26 @@ def window(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(main_window, "ImportLabDialog", FakeImportDialog)
     monkeypatch.setattr(main_window, "PreStartGateDialog", FakeGateDialog)
     monkeypatch.setattr(main_window, "confirm", lambda *args, **kwargs: True)
+    # The local `docker info` probe behind the create screen's readiness check / Retry.
+    docker_probe = {"status": LINUX_DOCKER, "calls": 0}
+
+    def fake_check_docker() -> DockerStatus:
+        docker_probe["calls"] += 1
+        return docker_probe["status"]
+
+    monkeypatch.setattr(main_window, "check_docker", fake_check_docker)
     FakeImportDialog.outcome_to_return = None
     FakeGateDialog.opened_for = []
     FakeGateDialog.result_to_return = QDialog.DialogCode.Accepted
     FakeGateDialog.api = api
     FakeStartupWorker.status_to_return = _ready_status()
 
-    win = MainWindow(web_view_factory=lambda parent: FakeWebView())
+    win = MainWindow(
+        web_view_factory=lambda parent: FakeWebView(), screenshot_dir=tmp_path / "shots"
+    )
     win.running_view.embedded_view._probe = lambda port: ProbeResult(False, detail="n/a")
     win.api = api
+    win.docker_probe = docker_probe
     win.show()
     yield win
     # Stop the running view's poll timer before the monkeypatched worker is restored, or a
@@ -234,7 +258,8 @@ def _lab_added(window: MainWindow, lab_id: str, name: str, status: str = "runnin
 def test_zero_labs_shows_the_welcome_screen(window: MainWindow) -> None:
     assert window.current_screen == "welcome"
     assert window.welcome.dashboard_link.isHidden()
-    assert window.status_chip.text() == "\u25cf Ready"
+    assert window.status_chip.text() == "Ready"
+    assert not window.status_chip.icon().isNull()  # the design "success" icon
 
 
 def test_existing_labs_show_the_dashboard_with_their_status(window: MainWindow) -> None:
@@ -262,7 +287,7 @@ def test_blocked_api_falls_back_to_welcome_with_details_open(window: MainWindow)
     assert window.welcome.blocked_banner.isHidden() is False
     assert not window.welcome.create_button.isEnabled()
     assert window.connection_panel.isHidden() is False
-    assert window.status_chip.text() == "\u25cf API unreachable"
+    assert window.status_chip.text() == "API unreachable"
     assert "Start the API." in window.next_action_label.text()
 
 
@@ -511,6 +536,80 @@ def test_quick_start_create_failure_stays_on_the_form(window: MainWindow) -> Non
     assert window.quick_start_screen.create_button.isEnabled()
 
 
+# ----- windows quick start readiness (windows-desktop-windows-container-readiness) -------------
+
+
+def test_create_screen_is_refreshed_from_a_docker_probe_and_retry_reprobes(
+    window: MainWindow,
+) -> None:
+    window.show_create()
+
+    assert window.docker_probe["calls"] == 1  # every visit re-probes (read-only docker info)
+    create = window.create_screen
+    assert create.template_option("windows").available is False
+    assert create.template_option("ubuntu").available is True
+    assert "Linux containers" in window.docker_status_label.text()
+
+    # The user switches Docker Desktop to Windows containers and presses Retry on the panel.
+    window.docker_probe["status"] = WINDOWS_DOCKER
+    create.template_option("windows").inspected.emit("windows")
+    create.readiness_panel.retry_button.click()
+
+    assert window.docker_probe["calls"] == 2
+    assert create.template_option("windows").available is True
+    assert create.template_option("ubuntu").available is False
+    assert create.selected_template().key == "windows"
+    assert window.status_chip.text() == "Ready \u00b7 Windows containers"
+    assert "Windows-container mode" in window.next_action_label.text()
+    assert window.current_screen == "create"  # nothing restarted, nothing navigated
+
+
+def test_windows_quick_start_opens_with_the_host_build_and_is_guarded(window: MainWindow) -> None:
+    window.docker_probe["status"] = WINDOWS_DOCKER
+    window.show_create()
+
+    window.create_screen.quick_card.button.click()
+
+    assert window.current_screen == "quickstart"
+    assert window.quick_start_screen.template.key == "windows"
+    assert window.quick_start_screen.draft().windows_host_build == 22631
+
+    # A stale request for a template the engine cannot run lands back on the chooser.
+    window.docker_probe["status"] = LINUX_DOCKER
+    window.show_create()
+    window.show_quick_start("windows")
+    assert window.current_screen == "create"
+
+
+def test_windows_quick_start_create_rechecks_readiness_first(window: MainWindow) -> None:
+    window.docker_probe["status"] = WINDOWS_DOCKER
+    window.show_create()
+    window.show_quick_start("windows")
+    draft = QuickStartDraft(name="PS lab", template=template_by_key("windows"), packages=["git"])
+
+    # Readiness lost between choosing the template and Create: the engine went back to Linux.
+    window.docker_probe["status"] = LINUX_DOCKER
+    window.quick_start_screen.create_requested.emit(draft)
+
+    assert window.api.created == []
+    assert window.current_screen == "quickstart"
+    text = window.quick_start_screen.status_pill.text_label.text()
+    assert "Windows containers are not available right now" in text
+    assert "Switch to Windows containers" in text
+    assert window.quick_start_screen.create_button.isEnabled()  # retry after switching
+
+    window.docker_probe["status"] = WINDOWS_DOCKER
+    window.api.labs.append(LabSummary("qs-1", "PS lab", "defined", "quick_start"))
+    window.quick_start_screen.create_requested.emit(draft)
+
+    definition, origin = window.api.created[0]
+    assert origin == "quick_start"
+    assert definition["nodes"][0]["os"] == "windows"
+    assert definition["nodes"][0]["image"] == "mcr.microsoft.com/windows/servercore:ltsc2022"
+    assert FakeGateDialog.opened_for == ["qs-1"]
+    assert window.current_screen == "running"
+
+
 def test_designer_save_returns_to_dashboard_and_save_and_start_gates(window: MainWindow) -> None:
     window.show_designer()
     window.api.labs.append(LabSummary("lab-new", "Custom", "defined", "designer"))
@@ -616,3 +715,109 @@ def test_export_cancelled_in_the_picker_writes_nothing(window: MainWindow, monke
     window.dashboard.card_for("a").buttons["Export"].click()
 
     assert window.dashboard.message_label.isHidden()
+
+
+# ----- lab results export ------------------------------------------------------------------------
+
+
+class FakeResultsDialog:
+    accept = True
+    name = "Ada Lovelace"
+    seen: ClassVar[list[tuple]] = []
+    DialogCode = QDialog.DialogCode
+
+    def __init__(self, parent, lab_name, completed, total, student_name="") -> None:
+        FakeResultsDialog.seen.append((lab_name, completed, total, student_name))
+
+    def exec(self) -> int:
+        return int(QDialog.DialogCode.Accepted if self.accept else QDialog.DialogCode.Rejected)
+
+    @property
+    def student_name(self) -> str:
+        return self.name
+
+
+def test_exporting_results_asks_for_a_name_then_writes_json_or_markdown(
+    window: MainWindow, monkeypatch, tmp_path: Path
+) -> None:
+    _lab_added(window, "a", "Static Routing Fundamentals", status="running")
+    window.check_status()
+    window.open_lab("a")
+    window.running_view.manual_flyout.show_lab(
+        "a",
+        "Static Routing Fundamentals",
+        [ManualSectionInfo("s1", "Ping", "ping", [ManualTaskInfo("t1", "Pinged host-b")])],
+    )
+    window.running_view.manual_flyout.mark_next_step_complete()
+    monkeypatch.setattr(main_window, "ResultsExportDialog", FakeResultsDialog)
+    FakeResultsDialog.seen = []
+    asked: list[tuple] = []
+    target = tmp_path / "results.json"
+    monkeypatch.setattr(
+        main_window,
+        "ask_save_path",
+        lambda parent, suggested, name_filter="", title="": asked.append((suggested, title))
+        or target,
+    )
+
+    window.running_view.manual_flyout.export_button.click()
+
+    assert FakeResultsDialog.seen == [("Static Routing Fundamentals", 1, 1, "")]
+    assert asked[0][0].name == "static-routing-fundamentals-results-ada-lovelace.json"
+    assert asked[0][1] == "Export Lab Results"
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert saved["student"]["name"] == "Ada Lovelace"
+    assert saved["summary"]["all_complete"] is True
+    assert saved["steps"][0]["tasks"][0]["completed_at"]
+    assert window._settings.value("student_name") == "Ada Lovelace"  # remembered
+    assert str(target) in window.running_view.message_label.text()
+
+    # next time the name is pre-filled, and a .md target gets the readable report
+    report = tmp_path / "results.md"
+    monkeypatch.setattr(
+        main_window, "ask_save_path", lambda parent, suggested, name_filter="", title="": report
+    )
+    window.running_view.manual_flyout.export_button.click()
+    assert FakeResultsDialog.seen[-1][3] == "Ada Lovelace"
+    assert report.read_text(encoding="utf-8").startswith("# Lab results: Static Routing")
+
+    # cancelling the name dialog writes nothing
+    FakeResultsDialog.accept = False
+    other = tmp_path / "never.json"
+    monkeypatch.setattr(
+        main_window, "ask_save_path", lambda parent, suggested, name_filter="", title="": other
+    )
+    window.running_view.manual_flyout.export_button.click()
+    assert not other.exists()
+    FakeResultsDialog.accept = True
+
+
+def test_upload_screenshot_goes_through_the_image_picker(
+    window: MainWindow, monkeypatch, tmp_path: Path
+) -> None:
+    from PySide6.QtGui import QColor, QPixmap
+
+    _lab_added(window, "a", "Routing", status="running")
+    window.check_status()
+    window.open_lab("a")
+    window.running_view.manual_flyout.show_lab(
+        "a",
+        "Routing",
+        [ManualSectionInfo("s1", "Prove it", "x", [], requires_screenshot=True)],
+    )
+    image = tmp_path / "proof.png"
+    pix = QPixmap(5, 5)
+    pix.fill(QColor("red"))
+    pix.save(str(image), "PNG")
+    asked: list[int] = []
+    monkeypatch.setattr(main_window, "ask_image_path", lambda parent: asked.append(1) or image)
+
+    window.running_view.manual_flyout._screenshot_rows["s1"].upload_button.click()
+
+    assert asked == [1]
+    shots = window.running_view.manual_flyout.screenshots()
+    assert len(shots) == 1 and shots[0].source == "upload"
+
+    monkeypatch.setattr(main_window, "ask_image_path", lambda parent: None)  # cancelled
+    window.running_view.manual_flyout._screenshot_rows["s1"].upload_button.click()
+    assert len(window.running_view.manual_flyout.screenshots()) == 1

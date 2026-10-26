@@ -45,3 +45,31 @@ Port conflicts are common on developer and student machines. A clear UI should e
 
 - The UI should not require users to understand Docker error messages.
 - This should be integrated into both Designer Mode and Student Import preview/start workflows.
+
+### Addendum 2026-10-25 — a port of your own (user request)
+
+"When a port is already allocated the only option is to assume that port." The gate's port
+conflicts are now cards ("web-1 · host port 8080/tcp / Already in use on this machine") with
+**Use 8081** *and* a port field + **Apply** (Enter works too). The API's
+`POST /labs/{id}/ports/apply-recommendation` accepts `new_host_port`; the service holds it to
+the same rules as a recommendation (`ports.port_unavailable_reason`: not the conflicting port
+itself, not the Practicum API's port, not used by another mapping in the lab, free on this
+machine) and refuses with 409 + the reason, which the gate shows in the banner while keeping
+the conflict card. Obvious mistakes (empty, out of 1-65535, the same port) never reach the API.
+Tests: core `test_api.py::test_apply_a_chosen_port_instead_of_the_recommendation`,
+`::test_a_chosen_port_is_refused_with_the_reason`, `test_ports.py::test_port_unavailable_reason_mirrors_the_conflict_rules`;
+desktop `test_prestart_gate.py` (offers both, Enter applies, refusal explained),
+`test_api_client.py::test_apply_port_recommendation_sends_a_chosen_port_and_surfaces_the_refusal`.
+
+### Addendum 2026-10-25 — fixes start the machines fresh (user report)
+
+"When a port is assumed all the previous session data persists." Worse: the assumed port was
+not even in effect - a stopped lab's containers were reused by `docker start` with their old
+mapping. A port or subnet fix now removes the lab's existing containers/networks first when the
+lab has run (`LabService._store_rewritten_definition`, D-48); the lab returns to Ready, the
+result carries `machines_reset`, and the gate says "machines were removed and will start fresh
+… anything saved inside them from earlier sessions is gone". A never-started lab is rewritten
+without touching Docker. Tests: core `test_api.py::test_port_fix_on_a_stopped_lab_recreates_its_machines`,
+`test_network_conflicts_api.py` (recreate / nothing to reset / cleanup failure keeps the old
+definition); desktop `test_prestart_gate.py::test_a_fix_that_recreated_the_machines_says_so`,
+`test_api_client.py::test_port_and_network_fix_results_carry_machines_reset`.

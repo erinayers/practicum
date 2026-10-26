@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from practicum.models import (
     LAB_RUNTIME_FIELDS,
+    DockerEngineInfo,
     Lab,
     LabDefinition,
     LabOrigin,
@@ -22,7 +23,7 @@ from practicum.models import (
     TopologyPreview,
 )
 from practicum.networks import find_subnet_conflicts, move_subnet
-from practicum.ports import check_lab_ports, describe_conflict
+from practicum.ports import check_lab_ports, describe_conflict, port_unavailable_reason
 from practicum.runtime import DockerRuntime, LabRuntime, RuntimeFailure
 
 # Lab statuses during which no other lifecycle action may begin (action lock).
@@ -47,6 +48,10 @@ class LabRunningError(Exception):
 
 class PortRecommendationUnavailableError(Exception):
     pass
+
+
+class PortUnavailableError(PortRecommendationUnavailableError):
+    """The port the user chose cannot be used (reserved, taken in the lab, or bound on the host)."""
 
 
 class SubnetRecommendationUnavailableError(Exception):
@@ -145,6 +150,15 @@ class LabService:
         except KeyError as exc:
             raise LabNotFoundError(lab_id) from exc
 
+    def docker_engine(self) -> DockerEngineInfo:
+        """Read-only engine mode report (windows-desktop-windows-container-readiness): the
+        desktop decides from it whether a Windows lab can be created/started. Never raises
+        and never switches anything."""
+        try:
+            return self.runtime.engine_info()
+        except RuntimeFailure as exc:
+            return DockerEngineInfo(available=False, detail=exc.message)
+
     def replace(self, lab_id: str, definition: LabDefinition) -> Lab:
         """Replaces the lab's definition (edit), keeping id, origin and timestamps.
 
@@ -204,6 +218,7 @@ class LabService:
             description=lab.description,
             author=lab.author,
             version=lab.version,
+            container_os=lab.container_os,
             required_images=images,
             estimated_resources=ResourceEstimate(
                 total_cpu=sum(cpu_values) if cpu_values else None,
@@ -362,8 +377,16 @@ class LabService:
         return PortCheckResult(lab_id=lab.id, has_conflicts=bool(conflicts), conflicts=conflicts)
 
     def apply_port_recommendation(
-        self, lab_id: str, node_id: str, host_port: int, protocol: str
+        self,
+        lab_id: str,
+        node_id: str,
+        host_port: int,
+        protocol: str,
+        new_host_port: int | None = None,
     ) -> PortCheckResult:
+        """Moves a conflicting host port to the server's recommendation or, with
+        `new_host_port`, to a port the user picked (checked the same way the recommendation
+        was: free on this host, not the API's port, not used elsewhere in the lab)."""
         lab = self.get(lab_id)
         conflicts = check_lab_ports(lab)
         conflict = next(
@@ -374,7 +397,18 @@ class LabService:
             ),
             None,
         )
-        if conflict is None or conflict.recommended_port is None:
+        if conflict is None:
+            raise PortRecommendationUnavailableError(
+                f"Node '{node_id}' port {host_port}/{protocol} has no conflict to resolve"
+            )
+        if new_host_port is not None:
+            problem = port_unavailable_reason(lab, node_id, host_port, new_host_port, protocol)
+            if problem is not None:
+                raise PortUnavailableError(f"Port {new_host_port}/{protocol} {problem}")
+            target_port = new_host_port
+        elif conflict.recommended_port is not None:
+            target_port = conflict.recommended_port
+        else:
             raise PortRecommendationUnavailableError(
                 f"No recommended port is available for node '{node_id}' port {host_port}/{protocol}"
             )
@@ -402,11 +436,7 @@ class LabService:
                     new_mappings.append(mapping)
 
             new_mappings.append(
-                PortMapping(
-                    host=conflict.recommended_port,
-                    container=container_port,
-                    protocol=protocol,
-                )
+                PortMapping(host=target_port, container=container_port, protocol=protocol)
             )
 
             updated_resources = resources.model_copy(
@@ -420,9 +450,10 @@ class LabService:
                 "nodes": [n.model_dump() for n in updated_nodes],
             }
         )
-        self._labs[lab_id] = self._with_definition(lab, updated_definition)
-
-        return self.check_ports(lab_id)
+        reset = self._store_rewritten_definition(lab, updated_definition)
+        result = self.check_ports(lab_id)
+        result.machines_reset = reset
+        return result
 
     def check_networks(self, lab_id: str) -> NetworkCheckResult:
         """Subnet overlaps between this lab and networks already on the Docker host.
@@ -454,8 +485,37 @@ class LabService:
         updated_definition = LabDefinition.model_validate(
             move_subnet(lab, network_id, conflict.recommended_subnet)
         )
-        self._labs[lab_id] = self._with_definition(lab, updated_definition)
-        return self.check_networks(lab_id)
+        reset = self._store_rewritten_definition(lab, updated_definition)
+        result = self.check_networks(lab_id)
+        result.machines_reset = reset
+        return result
+
+    def _store_rewritten_definition(self, lab: Lab, definition: LabDefinition) -> bool:
+        """Stores a definition rewritten by a port/subnet fix. A lab that has already run
+        keeps containers between Stop and Start (`docker start` reuse), which would bring
+        back the *old* mapping and the old session data - so its Docker resources are
+        removed first and the lab returns to `defined` (D-48). Returns True when that
+        happened. Busy labs are refused; a cleanup failure keeps the old definition."""
+        self._begin_transition(lab, lab.status)  # busy check only (LabBusyError → 409)
+        reset = False
+        if lab.status != "defined":
+            try:
+                self.runtime.reset(lab)
+            except RuntimeFailure as exc:
+                lab.status = "error"
+                lab.last_error = exc.message
+                raise LabDeleteError(
+                    "Could not remove the lab's existing machines before changing it: "
+                    f"{exc.message}"
+                ) from exc
+            reset = True
+        updated = self._with_definition(lab, definition)
+        if reset:
+            updated.status = "defined"
+            updated.last_error = None
+            self._progress.pop(lab.id, None)
+        self._labs[lab.id] = updated
+        return reset
 
     def remove_leftover_network(self, lab_id: str, network_name: str) -> NetworkCheckResult:
         """Removes a Practicum-labelled Docker network (and its containers) whose lab is no

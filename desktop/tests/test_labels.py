@@ -62,3 +62,28 @@ def test_activity_line_prefers_the_most_recent_event() -> None:
 def test_lab_icons_by_origin() -> None:
     assert lab_icon("imported") != lab_icon("quick_start") != lab_icon("designer")
     assert lab_icon("unknown") == lab_icon("designer")
+
+
+def test_lab_icon_names_map_origins_to_design_icons() -> None:
+    from practicum_desktop.labels import lab_icon_name
+
+    assert lab_icon_name("quick_start") == "play"
+    assert lab_icon_name("designer") == "tools"
+    assert lab_icon_name("imported") == "desktop"
+    assert lab_icon_name("unknown") == "tools"
+
+
+def test_origin_meta_names_windows_labs() -> None:
+    windows_quick = LabSummary(
+        id="w",
+        name="W",
+        status="defined",
+        origin="quick_start",
+        node_count=1,
+        container_os="windows",
+    )
+    assert origin_meta(windows_quick) == "Quick start \u00b7 Windows \u00b7 single host"
+    windows_custom = LabSummary(
+        id="c", name="C", status="defined", origin="designer", node_count=2, container_os="windows"
+    )
+    assert origin_meta(windows_custom) == "Custom lab \u00b7 Windows \u00b7 2 machines"

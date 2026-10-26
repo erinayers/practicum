@@ -3,7 +3,7 @@
 > Audience: any engineer or AI coding agent picking up this project for the first time.
 > This document is model-agnostic — it describes the codebase, not any particular AI tool's workflow.
 >
-> Refreshed 2026-10-24 after Phase 7 (mockup-driven desktop UI) was completed. The day-to-day
+> Refreshed 2026-10-25 after Phase 8 (Windows Quick Start + design icons) was completed. The day-to-day
 > engineering memory — status, backlog, known issues, decisions, session log — lives in
 > [Tigre/](Tigre/00-README.md) and is kept more current than this overview.
 
@@ -69,7 +69,11 @@ Pydantic v2 data model. All models use `ConfigDict(extra="forbid")` for strict v
   (`LAB_RUNTIME_FIELDS`): `origin` (`designer | imported | quick_start`), `source_file`,
   `created_at`, `last_started_at`, `last_error`.
 - `Node` — id, Docker `image`, `command`, `environment` (validated names via `EnvironmentName`
-  regex), optional `resources: ResourceRequirements`.
+  regex), optional `resources: ResourceRequirements`, and (Phase 8) the declared `os`
+  (`linux` default | `windows`) and `shell` (`bash` | `sh` | `powershell` | `cmd`; None = the OS
+  default, `effective_shell`). Validators: the shell fits the OS, Windows nodes have no
+  `shm_size_mb`/`sysctls`, and all nodes of a lab share one OS (`LabDefinition.container_os`) —
+  Docker Desktop serves either Linux or Windows containers, never both.
 - `ResourceRequirements` — cpu, memory_mb, shm_size_mb, `exposed_ports`, `port_mappings`
   (`PortMapping`: host/container/protocol), `sysctls` (namespaced kernel parameters →
   `docker run --sysctl`), with a validator preventing duplicate/overlapping ports.
@@ -84,10 +88,15 @@ Pydantic v2 data model. All models use `ConfigDict(extra="forbid")` for strict v
 
 ### `runtime.py` — the runtime "port" (interface) + Docker "adapter"
 
-- `LabRuntime(Protocol)` — abstract runtime interface: `start(lab, on_progress)`, `stop`, `reset`,
-  `status`, `list_networks`, `remove_network`.
+- `LabRuntime(Protocol)` — abstract runtime interface: `engine_info()`, `start(lab, on_progress)`,
+  `stop`, `reset`, `status`, `list_networks`, `remove_network`, `list_practicum_containers`,
+  `remove_container`.
 - `DockerRuntime` — concrete adapter implemented via `subprocess` calls to the `docker` CLI (not the
-  Docker SDK). Creates bridge networks with explicit subnet/gateway per lab network; per node it
+  Docker SDK). `engine_info()` is a read-only `docker info --format '{{json .}}'` →
+  `DockerEngineInfo` (which kind of container the daemon serves, version, Windows host build,
+  isolation); `start` re-checks it first and refuses a lab built for the other kind with the
+  Docker Desktop switch instructions (Practicum never switches the mode itself — D-42).
+  Creates bridge networks (`nat` for Windows labs) with explicit subnet/gateway per lab network; per node it
   checks the image (`docker image inspect`), pulls a missing one with a streamed `docker pull`
   whose per-layer lines become 0–100 % progress, then `docker start`s a container left by Stop or
   `docker run`s a new one (CPU/memory/shm/port/env flags) and connects extra interfaces via
@@ -141,7 +150,8 @@ Empty except for the package docstring.
 `POST /labs/{id}/restart`, `POST /labs/{id}/reset`, `GET /labs/{id}/status`,
 `GET /labs/{id}/ports`, `POST /labs/{id}/ports/apply-recommendation`, `GET /labs/{id}/networks`,
 `POST /labs/{id}/networks/apply-recommendation`, `POST /labs/{id}/networks/remove-leftover`,
-`POST /docker/sweep-leftovers` (also run at API startup). Interactive docs at `/docs`.
+`POST /docker/sweep-leftovers` (also run at API startup), `GET /docker/engine` (read-only engine
+mode). Interactive docs at `/docs`.
 
 ## 4. Desktop App (`desktop/src/practicum_desktop/`)
 
@@ -154,11 +164,17 @@ the desktop app only renders/relays). Its screens are built from the clickable m
   `QApplication`, applies the theme, shows `MainWindow`. Console script `practicum-desktop`.
 - **`theme.py` / `widgets.py`** — the mockup's design tokens as one application-wide style sheet
   keyed on role properties (`kind`, `role`, `panel`, `badge`, `chip`, `banner`), plus the shared
-  building blocks: `Panel`, `Badge`, `Chip`, `StatTile`, `StatusPill`, `BackLink`, `FlowLayout`,
-  `AutoSizeStack`, the schematic `TopologyView`/`TopologyCanvas`, and two helpers every screen
-  relies on — `bind(button, slot, payload)` (connect child buttons without lambdas capturing
-  `self`, which corrupted the heap on teardown) and `style_frame`/`edge_frame` (never style a
-  container with a bare `QFrame` selector: `QLabel` is a `QFrame`).
+  building blocks: `Panel`, `Badge`, `Chip`, `MessageBanner`/`NoteBanner` (design icon + copyable
+  text), `StatTile`, `StatusPill`, `BackLink`, `FlowLayout`, `AutoSizeStack`, the schematic
+  `TopologyView`/`TopologyCanvas`, and two helpers every screen relies on — `bind(button, slot,
+  payload)` (connect child buttons without lambdas capturing `self`, which corrupted the heap on
+  teardown) and `style_frame`/`edge_frame` (never style a container with a bare `QFrame`
+  selector: `QLabel` is a `QFrame`).
+- **`icons.py`** — the design icon set from `design/icons.png` (sliced into `assets/icons/` by
+  `tools/slice_design_icons.py`): `ICONS` maps names to meanings (success, error, warning, back,
+  forward, play, terminal, desktop, tools); `icon()`, `pixmap()`, `icon_label()`,
+  `set_button_icon()`, `icon_html()` are the only loaders (cached, tinted for dark buttons,
+  disabled state, null-safe when assets are missing). Screens ask for icons by meaning.
 - **`main_window.py`** — `MainWindow(QMainWindow)`: brand title bar with a connection status chip
   (collapsible panel: API/Docker lines, next action, API base URL + Retry), and a `QStackedWidget`
   of screens — `welcome`, `dashboard`, `create`, `quickstart`, `designer`, `running`. Owns every
@@ -169,32 +185,49 @@ the desktop app only renders/relays). Its screens are built from the clickable m
   `DashboardScreen` with `LabCard`s (origin icon, name, meta line, status badge, activity line,
   per-status actions Open / Start / Delete / Reset).
 - **`create_lab.py`** — `CreateLabScreen` (Quick start vs Custom Lab choice cards, OS template
-  radios) and `QuickStartScreen` (lab name, Instructor setup toggle, template bar, package chips,
-  step editor, Create Lab). **`quickstart.py`** turns the draft into a lab definition (packages →
-  apt-get start command, steps → manual sections, free `/24` from `10.90.0.0/16`).
+  radios enabled per Docker engine mode, the Windows readiness panel with Docker/Microsoft links
+  and Retry) and `QuickStartScreen` (lab name, Instructor setup toggle, template bar, package or
+  tool chips, step editor, Create Lab). **`quickstart.py`** turns the draft into a lab definition:
+  Ubuntu Desktop (webtop + LinuxServer package mod), Ubuntu (packages → apt-get start command) or
+  Windows (Server Core tag pinned from `WINDOWS_IMAGES` by the host build, `os`/`shell` fields, a
+  PowerShell init passed as `-EncodedCommand` that installs Chocolatey tools listed in
+  `environment.PRACTICUM_PACKAGES` and keeps the container alive); steps → manual sections, free
+  `/24` from `10.90.0.0/16`.
 - **`designer.py`** — `DesignerView`: Machines / Network topology / Networks panels over the same
-  in-memory draft as before; machines come from **`node_catalog.py`** presets (host, router with IP
-  forwarding, web server, desktop, custom image), the connect form suggests free addresses;
-  Validate (`POST /labs/validate`), Save Lab / Save & Start, and `load_lab()` for editing an
-  existing lab (`PUT /labs/{id}`).
+  in-memory draft as before, plus a collapsible **Lab instructions** panel (the shared
+  **`manual_editor.py`** step editor with a student-view preview; steps are saved as the spec's
+  manual); machines come from **`node_catalog.py`** presets (host, router with IP forwarding,
+  web server, desktop, custom image), the connect form suggests free addresses; Validate
+  (`POST /labs/validate`), Save Lab / Save & Start, and `load_lab()` for editing an existing
+  lab (`PUT /labs/{id}`), manual included.
 - **`prestart_gate.py`** — `PreStartGateDialog`, the mandatory review before any Start: images,
-  topology, manual preview, estimated resources, host-port and subnet conflicts with one-click
-  fixes; Start uses `wait=false` and polls `/status` to show real per-node progress.
+  topology, manual preview, estimated resources, the Container engine check (`GET /docker/engine`
+  vs the lab's OS, with Retry), host-port and subnet conflicts with one-click fixes; Start uses
+  `wait=false` and polls `/status` to show real per-node progress.
 - **`import_lab.py` / `lab_file.py`** — "Open Lab File" dialog (recent + bundled samples, the one
-  native file picker) and the staged import → check → start flow with real start progress.
+  native file picker) and the staged import → ports → networks → engine mode → start flow with
+  real start progress (anything off hands over to the gate).
 - **`running_view.py`** — `RunningLabView`: header (back, title, meta, badge) + lifecycle toolbar
   (Start via gate / Restart / Stop / Reset-with-confirmation / Instructions), the
   **`embedded_view.py`** `EmbeddedLabView` (QWebEngineView behind a URL bar, port picker, waiting
-  state, open-in-system-browser fallback), the Lab nodes table with **Open shell**
-  (`node_shell.py`, `docker exec` in a new console), the **`manual.py`** `ManualFlyout` (numbered
-  steps, checkable tasks, "Mark step complete", local progress in `QSettings`), a status bar, and
+  state, open-in-system-browser fallback), the Lab nodes table with **Open shell** / **Open
+  PowerShell** (`node_shell.py`: `docker exec` in a new console with bash→sh, PowerShell or cmd
+  from the node's declared `os`/`shell`, after a `docker inspect` pre-check), the **`manual.py`** `ManualFlyout` (numbered
+  steps, checkable tasks, "Mark step complete", local progress with completion times in
+  `QSettings`, per-step screenshot evidence via **`screenshots.py`** when the instructor asked
+  for it — captured from the embedded view or uploaded —, **Export results** →
+  **`lab_results.py`** JSON/Markdown/ZIP hand-in via `dialogs.ResultsExportDialog` + the save
+  picker), a status bar, and
   `GET /status` polling (1 s while starting/stopping, 5 s idle, paused when hidden).
   **`progress_panel.py`** renders the per-node start progress used by the gate and the running view.
 - **`api_client.py`** — `ApiClient`, a thin `httpx` wrapper around every endpoint returning
   dataclasses and never raising; lifecycle calls (`start_lab(wait=)`, `stop_lab`, `restart_lab`,
   `reset_lab`, `delete_lab`) share a long timeout and report 409 as `busy`.
-- **`app_status.py`**, **`docker_status.py`**, **`startup.py`** — readiness evaluation, `docker info`
-  probe, and the startup worker (health retried with longer timeouts before reporting Blocked).
+- **`app_status.py`**, **`docker_status.py`**, **`startup.py`** — readiness evaluation, the
+  read-only `docker info` probe (`DockerStatus` with the engine mode; `windows_container_readiness`
+  → docker_unavailable / linux_engine / ready for the Windows template), and the startup worker
+  (health retried with longer timeouts before reporting Blocked). `MainWindow.refresh_engine`
+  re-runs only the Docker probe (Create screen Retry / each visit).
 - **`workers.py`** — `CallableWorker(QThread)`; **`dialogs.py`** — `ConfirmDialog`/`confirm()`, the
   only sanctioned confirmation; **`labels.py`** — pure text helpers (origin meta, relative times).
 
@@ -225,7 +258,7 @@ subprocess call shape (no real Docker needed to run the suite).
 **Desktop (`desktop/tests/`)**: one module per source module, widget tests included — they run
 offscreen (`QT_QPA_PLATFORM=offscreen`) with a session `QApplication` (`conftest.py`), inject a
 `FakeApiClient`, and replace `CallableWorker` with the synchronous `ImmediateWorker` /
-`StalledWorker` from `qt_helpers.py`. 270 tests at the time of writing. Qt swallows exceptions
+`StalledWorker` from `qt_helpers.py`. 398 tests at the time of writing. Qt swallows exceptions
 raised in slots, so run with `-s` and grep for `Traceback` after touching signal handlers.
 
 ## 6. Feature Status
@@ -233,16 +266,18 @@ raised in slots, so run with `-s` and grep for `Traceback` after touching signal
 See [src/user-stories.md](src/user-stories.md), [src/user-story-status.json](src/user-story-status.json)
 and, for the readable summary, [Tigre/05-status-and-backlog.md](Tigre/05-status-and-backlog.md).
 
-- Phases 1–7 of the backlog are **done** (47 stories) as of 2026-10-24: spec format, validation and
+- Phases 1–8 of the backlog are **done** (54 stories) as of 2026-10-25: spec format, validation and
   import/export, Docker runtime with real pull progress and restart/delete, the Windows shell,
-  designer workflows, the student learning experience, and the mockup-driven desktop UI (dashboard,
+  designer workflows, the student learning experience, the mockup-driven desktop UI (dashboard,
   create/quick start, designer re-skin, pre-start gate, running view with lifecycle controls,
-  embedded web view and instructions flyout).
-- **Session 5's work (everything above that is desktop-visible) has not been run on Windows yet** —
-  the next step is a smoke run with `start-practicum.bat` against Docker Desktop.
+  embedded web view and instructions flyout), and Phase 8: Windows-container readiness, the
+  Windows Server Core quick start with PowerShell and Chocolatey tools, and the design icon set.
+- **Sessions 5 and 6 (everything desktop-visible above, and all Windows-container paths) have not
+  been run on Windows yet** — the next step is a smoke run with `start-practicum.bat` against
+  Docker Desktop, in both Linux- and Windows-container mode (checklists in Tigre/05, Tigre/06 #26).
 - Next backend gaps (Tigre/11): persistence across API restarts (S-1), desktop-supervised API and
-  packaging (S-2/S-3), editing an existing lab (S-7), designer metadata/manual editor/export
-  (S-8/S-9/S-10), stable lab identity for progress (S-14).
+  packaging (S-2/S-3), designer metadata/manual editor (S-8/S-9), stable lab identity for
+  progress (S-14).
 
 ## 7. Future Roadmap (`src/future-roadmap/`)
 

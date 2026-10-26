@@ -1,6 +1,6 @@
 import httpx
 
-from practicum_desktop.api_client import ApiClient
+from practicum_desktop.api_client import ApiClient, PortMappingInfo
 
 
 def test_check_health_reports_healthy_when_api_ok(monkeypatch) -> None:
@@ -1147,3 +1147,294 @@ def test_update_lab_puts_and_parses_success_validation_and_conflict(monkeypatch)
     assert ok.success and ok.lab_id == "abc"
     assert invalid.success is False and invalid.errors[0].message == "too short"
     assert running.success is False and "stop it before editing" in running.detail
+
+
+# ----- docker engine / node os + shell (phase 8) ----------------------------------------------
+
+
+def test_get_docker_engine_parses_the_engine_mode(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_get(url, timeout):
+        seen["url"], seen["timeout"] = url, timeout
+        return httpx.Response(
+            200,
+            json={
+                "available": True,
+                "os_type": "windows",
+                "server_version": "27.3.1",
+                "operating_system": "Windows 11 Pro",
+                "kernel_version": "10.0 22631 (x)",
+                "host_build": 22631,
+                "isolation": "hyperv",
+                "detail": "Docker 27.3.1 is serving Windows containers.",
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ApiClient().get_docker_engine()
+
+    assert seen["url"].endswith("/docker/engine")
+    assert seen["timeout"] == 20.0  # `docker info` may be slow while Docker restarts
+    assert result.success is True and result.available is True
+    assert result.os_type == "windows" and result.host_build == 22631
+    assert result.isolation == "hyperv"
+
+
+def test_get_docker_engine_reports_an_unreachable_daemon_and_api_failures(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json={"available": False, "os_type": None, "detail": "Docker is not running."},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    down = ApiClient().get_docker_engine()
+    assert down.success is True and down.available is False
+    assert down.detail == "Docker is not running."
+
+    def failing_get(url, timeout):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(httpx, "get", failing_get)
+    failed = ApiClient().get_docker_engine()
+    assert failed.success is False and "Could not check Docker" in failed.detail
+
+
+def test_get_preview_carries_container_os_and_node_shells(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json={
+                "id": "abc",
+                "status": "defined",
+                "schema_version": "1.0",
+                "name": "Windows Quick Start",
+                "container_os": "windows",
+                "required_images": ["mcr.microsoft.com/windows/servercore:ltsc2022"],
+                "estimated_resources": {"exposed_ports": [], "port_mappings": []},
+                "topology": {
+                    "nodes": [
+                        {
+                            "id": "host",
+                            "image": "mcr.microsoft.com/windows/servercore:ltsc2022",
+                            "os": "windows",
+                            "shell": "powershell",
+                        }
+                    ],
+                    "networks": [],
+                    "interfaces": [],
+                },
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ApiClient().get_preview("abc")
+
+    assert result.container_os == "windows"
+    assert result.topology.nodes[0].os == "windows"
+    assert result.topology.nodes[0].shell == "powershell"
+
+
+def test_get_preview_defaults_older_nodes_to_linux(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json={
+                "id": "abc",
+                "status": "defined",
+                "schema_version": "1.0",
+                "name": "Old",
+                "required_images": [],
+                "estimated_resources": {},
+                "topology": {
+                    "nodes": [{"id": "h", "image": "alpine"}],
+                    "networks": [],
+                    "interfaces": [],
+                },
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ApiClient().get_preview("abc")
+
+    assert result.container_os == "linux"
+    assert result.topology.nodes[0].os == "linux" and result.topology.nodes[0].shell is None
+
+
+def test_list_labs_reads_the_container_os_from_the_nodes(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "w",
+                    "name": "Win",
+                    "status": "defined",
+                    "nodes": [{"id": "h", "os": "windows"}],
+                },
+                {"id": "l", "name": "Lin", "status": "defined", "nodes": [{"id": "h"}]},
+            ],
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ApiClient().list_labs()
+
+    assert [lab.container_os for lab in result.labs] == ["windows", "linux"]
+
+
+def test_import_lab_reads_the_container_os_of_the_imported_lab(monkeypatch) -> None:
+    def fake_post(url, json, timeout, params=None):
+        return httpx.Response(
+            200,
+            json={
+                "imported": True,
+                "lab": {"id": "w", "name": "Win", "nodes": [{"id": "host", "os": "windows"}]},
+                "errors": [],
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = ApiClient().import_lab({"name": "Win"})
+
+    assert result.success is True and result.container_os == "windows"
+
+
+def test_get_preview_carries_each_machines_published_ports(monkeypatch) -> None:
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json={
+                "id": "abc",
+                "status": "defined",
+                "schema_version": "1.0",
+                "name": "Two desktops",
+                "required_images": [],
+                "estimated_resources": {
+                    "port_mappings": [
+                        {"host": 3000, "container": 3000, "protocol": "tcp"},
+                        {"host": 3002, "container": 3000, "protocol": "tcp"},
+                    ]
+                },
+                "topology": {
+                    "nodes": [
+                        {
+                            "id": "desktop-1",
+                            "image": "webtop",
+                            "resources": {
+                                "port_mappings": [
+                                    {"host": 3000, "container": 3000, "protocol": "tcp"}
+                                ],
+                                "exposed_ports": [8080],
+                            },
+                        },
+                        {
+                            "id": "desktop-2",
+                            "image": "webtop",
+                            "resources": {
+                                "port_mappings": [
+                                    {"host": 3002, "container": 3000, "protocol": "tcp"}
+                                ]
+                            },
+                        },
+                        {"id": "router", "image": "alpine"},
+                    ],
+                    "networks": [],
+                    "interfaces": [],
+                },
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ApiClient().get_preview("abc")
+
+    by_node = {n.id: n.port_mappings for n in result.topology.nodes}
+    assert by_node["desktop-1"] == [
+        PortMappingInfo(3000, 3000, "tcp", node_id="desktop-1"),
+        PortMappingInfo(8080, 8080, "tcp", node_id="desktop-1"),
+    ]
+    assert by_node["desktop-2"] == [PortMappingInfo(3002, 3000, "tcp", node_id="desktop-2")]
+    assert by_node["router"] == []
+    assert [m.host for m in result.port_mappings] == [3000, 3002]  # the flat list still parses
+
+
+def test_apply_port_recommendation_sends_a_chosen_port_and_surfaces_the_refusal(
+    monkeypatch,
+) -> None:
+    bodies: list[dict] = []
+
+    def fake_post(url, json, timeout, **kwargs):
+        bodies.append(json)
+        if json.get("new_host_port") == 8000:
+            return httpx.Response(
+                409,
+                json={"detail": "Port 8000/tcp is reserved by the Practicum API"},
+                request=httpx.Request("POST", url),
+            )
+        return httpx.Response(
+            200,
+            json={"lab_id": "abc", "has_conflicts": False, "conflicts": []},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ApiClient()
+
+    ok = client.apply_port_recommendation("abc", "router", 2222, "tcp", new_host_port=9022)
+    assert ok.success is True
+    assert bodies[-1] == {
+        "node_id": "router",
+        "host_port": 2222,
+        "protocol": "tcp",
+        "new_host_port": 9022,
+    }
+
+    refused = client.apply_port_recommendation("abc", "router", 2222, "tcp", new_host_port=8000)
+    assert refused.success is False
+    assert refused.detail == "Port 8000/tcp is reserved by the Practicum API"
+
+    client.apply_port_recommendation("abc", "router", 2222, "tcp")
+    assert "new_host_port" not in bodies[-1]  # the recommendation path is unchanged
+
+
+def test_port_and_network_fix_results_carry_machines_reset(monkeypatch) -> None:
+    def fake_post(url, json, timeout, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "lab_id": "abc",
+                "has_conflicts": False,
+                "conflicts": [],
+                "machines_reset": True,
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ApiClient()
+
+    assert client.apply_port_recommendation("abc", "router", 2222, "tcp").machines_reset is True
+    assert client.apply_subnet_recommendation("abc", "lan").machines_reset is True
+
+    def fake_get(url, timeout):
+        return httpx.Response(
+            200,
+            json={"lab_id": "abc", "has_conflicts": False, "conflicts": []},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert client.check_ports("abc").machines_reset is False  # plain checks never reset

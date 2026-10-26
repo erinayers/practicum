@@ -54,6 +54,32 @@ def find_available_port(
     return None
 
 
+def port_unavailable_reason(
+    lab: Lab, node_id: str, old_host_port: int, new_host_port: int, protocol: str
+) -> str | None:
+    """Why `new_host_port` cannot replace `old_host_port` on `node_id` - None when it can.
+    Mirrors the conflict reasons so a user-chosen port is held to the same standard as a
+    recommended one; the mapping being replaced does not count against itself."""
+    if new_host_port == old_host_port:
+        return "is the port that is already in conflict"
+    if new_host_port == api_reserved_port():
+        return "is reserved by the Practicum API"
+    for node in lab.nodes:
+        if node.resources is None:
+            continue
+        taken = [(port, "tcp") for port in node.resources.exposed_ports] + [
+            (mapping.host, mapping.protocol) for mapping in node.resources.port_mappings
+        ]
+        for host, proto in taken:
+            if host == new_host_port and proto == protocol:
+                if node.id == node_id and host == old_host_port:
+                    continue
+                return f"is already used by node '{node.id}' in this lab"
+    if not is_local_port_free(new_host_port, protocol):
+        return "is already in use on this machine"
+    return None
+
+
 def check_lab_ports(lab: Lab) -> list[PortConflict]:
     """Report host port conflicts: duplicates within the spec, the Practicum API's own
     port, and ports already bound on this host. Each conflict includes a recommended,

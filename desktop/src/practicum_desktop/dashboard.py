@@ -30,11 +30,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 from practicum_desktop.api_client import LabSummary
-from practicum_desktop.labels import activity_line, lab_icon, origin_meta, plural
+from practicum_desktop.labels import activity_line, lab_icon, lab_icon_name, origin_meta, plural
 from practicum_desktop.widgets import (
     Badge,
+    MessageBanner,
     NoteBanner,
     bind,
     copyable_label,
@@ -74,9 +75,8 @@ class WelcomeScreen(QWidget):
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hero.addWidget(subtitle)
 
-        self.blocked_banner = copyable_label("")
-        self.blocked_banner.setProperty("banner", "warn")
-        self.blocked_banner.setMaximumWidth(560)
+        self.blocked_banner = MessageBanner("warn")
+        self.blocked_banner.setFixedWidth(560)
         self.blocked_banner.hide()
         hero.addWidget(self.blocked_banner, 0, Qt.AlignmentFlag.AlignHCenter)
         self.note = NoteBanner(fixed_width=560)
@@ -94,7 +94,7 @@ class WelcomeScreen(QWidget):
         cta.addWidget(self.import_button)
         hero.addLayout(cta)
 
-        self.dashboard_link = make_button("", kind="link")
+        self.dashboard_link = make_button("", kind="link", icon="forward", icon_trailing=True)
         self.dashboard_link.clicked.connect(self.dashboard_requested.emit)
         self.dashboard_link.hide()
         hero.addWidget(self.dashboard_link, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -106,8 +106,9 @@ class WelcomeScreen(QWidget):
 
     def set_lab_count(self, count: int) -> None:
         self.dashboard_link.setVisible(count > 0)
+        arrow = "" if icons.icon_available("forward") else " \u2192"
         self.dashboard_link.setText(
-            f"You have {plural(count, 'lab')} \u00b7 View your labs dashboard \u2192"
+            f"You have {plural(count, 'lab')} \u00b7 View your labs dashboard{arrow}"
         )
 
     def show_note(self, text: str, banner: str = "info") -> None:
@@ -121,6 +122,26 @@ class WelcomeScreen(QWidget):
         self.blocked_banner.setText(message or "")
         self.create_button.setEnabled(not message)
         self.import_button.setEnabled(not message)
+
+
+def origin_icon_label(origin: str) -> QLabel:
+    """The card's 36 px tile with the design icon for the lab's origin (glyph fallback)."""
+    name = lab_icon_name(origin)
+    tooltip = {
+        "imported": "Imported lab",
+        "quick_start": "Quick start lab",
+        "designer": "Custom lab built in the designer",
+    }.get(origin, "Custom lab")
+    if icons.icon_available(name):
+        label = icons.icon_label(name, 20, tooltip)
+    else:
+        label = QLabel(lab_icon(origin))
+        label.setToolTip(tooltip)
+        label.setAccessibleName(tooltip)
+    label.setFixedSize(36, 36)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setStyleSheet(f"background: {theme.LINE_SOFT}; border-radius: 10px; font-size: 17px;")
+    return label
 
 
 class LabCard(QFrame):
@@ -144,10 +165,7 @@ class LabCard(QFrame):
 
         top = QHBoxLayout()
         top.setSpacing(10)
-        icon = QLabel(lab_icon(lab.origin))
-        icon.setFixedSize(36, 36)
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet(f"background: {theme.LINE_SOFT}; border-radius: 10px; font-size: 17px;")
+        icon = origin_icon_label(lab.origin)
         top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
         names = QVBoxLayout()
         names.setSpacing(2)
@@ -179,11 +197,17 @@ class LabCard(QFrame):
         foot_row.addStretch(1)
         self.buttons: dict[str, object] = {}
         for label, kind in self._actions_for(lab.status):
-            button = make_button(label, kind=kind, small=True)
+            button = make_button(
+                label, kind=kind, small=True, icon="play" if label == "Start" else None
+            )
             bind(button, self._on_action_clicked, label)
             foot_row.addWidget(button)
             self.buttons[label] = button
         layout.addWidget(foot)
+        # The grid sizes rows by height-for-width (the wrapping labels) and only clamps that
+        # to an explicit minimum height - without this a card with an error line was given
+        # less than its content and its buttons were clipped.
+        self.setMinimumHeight(self.sizeHint().height())
 
     @staticmethod
     def _actions_for(status: str) -> list[tuple[str, str]]:

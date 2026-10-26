@@ -58,4 +58,38 @@ silently change it.
 
 ## Implementation Status
 
-Not started.
+**Done 2026-10-25** (Session 6).
+
+- **Detection (read-only).** `desktop/docker_status.py` now runs `docker info --format '{{json .}}'`
+  and reads `OSType` (+ `ServerVersion`, `OperatingSystem`, `KernelVersion` → `host_build`,
+  `Isolation`). `windows_container_readiness(docker)` gives one of three states -
+  `docker_unavailable`, `linux_engine`, `ready` - each with a plain-words `detail` and
+  `next_action`. The API exposes the same probe as `GET /docker/engine` (`DockerEngineInfo`,
+  `DockerRuntime.engine_info()`), used by the pre-start gate and the import flow. Nothing ever
+  calls Docker Desktop's mode switch; the next action tells the user how to do it themselves.
+- **Create screen.** `CreateLabScreen.set_docker_status()` enables the templates the current
+  engine can run (`template_availability`): the Ubuntu templates in Linux mode, the Windows
+  template in Windows mode (then the Ubuntu ones are disabled with the reverse hint). The
+  Windows row stays disabled (captioned "unavailable", tooltip = the reason) until readiness
+  passes; clicking it opens the `WindowsReadinessPanel` with the blocker, the next action, links
+  to Docker's Windows install/switching guide and Microsoft's compatibility matrix, and **Retry**.
+  Retry (and every visit to the Create screen) re-probes Docker in a worker
+  (`MainWindow.refresh_engine`) and updates the connection panel, title-bar chip
+  ("Ready · Windows containers") and templates in place - no restart.
+- **Elsewhere.** `app_status.py` says, in Windows mode, that Linux labs cannot run until the mode
+  is switched back; the gate's new **Container engine** panel blocks Start (with Retry) when the
+  lab's `container_os` and the engine disagree; Create Lab on a Windows draft re-checks readiness
+  first; `POST /start` re-checks server-side and fails with the switch instructions.
+- Tests: `test_docker_status.py` (three states, read-only probe), `test_app_status.py`,
+  `test_create_lab.py` (availability per mode, panel, Retry), `test_main_window.py` (refresh
+  wiring), `test_prestart_gate.py`, core `test_runtime.py` / `test_api.py` (`/docker/engine`).
+- **Not yet verified on Windows** with Docker Desktop actually switched to Windows containers
+  (the sandbox has no Docker); the `docker info` JSON shapes used in tests come from Docker 27.
+
+## Scope note 2026-10-25
+
+Windows containers require Windows 10/11 Pro, Enterprise or Education (Hyper-V and the
+Containers features); Windows Home — the common student laptop — cannot run them. This feature
+is therefore planned to move behind the paid tier; the implementation above stays as built and
+the gating, eligibility check and hosted alternative are described in the roadmap epic
+[Premium Lab Platforms](../../future-roadmap/premium-lab-platforms/README.md).

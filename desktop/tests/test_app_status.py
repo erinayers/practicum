@@ -52,3 +52,25 @@ def test_docker_takes_priority_only_when_api_is_healthy() -> None:
     status = evaluate_app_status(api, docker)
 
     assert status.readiness == "blocked"
+
+
+def test_windows_engine_is_ready_but_explains_that_linux_labs_cannot_run() -> None:
+    api = HealthStatus(reachable=True, healthy=True, detail="ok")
+    docker = DockerStatus(available=True, detail="ok", os_type="windows", host_build=22631)
+
+    status = evaluate_app_status(api, docker)
+
+    assert status.readiness == "ready"
+    assert "Windows-container mode" in status.next_action
+    assert "Switch to Linux containers" in status.next_action
+    assert status.windows_containers.ready is True
+
+
+def test_linux_engine_reports_windows_quick_start_as_not_ready() -> None:
+    api = HealthStatus(reachable=True, healthy=True, detail="ok")
+    docker = DockerStatus(available=True, detail="ok", os_type="linux")
+
+    status = evaluate_app_status(api, docker)
+
+    assert status.readiness == "ready" and status.next_action == ""
+    assert status.windows_containers.state == "linux_engine"

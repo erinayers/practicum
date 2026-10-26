@@ -33,7 +33,8 @@ def test_welcome_hides_dashboard_link_without_labs_and_counts_them_otherwise() -
     screen.set_lab_count(4)
 
     assert screen.dashboard_link.isHidden() is False
-    assert screen.dashboard_link.text() == "You have 4 labs \u00b7 View your labs dashboard \u2192"
+    assert screen.dashboard_link.text() == "You have 4 labs \u00b7 View your labs dashboard"
+    assert not screen.dashboard_link.icon().isNull()  # the design "forward" arrow
 
 
 def test_welcome_emits_its_three_actions() -> None:
@@ -180,3 +181,21 @@ def test_dashboard_header_actions_and_messages() -> None:
 
     screen.set_actions_enabled(False)
     assert not screen.create_button.isEnabled()
+
+
+def test_windows_quick_start_card_has_the_same_lifecycle_actions() -> None:
+    """designer-windows-quick-start: dashboard actions are driven by status, not by OS."""
+
+
+    lab = LabSummary(
+        id="w", name="Windows Quick Start", status="defined", origin="quick_start",
+        node_count=1, container_os="windows",
+    )
+    card = LabCard(lab)
+    assert list(card.buttons) == ["Export", "Edit", "Delete", "Start"]
+    assert card.meta_label.text() == "Quick start \u00b7 Windows \u00b7 single host"
+
+    lab.status = "running"
+    assert list(LabCard(lab).buttons) == ["Export", "Open"]
+    lab.status = "error"
+    assert list(LabCard(lab).buttons) == ["Export", "Edit", "Delete", "Reset", "Start"]

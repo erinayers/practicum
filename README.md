@@ -49,8 +49,9 @@ this README's API section below reflects the current surface.
 - `POST /labs/{lab_id}/reset`
 - `GET /labs/{lab_id}/status` (includes per-node start progress while starting)
 - `GET /labs/{lab_id}/ports`
-- `POST /labs/{lab_id}/ports/apply-recommendation`
+- `POST /labs/{lab_id}/ports/apply-recommendation` (the recommended port, or `new_host_port` of your choice; 409 with the reason when that port can't be used)
 - `POST /docker/sweep-leftovers` (removes containers/networks of labs this API no longer knows; also runs at startup)
+- `GET /docker/engine` (read-only: does Docker Desktop serve Linux or Windows containers right now; never switches it)
 - `GET /labs/{lab_id}/networks`
 - `POST /labs/{lab_id}/networks/apply-recommendation`
 - `POST /labs/{lab_id}/networks/remove-leftover`
@@ -63,7 +64,10 @@ Interactive API documentation is available at `/docs`.
 2. Run the installer and follow the prompts. It installs Practicum for the current Windows user;
    you can also choose to create a desktop shortcut.
 3. Install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/) before
-   starting a lab. Practicum uses Docker to run lab machines and networks.
+   starting a lab. Practicum uses Docker to run lab machines and networks. The **Windows** quick
+   start additionally needs Docker Desktop switched to *Windows containers* (right-click the
+   whale icon → "Switch to Windows containers…"); Practicum tells you when that is needed and
+   never switches the mode for you.
 4. Launch **Practicum** from the Start menu or your desktop shortcut. Import a lab JSON file or
    choose one of the sample labs to get started. The first lab run may download container images.
 
@@ -79,21 +83,35 @@ Double-click `start-practicum.bat` (or run it from a terminal in the repo root).
 API window if one is left behind.
 
 To run a lab an instructor sent you, click **Import Existing Lab** in the desktop app, pick the
-`.json` export (the three labs from [`examples/`](examples) are offered as samples), and
+`.json` export (the four labs from [`examples/`](examples) are offered as samples), and
 Practicum imports it, checks host ports and Docker subnets, and starts it — showing the real
 image-download progress while it does. Labs whose host ports or subnets clash with something on
 your machine stop at a review screen with one-click fixes (use a recommended port/subnet, remove a
 leftover from an earlier session, or reset the lab that owns the address space). Once running, the
 lab opens in the running view: its web interface (if it publishes one) embedded in the app, the
 instructions flyout with checkable steps, **Open shell** on each node, and **Restart / Stop / Reset**.
+When the steps are done (or at any point), **Export results** in the flyout saves what was
+completed and when - with the student's name - as a JSON file for the instructor's tooling, a
+Markdown report, or a ZIP bundle to hand in. Instructors can ask for a **screenshot** on a step;
+students capture the embedded lab view or upload their own, and it travels with the results.
 
 Returning users land on the **Your Labs** dashboard (one card per lab with Open / Start / Delete);
 **Create New Lab** offers a Quick start template — an **Ubuntu Desktop** that opens inside the app
-(point and click, made for simple or non-IT labs) or a terminal-only Ubuntu, each with packages to
-pre-install and a step editor — or the Custom Lab designer: pick machines from a catalogue (host,
-router, web server, desktop…), connect them into networks with suggested addresses, and see the
-schematic topology. Any lab can be **edited** later (including quick starts) and **exported** to a
-`.json` file from its dashboard card.
+(point and click, made for simple or non-IT labs), a terminal-only **Ubuntu**, or a **Windows**
+Server Core PowerShell sandbox — each with packages to pre-install (apt packages, or Chocolatey
+tools for Windows) and a step editor — or the Custom Lab designer: pick machines from a catalogue
+(host, router, web server, desktop…), connect them into networks with suggested addresses, see
+the schematic topology, and write the lab instructions as numbered steps (Markdown, with a
+student-view preview). Any lab can be **edited** later (including quick starts) and **exported**
+to a `.json` file from its dashboard card.
+
+The Windows template is only offered while Docker Desktop serves Windows containers: the Create
+screen reports what the engine serves (with Docker's and Microsoft's current requirements linked
+and a Retry), the pre-start review refuses to start a lab built for the other kind of container,
+and **Open PowerShell** replaces **Open shell** on Windows nodes. The lab spec carries this as
+`os: "windows"` / `shell: "powershell"` on the node (see
+[`examples/windows-quickstart.json`](examples/windows-quickstart.json)); the image tag is pinned
+to the Server Core release the host supports (ltsc2019/2022/2025), never `latest`.
 
 ## Build a Windows executable
 
@@ -142,9 +160,11 @@ Invoke-RestMethod `
 ## Current Status and Roadmap
 
 The Docker runtime (start/stop/restart/reset/delete with real pull progress),
-import/export, port- and subnet-conflict detection, and the complete
-mockup-driven desktop UI (phases 1–7 of the backlog) are implemented and
-tested. Work is tracked story-by-story in [src/user-stories.md](src/user-stories.md)
+import/export, port- and subnet-conflict detection, the complete
+mockup-driven desktop UI (phases 1–7 of the backlog) and Windows Quick Start
+support with the design icon set (phase 8) are implemented and tested — phase
+8 has not yet been run on a Windows machine with Docker Desktop in
+Windows-container mode. Work is tracked story-by-story in [src/user-stories.md](src/user-stories.md)
 and [src/user-story-status.json](src/user-story-status.json); the living
 engineering notes are in [Tigre/](Tigre/00-README.md); longer-term ideas live
 in [src/future-roadmap](src/future-roadmap). Labs are held in memory by the

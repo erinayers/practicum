@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QLineEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 DESTRUCTIVE_BUTTON_STYLE = "background-color: #dc2626; color: white; font-weight: 600;"
 
@@ -76,3 +83,59 @@ def confirm(
         destructive=destructive,
     )
     return dialog.exec() == QDialog.DialogCode.Accepted
+
+
+class ResultsExportDialog(QDialog):
+    """Asks for the student's name before the results file is written, and shows what will
+    be exported ("3 of 3 tasks complete"). In-app, like every other dialog; only the save
+    picker that follows is native (D-39)."""
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        lab_name: str,
+        completed: int,
+        total: int,
+        student_name: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Export lab results")
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        intro = QLabel(
+            f'Save your progress on "{lab_name}" to a file you can hand in: every step and '
+            "task, whether you completed it and when."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        summary = QLabel(
+            f"{completed} of {total} tasks complete"
+            + (" \u2014 all steps done." if total and completed == total else ".")
+        )
+        summary.setStyleSheet("font-weight: 600;")
+        layout.addWidget(summary)
+        name_label = QLabel("Your name (written into the file)")
+        layout.addWidget(name_label)
+        self.name_field = QLineEdit(student_name)
+        self.name_field.setPlaceholderText("e.g. Ada Lovelace")
+        self.name_field.setMaxLength(120)
+        self.name_field.setAccessibleName("Your name")
+        layout.addWidget(self.name_field)
+        hint = QLabel("Choose JSON for an instructor's tooling or a Markdown report to read.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #6b7280; font-size: 12px;")
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox()
+        self.cancel_button = buttons.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        self.export_button = buttons.addButton(
+            "Choose file\u2026", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.name_field.setFocus()
+
+    @property
+    def student_name(self) -> str:
+        return self.name_field.text().strip()

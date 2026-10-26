@@ -24,6 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QStandardPaths, Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -36,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 from practicum_desktop.api_client import (
     DEFAULT_BASE_URL,
     ApiClient,
@@ -47,16 +48,23 @@ from practicum_desktop.api_client import (
     LabSummary,
     StartResult,
 )
-from practicum_desktop.app_status import AppStatus
+from practicum_desktop.app_status import AppStatus, evaluate_app_status
 from practicum_desktop.create_lab import CreateLabScreen, QuickStartScreen
 from practicum_desktop.dashboard import DashboardScreen, WelcomeScreen
 from practicum_desktop.designer import DesignerView
-from practicum_desktop.dialogs import confirm
+from practicum_desktop.dialogs import ResultsExportDialog, confirm
+from practicum_desktop.docker_status import (
+    DockerStatus,
+    check_docker,
+    windows_container_readiness,
+)
 from practicum_desktop.embedded_view import default_web_view_factory
 from practicum_desktop.import_lab import ImportLabDialog
+from practicum_desktop.lab_results import RESULTS_FILTER, results_file_name, write_results
 from practicum_desktop.prestart_gate import PreStartGateDialog
 from practicum_desktop.quickstart import QuickStartDraft, create_quick_start_lab
 from practicum_desktop.running_view import RunningLabView
+from practicum_desktop.screenshots import IMAGE_FILTER
 from practicum_desktop.startup import StartupWorker
 from practicum_desktop.widgets import copyable_label, make_button, role_label, style_frame
 from practicum_desktop.workers import CallableWorker, ManagedThread
@@ -74,6 +82,7 @@ READINESS_CHIP = {
     "degraded": ("Docker unavailable", theme.AMBER),
     "blocked": ("API unreachable", theme.DANGER),
 }
+READINESS_ICON = {"ready": "success", "degraded": "warning", "blocked": "error"}
 API_BLOCKED_MESSAGE = (
     "Practicum can't reach its local API, so your labs can't be loaded yet. "
     "Open the connection panel (top right) for details and Retry."
@@ -90,12 +99,22 @@ def export_file_name(lab_name: str) -> str:
     return f"{slug}.json"
 
 
-def ask_save_path(parent: QWidget, suggested: Path) -> Path | None:
+def ask_image_path(parent: QWidget) -> Path | None:
+    """The system open-file picker for a student's own screenshot (the third and last
+    sanctioned native dialog: open lab file, save file, open image)."""
+    pictures = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation)
+    path, _selected = QFileDialog.getOpenFileName(
+        parent, "Upload a screenshot", pictures or str(Path.home()), IMAGE_FILTER
+    )
+    return Path(path) if path else None
+
+
+def ask_save_path(
+    parent: QWidget, suggested: Path, name_filter: str = EXPORT_FILTER, title: str = "Export Lab"
+) -> Path | None:
     """The system save-file picker - with the open-file picker, the only native dialogs the app
     uses (windows-desktop-in-app-dialogs)."""
-    path, _selected = QFileDialog.getSaveFileName(
-        parent, "Export Lab", str(suggested), EXPORT_FILTER
-    )
+    path, _selected = QFileDialog.getSaveFileName(parent, title, str(suggested), name_filter)
     return Path(path) if path else None
 
 
@@ -103,6 +122,7 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         web_view_factory: Callable = default_web_view_factory,
+        screenshot_dir: Path | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Practicum")
@@ -120,6 +140,7 @@ class MainWindow(QMainWindow):
         # (lab_id, message, open_running) to apply once the next lab-list refresh lands.
         self._pending_selection: tuple[str, str, bool] | None = None
         self._web_view_factory = web_view_factory
+        self._screenshot_dir = screenshot_dir
 
         self._build_ui(base_url)
         self.check_status()
@@ -151,6 +172,7 @@ class MainWindow(QMainWindow):
         self.status_chip = make_button("\u25cf Checking\u2026", kind="ghost", small=True)
         self.status_chip.setCheckable(True)
         self.status_chip.setToolTip("Connection to the local Practicum API and Docker")
+        self.status_chip.setAccessibleName("Connection status")
         self.status_chip.toggled.connect(self._on_status_chip_toggled)
         title_row.addWidget(self.status_chip)
         layout.addWidget(titlebar)
@@ -208,6 +230,7 @@ class MainWindow(QMainWindow):
         self.create_screen.back_requested.connect(self.show_home)
         self.create_screen.quick_start_requested.connect(self.show_quick_start)
         self.create_screen.custom_requested.connect(self.show_designer)
+        self.create_screen.readiness_retry_requested.connect(self.refresh_engine)
 
         self.quick_start_screen = QuickStartScreen()
         self.quick_start_screen.back_requested.connect(self.show_create)
@@ -221,11 +244,16 @@ class MainWindow(QMainWindow):
         self.designer.saved.connect(self._on_designer_saved)
 
         self.running_view = RunningLabView(
-            self._api_client, self._settings, web_view_factory=self._web_view_factory
+            self._api_client,
+            self._settings,
+            web_view_factory=self._web_view_factory,
+            screenshot_dir=self._screenshot_dir,
         )
         self.running_view.back_requested.connect(self.show_home)
         self.running_view.start_requested.connect(self._on_running_start_requested)
         self.running_view.lab_changed.connect(self._on_running_lab_changed)
+        self.running_view.export_results_requested.connect(self._on_export_results_requested)
+        self.running_view.screenshot_upload_requested.connect(self._on_screenshot_upload_requested)
 
         self._screens = {
             "welcome": self.welcome,
@@ -274,10 +302,25 @@ class MainWindow(QMainWindow):
         self.welcome.show_note(text, banner)
 
     def show_create(self) -> None:
+        # Hand the create screen the engine mode we know, then refresh it: the user may have
+        # switched Docker Desktop's mode since the last check.
+        docker = self._last_status.docker if self._last_status is not None else None
+        self.create_screen.set_docker_status(docker)
         self.show_screen("create")
+        self.refresh_engine()
 
     def show_quick_start(self, template_key: str = "ubuntu") -> None:
+        option = self.create_screen.template_option(template_key)
+        if not option.available:
+            # Defensive: the create screen disables the CTA, but a stale signal must never
+            # open a Windows draft while the engine cannot run it.
+            self.show_create()
+            return
         self.quick_start_screen.reset(template_key)
+        docker = self.create_screen.docker_status
+        self.quick_start_screen.set_windows_host_build(
+            docker.host_build if docker is not None else None
+        )
         self.show_screen("quickstart")
 
     def show_designer(self) -> None:
@@ -323,8 +366,13 @@ class MainWindow(QMainWindow):
         self._worker.finished_check.connect(self._on_status_checked)
         self._worker.start()
 
-    def _set_status_chip(self, text: str, colour: str) -> None:
-        self.status_chip.setText(f"\u25cf {text}")
+    def _set_status_chip(self, text: str, colour: str, icon_name: str | None = None) -> None:
+        if icon_name is not None and icons.icon_available(icon_name):
+            self.status_chip.setText(text)
+            icons.set_button_icon(self.status_chip, icon_name, 13)
+        else:
+            self.status_chip.setText(f"\u25cf {text}")
+            self.status_chip.setIcon(QIcon())
         self.status_chip.setStyleSheet(
             f"QPushButton {{ color: {colour}; font-weight: 600; }}"
             f"QPushButton:checked {{ background: {theme.LINE_SOFT}; }}"
@@ -334,27 +382,15 @@ class MainWindow(QMainWindow):
     def _set_check_line(label: QLabel, subject: str, ok: bool, detail: str) -> None:
         state = "OK" if ok else "Problem"
         colour = theme.GREEN if ok else theme.DANGER
+        # Words + colour + the design icon: none of them carries the meaning alone.
+        mark = icons.icon_html("success" if ok else "error", 13)
         label.setText(
-            f'{subject}: <span style="color:{colour}; font-weight:600;">{state}</span> '
+            f'{mark} {subject}: <span style="color:{colour}; font-weight:600;">{state}</span> '
             f'<span style="color:{theme.MUTED};">\u2014 {detail}</span>'
         )
 
     def _on_status_checked(self, status: AppStatus, labs_result: LabsResult | None) -> None:
-        self._last_status = status
-        self.retry_button.setEnabled(True)
-        self.readiness_label.setText(f"Status: {READINESS_LABELS[status.readiness]}")
-        # Plain words + colour instead of emoji indicators.
-        self._set_check_line(
-            self.api_status_label, "Practicum API", status.api.healthy, status.api.detail
-        )
-        self._set_check_line(
-            self.docker_status_label, "Docker", status.docker.available, status.docker.detail
-        )
-        self.next_action_label.setText(status.next_action)
-        chip_text, chip_colour = READINESS_CHIP[status.readiness]
-        self._set_status_chip(chip_text, chip_colour)
-        self.running_view.set_docker_available(status.docker.available)
-
+        self._apply_status(status)
         blocked = status.readiness == "blocked"
         self.welcome.set_blocked(API_BLOCKED_MESSAGE if blocked else None)
         self.dashboard.set_actions_enabled(not blocked)
@@ -369,6 +405,40 @@ class MainWindow(QMainWindow):
 
         if labs_result is not None:
             self._on_labs_loaded(labs_result)
+
+    def _apply_status(self, status: AppStatus) -> None:
+        """Renders an API + Docker status everywhere it shows: the connection panel, the
+        title-bar chip, the running view's Docker light and the create screen's templates."""
+        self._last_status = status
+        self.retry_button.setEnabled(True)
+        self.readiness_label.setText(f"Status: {READINESS_LABELS[status.readiness]}")
+        self._set_check_line(
+            self.api_status_label, "Practicum API", status.api.healthy, status.api.detail
+        )
+        self._set_check_line(
+            self.docker_status_label, "Docker", status.docker.available, status.docker.detail
+        )
+        self.next_action_label.setText(status.next_action)
+        chip_text, chip_colour = READINESS_CHIP[status.readiness]
+        if status.readiness == "ready" and status.docker.os_type == "windows":
+            chip_text = "Ready \u00b7 Windows containers"
+        self._set_status_chip(chip_text, chip_colour, READINESS_ICON[status.readiness])
+        self.running_view.set_docker_available(status.docker.available)
+        self.create_screen.set_docker_status(status.docker)
+
+    def refresh_engine(self) -> None:
+        """Re-probes Docker only (read-only `docker info`): what the create screen's Retry
+        and every visit to it run, so switching Docker Desktop's engine mode shows up without
+        restarting Practicum or re-checking the API."""
+        if self._last_status is None:
+            return  # the startup check is still running; it will report everything
+        self.create_screen.set_checking()
+        self._run(check_docker, on_done=self._on_engine_checked)
+
+    def _on_engine_checked(self, docker: DockerStatus) -> None:
+        if self._last_status is None:
+            return
+        self._apply_status(evaluate_app_status(self._last_status.api, docker))
 
     def refresh_labs(self) -> None:
         if not self._api_available:
@@ -444,10 +514,32 @@ class MainWindow(QMainWindow):
     # ----- create: quick start / designer ---------------------------------------------------
 
     def _on_quick_start_create(self, draft: QuickStartDraft) -> None:
+        if draft.template.os == "windows":
+            # Readiness can be lost between choosing the template and Create (the engine
+            # was switched back): re-check, and refuse with the specific reason if so.
+            self.quick_start_screen.set_busy(True, "Checking Windows containers\u2026")
+            self._run(self._check_then_create, draft, on_done=self._on_quick_start_created)
+            return
         self.quick_start_screen.set_busy(True, "Creating lab\u2026")
         self._run(
             create_quick_start_lab, self._api_client, draft, on_done=self._on_quick_start_created
         )
+
+    def _check_then_create(self, draft: QuickStartDraft) -> CreateLabResult:
+        """Worker body for Windows drafts: readiness first, then the normal create."""
+        docker = check_docker()
+        readiness = windows_container_readiness(docker)
+        if not readiness.ready:
+            return CreateLabResult(
+                success=False,
+                detail=(
+                    f"Windows containers are not available right now: {readiness.detail} "
+                    f"{readiness.next_action} Then use Create Lab again, or go back to "
+                    "Change template."
+                ),
+            )
+        draft.windows_host_build = docker.host_build
+        return create_quick_start_lab(self._api_client, draft)
 
     def _on_quick_start_created(self, result: CreateLabResult) -> None:
         if not result.success or not result.lab_id:
@@ -614,6 +706,49 @@ class MainWindow(QMainWindow):
             "Import Existing Lab.",
             "ok",
         )
+
+    # ----- lab results (hand-in) ---------------------------------------------------------------
+
+    def _on_export_results_requested(self, lab_id: str, results: dict) -> None:
+        """Student name (in-app dialog, remembered) → save picker → JSON or Markdown file."""
+        summary = results["summary"]
+        dialog = ResultsExportDialog(
+            self,
+            results["lab"]["name"],
+            summary["completed"],
+            summary["total"],
+            student_name=str(self._settings.value("student_name", "") or ""),
+        )
+        if dialog.exec() != ResultsExportDialog.DialogCode.Accepted:
+            return
+        student = dialog.student_name
+        self._settings.setValue("student_name", student)
+        results["student"]["name"] = student
+        documents = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DocumentsLocation
+        )
+        suggested = Path(documents or Path.home()) / results_file_name(
+            results["lab"]["name"], student
+        )
+        path = ask_save_path(self, suggested, RESULTS_FILTER, "Export Lab Results")
+        if path is None:
+            return
+        try:
+            write_results(path, results)
+        except OSError as exc:
+            self.running_view.show_export_note(f"Could not write {path}: {exc}", "error")
+            return
+        self.running_view.show_export_note(
+            f"Results saved to {path} ({summary['completed']} of {summary['total']} tasks "
+            "complete). Hand that file to your instructor.",
+            "ok",
+        )
+
+    def _on_screenshot_upload_requested(self, lab_id: str, section_id: str) -> None:
+        path = ask_image_path(self)
+        if path is None:
+            return
+        self.running_view.attach_uploaded_screenshot(section_id, path)
 
     def closeEvent(self, event) -> None:
         # Let in-flight API calls finish (briefly) instead of destroying running threads.

@@ -16,6 +16,8 @@ Paid features should generally focus on scale, collaboration, hosted services, c
 - [Hosted Collaboration and Classrooms](hosted-collaboration-classrooms/README.md)
 - [Enterprise and Institution Features](enterprise-institution-features/README.md)
 - [Analytics and Assessment](analytics-assessment/README.md)
+- [Premium Lab Platforms (Windows and macOS labs)](premium-lab-platforms/README.md) — added
+  2026-10-25 after the Phase 8 scope change
 
 ## Paywall Philosophy
 
@@ -30,8 +32,10 @@ Paid features should generally focus on scale, collaboration, hosted services, c
 - Manual authoring
 - Lab manual flyout
 - JSON spec import/export
-- Ability to run instructor-provided labs locally
-- Public spec format and documentation
+- Ability to run instructor-provided **Linux** labs locally
+- Public spec format and documentation (including the `os`/`shell` fields, so Windows/macOS
+  labs stay importable, previewable and exportable everywhere)
+- Authoring of any lab, whatever its platform
 
 ### Reasonable Paid Features
 
@@ -48,6 +52,11 @@ Paid features should generally focus on scale, collaboration, hosted services, c
 - SSO and identity integrations
 - Premium support
 - Managed hosting
+- **Windows-container labs** (Windows Quick Start, Windows nodes, PowerShell) — they require
+  Windows Pro/Enterprise/Education with Hyper-V, which the free plan's typical student laptop
+  (Windows Home) does not have; see the Premium Lab Platforms epic
+- **macOS labs** (macOS guests on Apple-silicon Macs) and the hosted runtime that runs Windows
+  or macOS labs for students whose machines cannot
 
 ## Monetization Concepts
 

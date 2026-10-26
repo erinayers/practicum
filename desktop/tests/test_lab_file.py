@@ -178,6 +178,7 @@ def test_bundled_samples_exist_and_parse() -> None:
         "static-routing.json",
         "ubuntu-quickstart.json",
         "ubuntu-webtop.json",
+        "windows-quickstart.json",
     ]
     for entry in entries:
         assert read_lab_file(entry.path).success is True

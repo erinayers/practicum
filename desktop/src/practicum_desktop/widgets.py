@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from practicum_desktop import theme
+from practicum_desktop import icons, theme
 
 COPYABLE_TEXT_FLAGS = (
     Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
@@ -73,13 +73,38 @@ def role_label(text: str, role: str, wrap: bool = False) -> QLabel:
     return label
 
 
-def make_button(text: str, kind: str = "secondary", small: bool = False) -> QPushButton:
-    """A QPushButton styled by `kind` (primary | secondary | danger | ghost | link | dashed)."""
+# Icon tint per button kind: white on the dark/red buttons, ink elsewhere.
+_ICON_COLOUR_BY_KIND = {
+    "primary": "white",
+    "danger": "white",
+    "ghost": theme.MUTED,
+    "link": theme.MUTED,
+}
+
+
+def make_button(
+    text: str,
+    kind: str = "secondary",
+    small: bool = False,
+    icon: str | None = None,
+    icon_trailing: bool = False,
+) -> QPushButton:
+    """A QPushButton styled by `kind` (primary | secondary | danger | ghost | link | dashed),
+    optionally with a design icon (`icons.ICONS` name) before - or, with `icon_trailing`,
+    after - its text."""
     button = QPushButton(text)
     button.setProperty("kind", kind)
     if small:
         button.setProperty("small", True)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
+    if icon is not None:
+        icons.set_button_icon(
+            button,
+            icon,
+            size=13 if small else 14,
+            colour=_ICON_COLOUR_BY_KIND.get(kind, theme.INK),
+            trailing=icon_trailing,
+        )
     return button
 
 
@@ -156,33 +181,78 @@ class RemovableChip(QFrame):
         self.removed.emit(self.value)
 
 
-class NoteBanner(QFrame):
-    """A dismissible, word-wrapping message bar (ok / info / warn / error) for transient
-    notes such as "Deleted 'X'. Its containers were removed …". `message_label` is the text;
-    `show_note("")` or the × hides it."""
+BANNER_ICON_SIZE = 16
 
-    dismissed = Signal()
 
-    def __init__(self, parent: QWidget | None = None, fixed_width: int | None = None) -> None:
+class MessageBanner(QFrame):
+    """A message bar (ok / info / warn / error) with the matching design icon in front of a
+    word-wrapping, copyable text: the shared shape of every status banner in the app
+    (gate checks, running-view action feedback, designer validation, welcome blockers).
+
+    Styled through the `banner` property (theme `[banner="warn"]` rules), the same role the
+    older plain-label banners used, so `text()` / `property("banner")` read the same way.
+    Meaning never rests on the icon or colour alone: the text always says it."""
+
+    def __init__(self, kind: str = "info", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("noteBanner")
-        if fixed_width is not None:
-            self.setFixedWidth(fixed_width)
+        self.setObjectName("messageBanner")
         row = QHBoxLayout(self)
-        row.setContentsMargins(12, 8, 8, 8)
+        row.setContentsMargins(12, 8, 12, 8)
         row.setSpacing(8)
+        self.icon_label = icons.icon_label("success", BANNER_ICON_SIZE)
+        self.icon_label.hide()
+        row.addWidget(self.icon_label, 0, Qt.AlignmentFlag.AlignTop)
         self.message_label = QLabel("")
         self.message_label.setWordWrap(True)
         self.message_label.setTextInteractionFlags(COPYABLE_TEXT_FLAGS)
         self.message_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.message_label, 1)
+        self.row = row
+        self.kind = kind
+        self.set_kind(kind)
+
+    def set_kind(self, kind: str) -> None:
+        self.kind = kind
+        set_role(self, "banner", kind)
+        icon_name = icons.BANNER_ICONS.get(kind)
+        icons.set_label_icon(self.icon_label, icon_name, BANNER_ICON_SIZE)
+        self.icon_label.setVisible(icon_name is not None and icons.icon_available(icon_name))
+
+    def set_message(self, text: str, kind: str | None = None) -> None:
+        """Sets the text (and kind) and shows the banner; an empty text hides it."""
+        if kind is not None and kind != self.kind:
+            self.set_kind(kind)
+        self.message_label.setText(text)
+        self.setVisible(bool(text))
+
+    # QLabel-compatible accessors, so screens and tests read banners the same way.
+    def setText(self, text: str) -> None:  # Qt naming
+        self.message_label.setText(text)
+
+    def text(self) -> str:
+        return self.message_label.text()
+
+
+class NoteBanner(MessageBanner):
+    """A dismissible MessageBanner for transient notes such as "Deleted 'X'. Its containers
+    were removed …". `message_label` is the text; `show_note("")` or the × hides it."""
+
+    dismissed = Signal()
+
+    def __init__(self, parent: QWidget | None = None, fixed_width: int | None = None) -> None:
+        super().__init__("info", parent)
+        self.setObjectName("noteBanner")
+        if fixed_width is not None:
+            self.setFixedWidth(fixed_width)
+        self.row.setContentsMargins(12, 8, 8, 8)
         self.close_button = QPushButton("\u00d7")
+        self.close_button.setObjectName("bannerDismiss")
         self.close_button.setToolTip("Dismiss")
+        self.close_button.setAccessibleName("Dismiss")
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_button.setFixedSize(22, 22)
         self.close_button.clicked.connect(self._on_dismiss)
-        row.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
-        self.kind = "info"
+        self.row.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
         self.hide()
         self.message_label.hide()
 
@@ -190,22 +260,8 @@ class NoteBanner(QFrame):
         if not text:
             self.clear()
             return
-        self.kind = kind
+        self.set_kind(kind)
         self.message_label.setText(text)
-        palette = {
-            "ok": ("#f0fdf4", "#15803d", "#bbf7d0"),
-            "warn": ("#fffbeb", "#92400e", "#fde68a"),
-            "error": ("#fef2f2", "#991b1b", "#fecaca"),
-            "info": ("#f8fafc", theme.INK_SOFT, theme.LINE),
-        }.get(kind, ("#f8fafc", theme.INK_SOFT, theme.LINE))
-        background, colour, border = palette
-        self.setStyleSheet(
-            f"QFrame#noteBanner {{ background: {background}; border: 1px solid {border};"
-            f" border-radius: {theme.RADIUS_SM}px; }}"
-            f"QLabel {{ color: {colour}; font-size: 12.5px; border: none; background: transparent; }}"
-            f"QPushButton {{ background: transparent; border: none; color: {colour};"
-            " font-size: 15px; font-weight: 700; padding: 0; }"
-        )
         self.message_label.show()
         self.show()
 
@@ -213,9 +269,6 @@ class NoteBanner(QFrame):
         self.message_label.setText("")
         self.message_label.hide()
         self.hide()
-
-    def text(self) -> str:
-        return self.message_label.text()
 
     def _on_dismiss(self) -> None:
         self.clear()
@@ -243,18 +296,26 @@ class StatTile(QFrame):
 
 
 class BackLink(QPushButton):
-    """'← Back to my labs' ghost link."""
+    """'(back icon) Back to my labs' ghost link. Without text it is icon-only and carries
+    its meaning in the accessible name and tooltip."""
 
     def __init__(self, text: str, parent: QWidget | None = None) -> None:
-        super().__init__(f"\u2190 {text}", parent)
+        super().__init__(text, parent)
         self.setProperty("kind", "ghost")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.setStyleSheet("padding: 4px 6px; font-weight: 400; font-size: 13px;")
+        if not icons.icon_available("back"):
+            self.setText(f"\u2190 {text}".strip())
+        icons.set_button_icon(self, "back", size=16, colour=theme.INK)
+        self.setAccessibleName(text or "Back")
 
 
 class StatusPill(QWidget):
-    """'● Draft valid · 3 machines' — a coloured dot followed by muted text."""
+    """'(check) Draft valid · 3 machines' — the design icon for the state (green = success,
+    amber = warning, red = error; a plain dot for any other colour) followed by muted text."""
+
+    ICON_SIZE = 14
 
     def __init__(self, text: str = "", colour: str = theme.GREEN, parent=None) -> None:
         super().__init__(parent)
@@ -262,17 +323,29 @@ class StatusPill(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         self.dot = QLabel()
-        self.dot.setFixedSize(8, 8)
+        self.dot.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
+        self.dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         row.addWidget(self.dot)
         self.text_label = QLabel(text)
         self.text_label.setProperty("role", "muted")
         row.addWidget(self.text_label)
         row.addStretch(1)
+        self.colour = colour
         self.set_state(text, colour)
 
     def set_state(self, text: str, colour: str = theme.GREEN) -> None:
         self.text_label.setText(text)
-        self.dot.setStyleSheet(f"background: {colour}; border-radius: 4px;")
+        self.colour = colour
+        icon_name = icons.COLOUR_ICONS.get(colour)
+        if icon_name is not None and icons.icon_available(icon_name):
+            self.dot.setStyleSheet("background: transparent;")
+            icons.set_label_icon(self.dot, icon_name, self.ICON_SIZE)
+            return
+        icons.set_label_icon(self.dot, None, self.ICON_SIZE)
+        radius = self.ICON_SIZE // 2
+        self.dot.setStyleSheet(
+            f"background: {colour}; border-radius: {radius}px; margin: 3px;"
+        )
 
 
 # ----- panels -------------------------------------------------------------------------------
@@ -518,8 +591,12 @@ class TopologyLink:
     address: str = ""
 
 
-NODE_HOST_GLYPH = "\u25a0"  # ■ a machine
-NODE_GATEWAY_GLYPH = "\u25c6"  # ◆ a machine that joins two or more networks
+NODE_HOST_GLYPH = "\u25a0"  # ■ a machine (text fallback)
+NODE_GATEWAY_GLYPH = "\u25c6"  # ◆ a machine that joins two or more networks (text fallback)
+# Design icons per derived role: a host is a machine (desktop), a gateway forwards traffic
+# between its networks (forward arrow).
+NODE_ICON_NAMES = {"host": "desktop", "gateway": "forward", "unconnected": "desktop"}
+NODE_CARD_ICON_SIZE = 18
 CARD_W, CARD_H = 108, 66
 CONNECTOR_W = 130
 COMPACT_CONNECTOR_W = 70  # illustrations (Create screen) have less room
@@ -535,6 +612,11 @@ def node_role(link_count: int) -> str:
     if link_count == 1:
         return "host"
     return "unconnected"
+
+
+def node_icon_name(link_count: int) -> str:
+    """The design icon for a node's derived role (see NODE_ICON_NAMES)."""
+    return NODE_ICON_NAMES[node_role(link_count)]
 
 
 class TopologyView(QWidget):
@@ -679,14 +761,22 @@ class TopologyView(QWidget):
         painter.drawRoundedRect(QRectF(rect), 12, 12)
 
         links = len(self.links_of(node.id))
-        icon = NODE_GATEWAY_GLYPH if links >= 2 else NODE_HOST_GLYPH
-        painter.setPen(QColor(theme.INK))
-        icon_font = QFont(self.font())
-        icon_font.setPointSizeF(14)
-        painter.setFont(icon_font)
-        painter.drawText(
-            QRect(rect.left(), rect.top() + 6, rect.width(), 22), Qt.AlignmentFlag.AlignCenter, icon
-        )
+        icon_rect = QRect(rect.left(), rect.top() + 6, rect.width(), 22)
+        icon_name = node_icon_name(links)
+        if icons.icon_available(icon_name):
+            pixmap = icons.pixmap(icon_name, NODE_CARD_ICON_SIZE, theme.INK)
+            painter.drawPixmap(
+                icon_rect.center().x() - pixmap.width() // 2,
+                icon_rect.center().y() - pixmap.height() // 2 + 1,
+                pixmap,
+            )
+        else:
+            icon = NODE_GATEWAY_GLYPH if links >= 2 else NODE_HOST_GLYPH
+            painter.setPen(QColor(theme.INK))
+            icon_font = QFont(self.font())
+            icon_font.setPointSizeF(14)
+            painter.setFont(icon_font)
+            painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, icon)
 
         id_font = QFont(self.font())
         id_font.setBold(True)

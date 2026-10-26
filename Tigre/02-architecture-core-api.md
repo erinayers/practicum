@@ -1,15 +1,17 @@
 # 02 — Core API Architecture (`src/practicum/`)
 
-Hexagonal-ish, small. Six modules, ~1,700 lines total (Session 5, 2026-10-24).
+Hexagonal-ish, small. Six modules, ~1,900 lines total (Session 6, 2026-10-25).
 
 ```
-main.py (~260)   FastAPI routes — thin HTTP adapter, error → status-code mapping
-service.py (~440) LabService — in-memory store + lifecycle orchestration + start progress store
-runtime.py (~560) LabRuntime Protocol + DockerRuntime adapter (docker CLI via subprocess;
-                 image inspect / streamed pull / docker start reuse / progress callback)
+main.py (~270)   FastAPI routes — thin HTTP adapter, error → status-code mapping
+service.py (~450) LabService — in-memory store + lifecycle orchestration + start progress store
+runtime.py (~680) LabRuntime Protocol + DockerRuntime adapter (docker CLI via subprocess;
+                 engine-mode probe / image inspect / streamed pull / docker start reuse /
+                 progress callback; bridge or nat networks per lab OS)
 ports.py (~110)  Host port-conflict detection + recommendations (TCP and UDP probes)
 networks.py (~120) Subnet-overlap detection vs Docker networks + recommendations + subnet move
-models.py (~380) Pydantic v2 domain + response models (all extra="forbid" on inputs)
+models.py (~430) Pydantic v2 domain + response models (all extra="forbid" on inputs);
+                 Node.os / Node.shell (Windows labs, Session 6)
 ```
 
 Dependency direction: `main → service → (runtime, ports, networks) → models`. Nothing imports
@@ -39,10 +41,11 @@ Single module-level `service = LabService()` (tests reset it via `service.clear(
 | `POST /labs/{id}/reset` | `reset_lab` | `RuntimeActionResult` | 404, 409 busy |
 | `GET /labs/{id}/status` | `lab_status` | `RuntimeStatusResult{lab, resources[], errors[], progress:[NodeStartProgress]}` | 404 |
 | `GET /labs/{id}/ports` | `get_lab_ports` | `PortCheckResult{lab_id, has_conflicts, conflicts[]}` | 404 |
-| `POST /labs/{id}/ports/apply-recommendation` | `apply_port_recommendation` body `{node_id, host_port, protocol="tcp"}` | `PortCheckResult` (fresh re-check) | 404, **409** if no conflict/recommendation |
+| `POST /labs/{id}/ports/apply-recommendation` | `apply_port_recommendation` body `{node_id, host_port, protocol="tcp", new_host_port?}` | `PortCheckResult` (fresh re-check); with `new_host_port` the user's port replaces the recommendation | 404, **409** if no conflict/recommendation, or the chosen port is unusable (`PortUnavailableError`: reserved by the API / used in the lab / bound on the host / the conflicting port itself — `ports.port_unavailable_reason`) |
 | `GET /labs/{id}/networks` | `check_networks` | `NetworkCheckResult{lab_id, has_conflicts, conflicts:[SubnetConflict], error?}` — `error` set (200) when Docker can't be queried | 404 |
 | `POST /labs/{id}/networks/apply-recommendation` | `apply_subnet_recommendation` body `{network_id}` | `NetworkCheckResult` (fresh re-check; lab + export now use the new subnet) | 404, **409** no conflict/recommendation |
 | `POST /docker/sweep-leftovers` | `sweep_leftovers` | `LeftoverSweepResult{removed_containers[], removed_networks[], errors[], error?}` — Practicum-labelled resources whose lab id is unknown to this API; **also run by the `lifespan` startup hook** (D-40) | never raises |
+| `GET /docker/engine` | `docker_engine` | `DockerEngineInfo{available, os_type: linux\|windows\|null, server_version, operating_system, kernel_version, host_build, isolation, detail}` — read-only `docker info`; which kind of container Docker Desktop serves (Session 6, D-42). Never switches it. | never raises (Docker down → `available=false` + detail) |
 | `POST /labs/{id}/networks/remove-leftover` | `remove_leftover_network` body `{network_name}` | `NetworkCheckResult` (fresh re-check) | 404, **409** not a conflict / belongs to a listed lab / not Practicum's |
 
 `validation_issues(exc)` flattens Pydantic `ValidationError` → `ValidationIssue{location[],
@@ -85,26 +88,43 @@ Runtime failures are **not** HTTP errors: they come back as 200 with `success=fa
   any lifecycle call (incl. delete) while "starting"/"stopping" → LabBusyError → 409
   ```
   `start` first re-checks host ports (`ports.check_lab_ports`) and fails with a structured
-  `host port conflict: …` error without calling Docker; then it records per-node progress via the
-  runtime's `on_progress` callback (`_run_start`). `start(wait=False)` runs `_run_start` on a
+  `host port conflict: …` error without calling Docker; the runtime then re-checks the engine
+  mode (`_require_engine_os`, Session 6: a Windows lab while Docker serves Linux containers — or
+  vice versa — fails before anything is created, with the Docker Desktop switch instructions as
+  `last_error`); then it records per-node progress via the runtime's `on_progress` callback
+  (`_run_start`). `start(wait=False)` runs `_run_start` on a
   daemon-less `threading.Thread` and returns `pending=True` immediately. `status()` snapshots the
   progress *after* the Docker queries so it is never older than the lab status beside it.
   Start from `stopped` reuses the containers (`docker start`) — Tigre/06 #2 is fixed.
 - `check_ports(id)` → delegates to `ports.check_lab_ports`.
-- `apply_port_recommendation(id, node_id, host_port, protocol)`: re-runs the check, finds the
-  matching conflict, and **rewrites the node's resources**: removes the port from
-  `exposed_ports` (tcp only) or from `port_mappings`, then appends
-  `PortMapping(host=recommended, container=<original container port>, protocol)`. Rebuilds the
-  whole `LabDefinition` through validation and replaces the stored `Lab` (same id/status).
+- `docker_engine()` → `runtime.engine_info()`; a `RuntimeFailure` becomes `available=false`.
+- `apply_port_recommendation(id, node_id, host_port, protocol, new_host_port=None)`: re-runs
+  the check, finds the matching conflict, and **rewrites the node's resources**: removes the
+  port from `exposed_ports` (tcp only) or from `port_mappings`, then appends
+  `PortMapping(host=<recommended or chosen>, container=<original container port>, protocol)`.
+  Rebuilds the whole `LabDefinition` through validation and stores it via
+  `_store_rewritten_definition` (shared with the subnet fix): a lab that has run is **reset
+  first** (containers/networks removed, status → `defined`, `machines_reset=True` in the
+  result) so the next Start cannot `docker start` containers that still carry the old mapping
+  and the old session data (D-48); a never-started lab is rewritten in place; cleanup failure
+  → `LabDeleteError` (409), definition unchanged.
   Raises `PortRecommendationUnavailableError` if no matching conflict or `recommended_port is None`.
 - `clear()` — test helper.
 
 ## runtime.py — LabRuntime + DockerRuntime
 
-`LabRuntime(Protocol)`: `start(lab, on_progress=None)`, `stop(lab)`, `reset(lab)`,
-`status(lab) -> list[RuntimeResourceStatus]`, `list_networks()`, `remove_network(info)`.
+`LabRuntime(Protocol)`: `engine_info() -> DockerEngineInfo`, `start(lab, on_progress=None)`,
+`stop(lab)`, `reset(lab)`, `status(lab) -> list[RuntimeResourceStatus]`, `list_networks()`,
+`remove_network(info)`, `list_practicum_containers()`, `remove_container(name)`.
 `ProgressCallback = Callable[[NodeStartProgress], None]` — test fakes must accept the second
-argument of `start` (see `RecordingRuntime` in `tests/test_api.py`).
+argument of `start` and implement `engine_info` (see `RecordingRuntime` in `tests/test_api.py`).
+
+`engine_info()` runs `docker info --format '{{json .}}'` (15 s timeout) and `parse_engine_info`
+reads `OSType` (linux|windows), `ServerVersion`, `OperatingSystem`, `KernelVersion` (Windows:
+"10.0 22631 (…)" → `host_build` 22631, which decides the Server Core tag the desktop pins),
+`Isolation`. With the daemon down the CLI still prints the client JSON with `ServerErrors` and
+exits 1 → `available=false` with that text; no JSON at all → stderr. The same parse lives in the
+desktop's `docker_status.py` for its own probe.
 
 `RuntimeFailure(message, command)` — the only exception type; any `OSError` launching the
 `docker` binary becomes `RuntimeFailure(...)`: `FileNotFoundError` → "Docker CLI was not found",
@@ -119,11 +139,19 @@ since 2026-10-23 — previously only `FileNotFoundError` was caught and `POST /s
 - `_practicum_network_names()` lists networks with `--filter label=practicum.lab_id`.
 
 ### start(lab)
+0. `_require_engine_os(lab)`: `engine_info()`; when the daemon's `os_type` is known and differs
+   from `lab.container_os` (every node's `os`, validated to agree) → `RuntimeFailure("This lab
+   needs Windows containers, but Docker Desktop is currently serving Linux containers. … switch
+   Docker Desktop to Windows containers (right-click the whale icon → 'Switch to Windows
+   containers...') …", ["docker","info"])` before anything is created and outside the
+   failed-start cleanup (nothing to clean). Unknown mode (empty answer, as the generic test fake
+   gives) → let Docker decide.
 1. For each network → `_create_network`:
    - If `docker network ls --filter name=^<name>$` already shows it → reuse (idempotent restart).
    - Else `_remove_empty_practicum_networks_with_subnet(subnet)`: inspects all practicum-labelled
      networks, removes any with the same `IPAM.Config[].Subnet` and **no** `Containers`.
-   - `docker network create --driver bridge --subnet S --gateway G --label ... name`.
+   - `docker network create --driver bridge --subnet S --gateway G --label ... name`
+     (`--driver nat` for Windows labs: Windows has no bridge driver; `NETWORK_DRIVERS`).
      Gateway = **highest usable IP in the subnet not assigned to any interface** (`_gateway_ip`
      via `_usable_ips_descending`). Raises if none free.
    - "pool overlaps" Docker error is rewrapped into an actionable message telling the user to
@@ -158,7 +186,8 @@ the old check only knew "no such network", so resetting a lab whose networks wer
 container `docker inspect --format {{.State.Status}} <name>` (status = Docker's string e.g.
 `running`, `exited`). Non-zero exit → `exists=False, error=stderr`. Running containers also get
 `note` = first line of `/run/practicum-packages.status` via `docker exec … cat` (5 s timeout;
-missing → None) — the quick start's package-install marker. Never raises.
+missing → None) — the quick start's package-install marker; Windows nodes (`node.os`) read
+`C:\practicum\packages.status` with `cmd /c type` (`CONTAINER_NOTE_COMMANDS`). Never raises.
 
 All `subprocess.run` calls: `capture_output=True, check=False, text=True`; the pull uses
 `subprocess.Popen(stdout=PIPE, stderr=STDOUT, text=True, bufsize=1)`. Tests monkeypatch
@@ -218,19 +247,24 @@ protocol,reason,recommended_port?}`, `PortCheckResult`, `ApplyPortRecommendation
 `Lab(LabDefinition)` adds `id`, `status = "defined"`, `origin: LabOrigin = "designer"`,
 `source_file`, `created_at`, `last_started_at`, `last_error`; `LAB_RUNTIME_FIELDS` names the
 non-spec fields that export/move_subnet/_with_definition strip or preserve.
+`Node.os: NodeOS = "linux"` and `Node.shell: NodeShell | None` (Session 6, D-43): declared, not
+guessed; `effective_shell` = shell or the OS default (bash / powershell); validators: shell fits
+the OS, Windows nodes have no `shm_size_mb`/`sysctls`, all nodes of a lab share one OS
+(`LabDefinition.container_os`). `LabPreview.container_os`. `DockerEngineInfo` for `GET /docker/engine`.
 
-## Tests (tests/, 159 passing)
+## Tests (tests/, 204 passing)
 
 | File | Count | Strategy |
 |---|---|---|
 | `conftest.py` | — | autouse `clear_labs` resets service + runtime **and makes `is_local_port_free` answer True** (POST /start re-checks ports; the sandbox cannot bind 22); `real_port_probe` fixture returns the real function; `client` = `TestClient(app)`; `lab_definition` = 3-node "Static Routing Fundamentals" dict (host-a, router, host-b; left 10.0.1.0/24, right 10.0.2.0/24; router has exposed 22 + mapping 2222→22) |
-| `test_api.py` | 65 | End-to-end via TestClient; `RecordingRuntime` / `FailingRuntime` fakes (`start(lab, on_progress=None)`) assigned to `service.runtime`; restart/delete/busy-409/origin/timestamps/progress/async-start tests added 2026-10-24 |
-| `test_models.py` | 20 | Pydantic rule checks |
+| `test_api.py` | 79 | End-to-end via TestClient; `RecordingRuntime` / `FailingRuntime` fakes (`start(lab, on_progress=None)`, `engine_info()`) assigned to `service.runtime`; restart/delete/busy-409/origin/timestamps/progress/async-start tests added 2026-10-24; `/docker/engine`, Windows os/shell export→import round trip, preview `container_os`, mixed-OS rejection, structured engine-mode start failure added 2026-10-25 |
+| `test_models.py` | 26 | Pydantic rule checks (+ os/shell rules, one OS per lab) |
 | `test_ports.py` | 10 | monkeypatched `is_local_port_free(port, protocol)`, real TCP and UDP socket binds |
-| `test_runtime.py` | 26 | monkeypatch `subprocess.run` (+ `Popen` → `FakePullProcess`), assert exact docker argv; covers cleanup-on-failure, stale network removal, network reuse, pool overlap message, missing CLI, idempotent stop/reset, no-gateway error, `docker start` reuse, image check/skip pull, layer progress, pull failure attribution, "network not found" tolerance |
+| `test_runtime.py` | 38 | monkeypatch `subprocess.run` (+ `Popen` → `FakePullProcess`), assert exact docker argv; covers cleanup-on-failure, stale network removal, network reuse, pool overlap message, missing CLI, idempotent stop/reset, no-gateway error, `docker start` reuse, image check/skip pull, layer progress, pull failure attribution, "network not found" tolerance; 2026-10-25: `parse_engine_info` (Windows/Linux/down), `engine_info` argv, engine-mode refusal both ways (nothing created), `nat` driver + PowerShell command for Windows labs, unknown mode lets Docker decide, Windows note via `cmd /c type` |
 | `test_service.py` | 16 | LabService with real `DockerRuntime` (no subprocess reached for CRUD/preview); delete/restart/busy/export-strips-bookkeeping |
 | `test_networks.py` | 11 | pure `networks.py` logic: recommendations, owner classification, own-network exemption, partial overlaps, `move_subnet` |
 | `test_network_conflicts_api.py` | 11 | `FakeRuntime` (in-memory network list) assigned to `service.runtime`; the three `/networks` routes incl. 409 refusals |
+| `test_windows_quickstart_contract.py` | 9 | **Cross-package** (imports `desktop/src`, skipped if absent): the lab the desktop's Windows quick start builds validates against `LabDefinition` for every host build in the matrix (pinned tag, one node, PowerShell, manual steps); Ubuntu builders unchanged (no `os`/`shell`/`PRACTICUM_*` leak); every `examples/*.json` validates; `windows-quickstart.json` carries the current `WINDOWS_INIT_SCRIPT` |
 
 Run: from repo root, `pytest` (needs the package importable — `pip install -e ".[dev]"` or
 `PYTHONPATH=src`).
@@ -239,8 +273,10 @@ Run: from repo root, `pytest` (needs the package importable — `pip install -e 
 
 - No persistence (no DB, no file store) — restart = empty lab list, Docker resources become
   "leftovers" (Tigre/11 S-1).
-- No `PUT /labs/{id}` (edit an existing lab — S-7), no image inventory endpoint (S-17), no
-  host-resource feasibility check (S-19), no logs/diagnostics (S-20).
+- No image inventory endpoint (S-17), no host-resource feasibility check (S-19), no
+  logs/diagnostics (S-20). (`PUT /labs/{id}` exists since 2026-10-24.)
+- It reads Docker Desktop's engine mode but never switches it (D-42); a lab of the other kind
+  simply refuses to start with the instructions.
 - Export is deliberately not guarded by host-port conflicts (D-30): ports are machine-specific.
 - The action lock is per process (in memory); a `starting` lab whose API restarts loses it.
 - `wait=false` starts are plain threads (no cancellation — `student-start-lab` edge case).

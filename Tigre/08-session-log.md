@@ -4,6 +4,218 @@ Newest entry first. Each entry: date, goal, what was done, what was verified, wh
 
 ---
 
+## 2026-10-26 ? Public website stories drafted
+
+**Goal**: define how Practicum can market and distribute the open-source app through a website.
+
+**Done**: added Phase 10 and four stories covering product positioning for instructors/students, canonical release downloads, getting started/help, and project transparency/contribution. Added the project-website epic index, updated the canonical status tracker, and summarized the phase in the backlog. The stories preserve the open-core boundary and treat hosted/paid features as future plans.
+
+**Verified**: parsed the story-status JSON and confirmed each new story is indexed in Phase 10. No website code or hosting has been created.
+
+**Next**: choose a static site implementation/hosting approach when ready to build; the release page should continue to link to canonical GitHub Releases.
+
+---
+
+## 2026-10-26 ? Persistence stories drafted
+
+**Goal**: turn the agreed local SQLite approach into reviewable backlog stories.
+
+**Done**: added Phase 9 and three stories: durable lab records (`lab-persistence-sqlite`), Docker runtime reconciliation on API startup (`lab-runtime-reconciliation`), and per-user/configurable database location (`local-data-directory`). Updated the canonical story tracker, resolved Q-3 and recorded D-51 (embedded SQLite; per-user Windows app-data; development override), and updated the suggested backlog order. Implementation is not started.
+
+**Verified**: parsed `src/user-story-status.json` successfully and checked that all three new stories are listed in Phase 9.
+
+**Next**: implement `lab-persistence-sqlite`; this work does not require the unavailable Windows-container setup.
+
+---
+
+## 2026-10-25 — Session 6: Phase 8 completed — Windows Quick Start (readiness, template, PowerShell, tools) + design icons
+
+**Goal (user):** "complete all of the user stories under phase 8" — US 1 Windows container
+readiness, US 2 Windows quick start template, US 3 Open PowerShell, US 4 Windows tools, and
+"Use Design Icons Across the Desktop UI".
+
+**Order followed:** core spec + runtime (`Node.os/shell`, `GET /docker/engine`, engine
+re-check, `nat` driver) → icon assets + `icons.py` + `MessageBanner`/theme → icons applied
+screen by screen → desktop readiness probe (`docker_status`) → Windows template / tool catalog /
+init script → Create screen gating + readiness panel → `MainWindow` engine refresh → PowerShell
+shell + running view → gate engine check → import engine stage → tests → screenshots → live-API
+e2e with a fake Windows/Linux `docker` → docs.
+
+**Done (core, `src/practicum`)** — 204 tests (was 173)
+- `models.py`: `Node.os` (`linux`|`windows`), `Node.shell` (`bash`|`sh`|`powershell`|`cmd`,
+  None = OS default, `effective_shell`), validators (shell fits OS; no `shm_size_mb`/`sysctls` on
+  Windows; all nodes share one OS), `LabDefinition.container_os`, `LabPreview.container_os`,
+  `DockerEngineInfo`.
+- `runtime.py`: `engine_info()` + `parse_engine_info` (`docker info --format '{{json .}}'`:
+  `OSType`, `ServerVersion`, `OperatingSystem`, `KernelVersion` → `host_build`, `Isolation`;
+  daemon-down JSON with `ServerErrors` handled), `_require_engine_os` at the top of `start`
+  (specific switch-instruction failure before anything is created; unknown mode lets Docker
+  decide so the generic test fake still works), `NETWORK_DRIVERS` (`nat` for Windows labs),
+  `CONTAINER_NOTE_COMMANDS` (`cmd /c type C:\practicum\packages.status`). `service.docker_engine()`,
+  `main.py` `GET /docker/engine`. Postman +3 requests.
+- Tests: `test_models` (+6), `test_runtime` (+9: parse, argv, refusal both ways, nat + PowerShell
+  argv, unknown mode, Windows note), `test_api` (+6: engine endpoint, os/shell export→import
+  round trip, preview `container_os`, mixed-OS rejection, structured start failure).
+
+**Done (desktop, `desktop/src/practicum_desktop`)** — 350 tests (was 291, incl. the 3
+pre-existing `test_docker_status` failures — `creationflags` — now fixed), 1 new module
+- `icons.py` (new) + `assets/icons/*.png` cut from `design/icons.png` by
+  `tools/slice_design_icons.py` (flood-fill matte removal keeps the white check/cross/bang;
+  black icons stored as ink masks for tinting). `ICONS` meanings, cached multi-size `QIcon`s with
+  tint + disabled states, `icon_label`, `set_button_icon` (trailing icons via RTL + padding),
+  `icon_html`; null-safe when assets are missing.
+- `widgets.py`: `MessageBanner` (icon + copyable text; `NoteBanner` now subclasses it),
+  `StatusPill` with icons by colour, `BackLink` icon, `make_button(icon=, icon_trailing=)`.
+  `theme.py`: `BANNER_COLOURS`/`_banner_rules` for both banner shapes. Applied across
+  `main_window` (chip, check lines via `<img>`), `dashboard` (origin tiles, Start, link arrow,
+  blocked banner), `create_lab` (cards, template rows, CTAs, readiness panel), `running_view`
+  (back, Start lab, Open shell/PowerShell, Docker light, feedback banner), `prestart_gate`
+  (banners, Start Lab, engine panel), `progress_panel` (ready/failed marks), `manual` (done
+  markers, Mark step complete), `designer` (validation banner, Save & Start), `embedded_view`.
+- `docker_status.py` rewritten: JSON `docker info` → `DockerStatus{os_type, server_version,
+  operating_system, host_build, isolation}`, `windows_container_readiness()` (three states +
+  next action + doc URLs), `check_windows_container_readiness()`. `app_status.py`: Windows-mode
+  note, `AppStatus.windows_containers`.
+- `quickstart.py`: Windows template (kind/os/shell, 2 vCPU/2 GB, default tool `git`),
+  `WindowsImage`/`WINDOWS_IMAGES`/`windows_image_for_host` (D-44), `WINDOWS_TOOL_CATALOG` (15
+  Chocolatey ids) + kind-aware `catalog_option`/`packages_for_options`, `validate_package_name(kind)`,
+  `WINDOWS_INIT_SCRIPT` + `windows_node_command` (`-EncodedCommand`, D-45) +
+  `windows_package_environment`, `QuickStartDraft.windows_host_build`, per-template picker wording.
+- `create_lab.py`: `template_availability()`, `TemplateOption.set_available/inspected`,
+  `WindowsReadinessPanel` (state icon, next action, Docker + Microsoft links, Retry),
+  `CreateLabScreen.set_docker_status/readiness_retry_requested`, fallback selection when the
+  engine switches; `QuickStartScreen` Windows wording + `set_windows_host_build`.
+- `main_window.py`: `_apply_status` (one renderer for panel/chip/running view/create screen),
+  `refresh_engine` (worker `check_docker`; Retry + each Create visit), `show_quick_start` guard,
+  `_check_then_create` (readiness re-check before creating a Windows draft), chip
+  "Ready · Windows containers".
+- `node_shell.py` rewritten: `shell_command(container, os, shell)`, `shell_label`,
+  `container_state` pre-check (stopped/missing → in-app error), PowerShell/cmd argv without
+  spaces or quotes. `running_view.py`: node os/shell from the preview, **Open PowerShell**
+  button + tooltips/accessible names, wider State/button columns.
+- `prestart_gate.py`: Container engine panel (`GET /docker/engine` vs `container_os`,
+  `engine_verdict`, Retry) gating Start. `import_lab.py`: engine stage → hand over to the gate
+  on mismatch/unreachable. `api_client.py`: `get_docker_engine`, `TopologyNodeInfo.os/shell`,
+  `PreviewResult/LabSummary/ImportLabResult.container_os`. `labels.py`: `lab_icon_name`,
+  "Windows" in `origin_meta`.
+- Side fix: dashboard cards with an error line were clipped in a multi-row grid (Tigre/06 #25).
+- `examples/windows-quickstart.json` (+ bundled sample), `build-windows.ps1` / `Practicum.spec`
+  `--add-data` for `practicum_desktop/assets` and `samples`.
+
+**Verified**
+- Unit suites: core 204, desktop 350; `-s` grep shows no swallowed tracebacks; the desktop suite
+  exits 0 in repeated full runs. ruff clean on everything touched (pre-existing `main.py` F821 /
+  `tools/create_app_icon.py` I001 left alone); pure-reformat hunks stripped from old test files
+  to keep diffs focused.
+- Offscreen screenshots of welcome, dashboard (+ connection panel), Create (Linux mode with the
+  Windows blocker panel; Windows mode), Windows + Ubuntu quick start forms, running view
+  (Windows node, ok/error banners), gate (Windows lab on Linux engine → Retry → ready), designer.
+  Caught: ink icons rendering as solid discs (fixed by the mask encoding), trailing icon gap,
+  clipped "Open PowerShell" column, the pre-existing clipped error card.
+- Live API + a stateful fake `docker` (Linux/Windows/down modes, `nat` vs `bridge` enforcement,
+  Server Core pull, `exec cmd /c type`): create Windows quick start → start in Linux mode refused
+  with the switch text (`last_error`) → switch → reset → `wait=false` start → running with the
+  install note → stop → restart → export/import keeps os/shell → delete; an Ubuntu lab in Windows
+  mode is refused symmetrically.
+- **Nothing has run on Windows** (neither Session 5 nor 6); checklist in Tigre/05.
+
+**Coverage pass (user question "is there adequate coverage?")**: audited every Phase 8 AC
+against a test and closed the gaps — `tests/test_windows_quickstart_contract.py` (the
+desktop-built Windows lab validated by the core model for each host build; Ubuntu builders
+unchanged; every example validates; the shipped example carries the current init script),
+`test_api.py` (Windows lab through preview/engine/ports → async start with progress → stop /
+restart / reset / export / delete; engine switched back after creation → mismatch visible +
+structured start failure), gate start flow for a Windows lab with Server Core pull progress,
+Lab nodes table rendering of installing / failed / ready markers, shell-launch failure text
+with the command, designer edit keeping `os`/`shell`, dashboard card actions for a Windows lab.
+AC → test map in the story files' Implementation Status.
+
+**User review of the icons**: two missed spots fixed — the painted topology cards (■/◆) and
+the embedded view's toolbar (↗). Cards and designer machine rows now use the icons by role
+(host → desktop, gateway → forward; custom images by link count), "open in your system
+browser" uses forward; reload keeps its glyph (no artwork) with an accessible name. Tests:
+`test_widgets`, `test_designer`, `test_embedded_view`.
+
+**Second icon review (user)**: Restart / Stop lab / reload and the designer's preset picker.
+No refresh or stop artwork exists, so the slicing tool now *derives* `refresh` (↻) and `stop`
+in the discs' language (measured: 248 px disc, 24 px strokes) — `ICONS[...].derived`; the
+preset combo shows each preset's icon. Tests in `test_icons`, `test_running_view`,
+`test_embedded_view`, `test_designer`.
+
+**Designer manual (user: "there isn't a section in build your own custom lab to add the lab
+manual")**: new `manual_editor.py` (`ManualStepsEditor` = the quick start's step editor moved
+out and shared, + `ManualPreview` rendering steps like the flyout); the designer gets a
+collapsible **Lab instructions** panel in a vertical splitter (topology row min 330 px,
+panel 190 px default), the status pill counts steps, `load_lab` loads the manual (authored
+tasks/ids preserved via `QuickStartStep.section_id/tasks`; only the generated "Done: <title>"
+task is regenerated; `steps_to_manual` keeps ids unique), `PASS_THROUGH_FIELDS` is just
+`schema_version` now. Tests: `test_manual_editor.py` (6), `test_designer.py` (+3), quick start
+tests unchanged. Screenshot-reviewed at 1200×760 (tight but usable; drag the splitter or
+collapse the panel on small windows). Closes Tigre/11 S-9.
+
+**Several desktops in one lab (user: "you can only see one of the interfaces")**: the picker
+above the lab view now lists machines by name ("desktop-1 · localhost:3000", "desktop-2 ·
+localhost:3002"; https siblings marked) from per-node ports the API client now parses out of
+the preview's topology (`TopologyNodeInfo.port_mappings`, `PortMappingInfo.node_id`); waiting
+/ not-running messages name the machine; the designer assigns a second desktop/web server the
+next free host ports (`node_catalog.free_host_ports`) instead of leaving a clash for the gate.
+Tigre/06 #27. Tests in `test_embedded_view`, `test_running_view`, `test_api_client`,
+`test_designer`.
+
+**Port of your own (user: "the only option is to assume that port")**: the gate's port
+conflicts became cards with **Use <recommended>** plus a port field + **Apply**; the API's
+`apply-recommendation` takes `new_host_port`, checked like a recommendation
+(`ports.port_unavailable_reason`, `PortUnavailableError` → 409 with the reason, shown in the
+banner with the conflict kept). The old 4-column table could not fit the controls in the side
+column. Tests in core `test_api`/`test_ports`, desktop `test_prestart_gate`/`test_api_client`.
+
+**Stale machines after a port fix (user: "when a port is assumed all the previous session
+data persists … the image needs to be washed clean")**: root cause was worse than stale data -
+the fix was ignored: `docker start` reused the stopped containers with their *old* mapping.
+`_store_rewritten_definition` now resets a lab that has run before storing a port/subnet
+rewrite (`machines_reset` in `PortCheckResult`/`NetworkCheckResult`; the gate appends "machines
+were removed and will start fresh"), D-48, Tigre/06 #29. Tests: core `test_api`,
+`test_network_conflicts_api` (reset / never-started / cleanup failure), desktop
+`test_prestart_gate`, `test_api_client`.
+
+**Export lab results (user: "after a student has completed all of the lab instructions")**:
+new `lab_results.py` (pure: `build_results` → `practicum-lab-results` 1.0 JSON with student,
+export time, lab facts, summary, every step/task with `completed` + `completed_at`;
+`results_to_markdown`; `write_results` by extension; `results_file_name`), the flyout records
+`completed_at` per tick and gains **Export results** + an all-complete banner, the running view
+emits `export_results_requested(lab_id, results)`, `MainWindow` asks the student's name
+(`dialogs.ResultsExportDialog`, remembered) → save picker (`ask_save_path` now takes filter +
+title) → file → note in the running view. Tests: `test_lab_results` (5), `test_manual`,
+`test_running_view`, `test_main_window`, `test_dialogs`.
+
+**Screenshots (user: instructors request, students capture from the embedded window or
+upload)**: spec `ManualSection.requires_screenshot`; editor checkbox per step + preview hint;
+`screenshots.ScreenshotStore` (PNG under AppData, keys beside the ticks); flyout
+`ScreenshotRow` (Capture lab view → `EmbeddedLabView.capture()` web page only, Upload image… →
+`main_window.ask_image_path`, Remove, thumbnail); progress counts requested screenshots and the
+footer says what is missing; results 1.1 (per-step screenshot, counts, `all_complete` needs
+them; JSON embeds base64+sha256, MD copies to a folder, new ZIP bundle). Tests:
+`test_screenshots` (3), `test_manual` (+3), `test_manual_editor`, `test_embedded_view`,
+`test_running_view`, `test_main_window`, `test_lab_results` (+2), core `test_models`.
+
+**Scope change (user)**: Windows containers need Windows Pro/Enterprise/Education, so the
+Windows-container features are to be paywalled later rather than offered to free-plan students.
+Stories only, nothing removed: new roadmap epic `src/future-roadmap/premium-lab-platforms/`
+(README + 7 stories: entitlements/feature gating, Windows labs behind the Pro plan, Windows
+edition/virtualisation eligibility check, hosted Windows labs, macOS desktop application
+(free prerequisite), macOS labs behind the Pro plan, instructor authoring stays free); roadmap
+README paywall lists and the open-core boundary got the platform carve-out; the four Phase 8
+story files carry a scope note; D-50, Q-10.
+
+**Docs**: 5 story files (implementation status), `user-story-status.json` (54/54 done, phase 8
+done, checkpoint, next = Windows verification of Sessions 5 + 6), `user-stories.md`, README (API,
+install note, quick start paragraph, status), Postman, HANDOFF, Tigre 02/03/05/06/09 (D-42…D-46,
+Q-9)/10.
+
+**Next**: Windows smoke run (Tigre/05, both sessions' lists); then S-1 persistence.
+
+---
+
 ## 2026-10-24 — Session 5: Phase 7 completed — lifecycle controls, dashboard, embedded view, designer re-skin, pull progress, full mockup UI
 
 **Goal (user):** "complete the UI outlined in the mockup and all of the remaining functionality in

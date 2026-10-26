@@ -51,6 +51,7 @@ def lab_definition() -> dict:
                             "text": "Review the topology before starting the lab.",
                         }
                     ],
+                    "requires_screenshot": False,
                 },
                 {
                     "id": "configure-routes",
@@ -59,6 +60,7 @@ def lab_definition() -> dict:
                         "Add routes on each host and verify connectivity with `ping`."
                     ),
                     "tasks": [],
+                    "requires_screenshot": False,
                 },
             ]
         },

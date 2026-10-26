@@ -802,3 +802,201 @@ def test_docker_runtime_remove_container_tolerates_missing(monkeypatch) -> None:
     DockerRuntime().remove_container("gone")  # must not raise
 
     assert commands == [["docker", "rm", "-f", "gone"]]
+
+
+# ----- engine mode (windows quick start, phase 8) ----------------------------------------------
+
+WINDOWS_INFO = (
+    '{"ServerVersion":"27.3.1","OSType":"windows","OperatingSystem":"Windows 11 Pro Version '
+    '23H2 (OS Build 22631.4460)","KernelVersion":"10.0 22631 (22621.1.amd64fre.ni_release'
+    '.220506-1250)","Isolation":"hyperv","ServerErrors":null}'
+)
+LINUX_INFO = (
+    '{"ServerVersion":"27.3.1","OSType":"linux","OperatingSystem":"Docker Desktop",'
+    '"KernelVersion":"5.15.153.1-microsoft-standard-WSL2","ServerErrors":[]}'
+)
+
+
+def _windows_lab() -> Lab:
+    definition = LabDefinition.model_validate(
+        {
+            "name": "Windows Quick Start",
+            "nodes": [
+                {
+                    "id": "host",
+                    "image": "mcr.microsoft.com/windows/servercore:ltsc2022",
+                    "os": "windows",
+                    "command": ["powershell", "-NoLogo", "-Command", "Start-Sleep 3600"],
+                    "resources": {"cpu": 2, "memory_mb": 2048},
+                }
+            ],
+            "networks": [{"id": "lab-net", "subnet": "10.90.0.0/24"}],
+            "interfaces": [{"node": "host", "network": "lab-net", "address": "10.90.0.10/24"}],
+        }
+    )
+    return Lab(id="12345678-1234-1234-1234-123456789abc", **definition.model_dump())
+
+
+def test_parse_engine_info_reads_a_windows_daemon() -> None:
+    from practicum.runtime import parse_engine_info
+
+    info = parse_engine_info(0, WINDOWS_INFO, "")
+
+    assert info.available is True
+    assert info.os_type == "windows"
+    assert info.server_version == "27.3.1"
+    assert info.host_build == 22631
+    assert info.isolation == "hyperv"
+    assert "Windows containers" in info.detail and "22631" in info.detail
+
+
+def test_parse_engine_info_reads_a_linux_daemon_and_failures() -> None:
+    from practicum.runtime import parse_engine_info
+
+    linux = parse_engine_info(0, LINUX_INFO, "")
+    assert linux.available is True and linux.os_type == "linux" and linux.host_build is None
+
+    down = parse_engine_info(
+        1,
+        '{"OSType":"","ServerErrors":["error during connect: this error may indicate that the '
+        'docker daemon is not running"]}',
+        "",
+    )
+    assert down.available is False and down.os_type is None
+    assert "docker daemon is not running" in down.detail
+
+    garbage = parse_engine_info(1, "", "Cannot connect to the Docker daemon")
+    assert garbage.available is False and "Cannot connect" in garbage.detail
+
+
+def test_docker_runtime_engine_info_runs_docker_info_read_only(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, WINDOWS_INFO, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    info = DockerRuntime().engine_info()
+
+    assert commands == [["docker", "info", "--format", "{{json .}}"]]
+    assert info.os_type == "windows"
+
+
+def test_docker_runtime_engine_info_reports_missing_cli(monkeypatch) -> None:
+    def fake_run(*args, **kwargs):
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    info = DockerRuntime().engine_info()
+
+    assert info.available is False
+    assert info.detail == "Docker CLI was not found"
+
+
+def test_docker_runtime_refuses_to_start_a_windows_lab_on_a_linux_engine(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
+        commands.append(command)
+        if command[:2] == ["docker", "info"]:
+            return subprocess.CompletedProcess(command, 0, LINUX_INFO, "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeFailure) as excinfo:
+        DockerRuntime().start(_windows_lab())
+
+    message = excinfo.value.message
+    assert "needs Windows containers" in message
+    assert "serving Linux containers" in message
+    assert "Switch to Windows containers" in message
+    assert excinfo.value.command == ["docker", "info"]
+    # nothing was created before the check failed, and nothing was "cleaned up" either
+    assert commands == [["docker", "info", "--format", "{{json .}}"]]
+
+
+def test_docker_runtime_refuses_to_start_a_linux_lab_on_a_windows_engine(
+    monkeypatch, lab_definition: dict
+) -> None:
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
+        if command[:2] == ["docker", "info"]:
+            return subprocess.CompletedProcess(command, 0, WINDOWS_INFO, "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeFailure, match="needs Linux containers.*Switch to Linux containers"):
+        DockerRuntime().start(_lab(lab_definition))
+
+
+def test_docker_runtime_starts_a_windows_lab_with_a_nat_network(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
+        commands.append(command)
+        if command[:2] == ["docker", "info"]:
+            return subprocess.CompletedProcess(command, 0, WINDOWS_INFO, "")
+        if command[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(command, 1, "", "No such object")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    DockerRuntime().start(_windows_lab())
+
+    network_create = next(c for c in commands if c[:3] == ["docker", "network", "create"])
+    assert ["--driver", "nat"] in [
+        network_create[i : i + 2] for i in range(len(network_create) - 1)
+    ]
+    run_command = next(c for c in commands if c[:2] == ["docker", "run"])
+    assert "--shm-size" not in run_command and "--sysctl" not in run_command
+    assert run_command[-5:] == [
+        "mcr.microsoft.com/windows/servercore:ltsc2022",
+        "powershell",
+        "-NoLogo",
+        "-Command",
+        "Start-Sleep 3600",
+    ]
+
+
+def test_docker_runtime_unknown_engine_mode_lets_docker_decide(
+    monkeypatch, lab_definition: dict
+) -> None:
+    """An empty/odd `docker info` answer (as in the other tests' fakes) must not block starts."""
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    DockerRuntime().start(_lab(lab_definition))
+
+    assert commands[0][:2] == ["docker", "info"]
+    assert any(c[:2] == ["docker", "run"] for c in commands)
+
+
+def test_docker_runtime_reads_the_windows_note_marker_with_type(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, check, text, **kwargs) -> subprocess.CompletedProcess:
+        commands.append(command)
+        if command[:2] == ["docker", "exec"]:
+            return subprocess.CompletedProcess(command, 0, "Practicum: packages ready (git)\n", "")
+        if command[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, "running\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    resources = DockerRuntime().status(_windows_lab())
+
+    container = next(r for r in resources if r.kind == "container")
+    assert container.note == "Practicum: packages ready (git)"
+    exec_command = next(c for c in commands if c[:2] == ["docker", "exec"])
+    assert exec_command[3:] == ["cmd", "/c", "type", r"C:\practicum\packages.status"]

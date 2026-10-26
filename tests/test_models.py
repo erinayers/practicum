@@ -203,3 +203,83 @@ def test_resource_requirements_accept_namespaced_sysctls_only() -> None:
         ResourceRequirements(sysctls={"vm.swappiness": "1"})
     with pytest.raises(ValidationError):
         ResourceRequirements(sysctls={"net.ipv4.ip_forward=1": "1"})
+
+
+# ----- node os / shell (windows quick start, phase 8) ------------------------------------------
+
+
+def _one_node_lab(**node_extra) -> dict:
+    node = {"id": "host", "image": "alpine:3.21", **node_extra}
+    return {
+        "name": "One host",
+        "nodes": [node],
+        "networks": [{"id": "lan", "subnet": "10.0.1.0/24"}],
+        "interfaces": [{"node": "host", "network": "lan", "address": "10.0.1.10/24"}],
+    }
+
+
+def test_node_defaults_to_linux_with_the_os_default_shell() -> None:
+    from practicum.models import LabDefinition
+
+    lab = LabDefinition.model_validate(_one_node_lab())
+
+    assert lab.nodes[0].os == "linux"
+    assert lab.nodes[0].shell is None
+    assert lab.nodes[0].effective_shell == "bash"
+    assert lab.container_os == "linux"
+
+
+def test_windows_node_declares_its_os_and_defaults_to_powershell() -> None:
+    from practicum.models import LabDefinition
+
+    lab = LabDefinition.model_validate(
+        _one_node_lab(image="mcr.microsoft.com/windows/servercore:ltsc2022", os="windows")
+    )
+
+    assert lab.nodes[0].os == "windows"
+    assert lab.nodes[0].effective_shell == "powershell"
+    assert lab.container_os == "windows"
+    # explicit cmd is allowed on Windows, and survives a dump/reload round trip
+    lab_cmd = LabDefinition.model_validate(_one_node_lab(image="x", os="windows", shell="cmd"))
+    assert LabDefinition.model_validate(lab_cmd.model_dump()).nodes[0].shell == "cmd"
+
+
+def test_shell_must_match_the_node_os() -> None:
+    from practicum.models import LabDefinition
+
+    with pytest.raises(ValidationError, match="shell 'powershell' is not available on a linux"):
+        LabDefinition.model_validate(_one_node_lab(shell="powershell"))
+    with pytest.raises(ValidationError, match="shell 'bash' is not available on a windows"):
+        LabDefinition.model_validate(_one_node_lab(os="windows", shell="bash"))
+    with pytest.raises(ValidationError):
+        LabDefinition.model_validate(_one_node_lab(os="freebsd"))
+
+
+def test_windows_nodes_reject_linux_only_resources() -> None:
+    from practicum.models import LabDefinition
+
+    with pytest.raises(ValidationError, match="shm_size_mb is not supported on windows"):
+        LabDefinition.model_validate(_one_node_lab(os="windows", resources={"shm_size_mb": 64}))
+    with pytest.raises(ValidationError, match="sysctls are not supported on windows"):
+        LabDefinition.model_validate(
+            _one_node_lab(os="windows", resources={"sysctls": {"net.ipv4.ip_forward": "1"}})
+        )
+
+
+def test_lab_nodes_must_share_one_operating_system() -> None:
+    from practicum.models import LabDefinition
+
+    lab = _one_node_lab()
+    lab["nodes"].append({"id": "win", "image": "servercore:ltsc2022", "os": "windows"})
+    lab["interfaces"].append({"node": "win", "network": "lan", "address": "10.0.1.11/24"})
+
+    with pytest.raises(ValidationError, match="all nodes must use the same operating system"):
+        LabDefinition.model_validate(lab)
+
+
+def test_manual_section_can_require_a_screenshot() -> None:
+    plain = ManualSection(id="s", title="T", content_markdown="c")
+    assert plain.requires_screenshot is False
+    evidence = ManualSection(id="s", title="T", content_markdown="c", requires_screenshot=True)
+    assert evidence.requires_screenshot is True
+    assert ManualSection.model_validate(evidence.model_dump()).requires_screenshot is True

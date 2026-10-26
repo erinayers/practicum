@@ -121,16 +121,46 @@ Stories added during Phase 7 as the work surfaced them (2026-10-23/24): backend 
 
 ### Phase 8: Add Windows Quick Start Support
 
-Windows Quick Start is a separate, future capability from the existing Linux-container templates.
+Windows Quick Start is a separate capability from the existing Linux-container templates.
 It starts with host readiness, then a PowerShell-based Windows Server Core lab, shell integration,
 and an optional catalog of compatible command-line tools. Practicum must not silently switch
-Docker Desktop's global engine mode.
+Docker Desktop's global engine mode. **Done 2026-10-25 (Session 6)** - built and tested offscreen
+and against the live API with a fake Docker CLI; not yet run on a Windows machine with Docker
+Desktop in Windows-container mode (see Tigre/05 for the verification checklist).
+**Scope change, same day:** Windows containers need Windows Pro/Enterprise/Education, which the
+free plan's typical student laptop (Windows Home) lacks, so these capabilities are planned to
+move behind the paid tier - described, together with a macOS counterpart, in the roadmap epic
+[Premium Lab Platforms](future-roadmap/premium-lab-platforms/README.md). Nothing built here
+was removed.
 
 41. [Windows Container Readiness for Quick Start](user-stories/windows-desktop-application/windows-desktop-windows-container-readiness.md)
 42. [Windows Quick Start Template](user-stories/designer-mode/designer-windows-quick-start.md)
 43. [Open a PowerShell Shell on a Windows Lab Node](user-stories/windows-desktop-application/windows-desktop-open-windows-shell.md)
 44. [Choose Windows Tools in Quick Start](user-stories/designer-mode/designer-windows-quick-start-packages.md)
 45. [Use Design Icons Across the Desktop UI](user-stories/windows-desktop-application/windows-desktop-design-icons.md)
+
+### Phase 9: Keep Labs Across Restarts
+
+Use an embedded SQLite database for the local app. The database file lives in a stable per-user
+application-data directory in packaged use, with a configurable path for development. No separate
+database server or Docker container is required. Docker remains the source of truth for runtime
+state, which is reconciled when the API starts.
+
+46. [Persist Labs in a Local SQLite Database](user-stories/backend-storage/lab-persistence-sqlite.md)
+47. [Reconcile Saved Labs with Docker on Startup](user-stories/backend-storage/lab-runtime-reconciliation.md)
+48. [Choose and Configure the Local Data Directory](user-stories/backend-storage/local-data-directory.md)
+
+### Phase 10: Market and Distribute the Open-Source App
+
+Give Practicum a public home that explains its audience and local-first workflow, helps people
+install the app, and makes the open-source project easy to trust, use, and contribute to. The site
+promotes the free local product and links to canonical releases; it does not imply that hosted or
+paid roadmap features already exist.
+
+49. [Explain Practicum on the Project Website](user-stories/project-website/website-product-home.md)
+50. [Find and Download Practicum Releases](user-stories/project-website/website-downloads.md)
+51. [Get Started and Find Help](user-stories/project-website/website-getting-started.md)
+52. [Understand the Project and Contribute](user-stories/project-website/website-project-transparency.md)
 
 ## First Product Slice
 

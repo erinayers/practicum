@@ -123,3 +123,28 @@ def test_api_reserved_port_defaults_to_8000(monkeypatch) -> None:
     monkeypatch.delenv("PRACTICUM_API_PORT", raising=False)
 
     assert ports.api_reserved_port() == 8000
+
+
+def test_port_unavailable_reason_mirrors_the_conflict_rules(
+    monkeypatch, lab_definition: dict
+) -> None:
+    from practicum.models import Lab, LabDefinition
+    from practicum.ports import port_unavailable_reason
+
+    monkeypatch.setattr(ports, "is_local_port_free", lambda port, protocol="tcp": port != 5000)
+    lab = Lab(id="x", **LabDefinition.model_validate(lab_definition).model_dump())
+
+    assert port_unavailable_reason(lab, "router", 2222, 9022, "tcp") is None
+    assert port_unavailable_reason(lab, "router", 2222, 2222, "tcp") == (
+        "is the port that is already in conflict"
+    )
+    assert port_unavailable_reason(lab, "router", 2222, 8000, "tcp") == (
+        "is reserved by the Practicum API"
+    )
+    assert port_unavailable_reason(lab, "router", 2222, 22, "tcp") == (
+        "is already used by node 'router' in this lab"
+    )
+    assert port_unavailable_reason(lab, "router", 2222, 5000, "tcp") == (
+        "is already in use on this machine"
+    )
+    assert port_unavailable_reason(lab, "router", 2222, 22, "udp") is None  # other protocol

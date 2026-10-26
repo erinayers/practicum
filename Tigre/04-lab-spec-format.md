@@ -35,6 +35,8 @@ Stored form `Lab` adds `id` (uuid4 string) and `status` (string; see Tigre/02 st
 | `command` | `list[str] \| null` | default `["sleep","infinity"]`; **`null` = use image CMD** (needed for service/GUI images) |
 | `environment` | `dict[EnvName, str]` | keys match `^[A-Za-z_][A-Za-z0-9_]*$`; passed as `-e K=V` |
 | `resources` | `ResourceRequirements`? | optional |
+| `os` | `"linux" \| "windows"` | default `linux` (2026-10-25, schema still 1.x). Declared, never guessed from the image. All nodes of a lab must agree (Docker Desktop serves one kind at a time); decides the network driver (`bridge`/`nat`), the start-time engine check and how the status note is read |
+| `shell` | `"bash" \| "sh" \| "powershell" \| "cmd" \| null` | default `null` = the OS default (bash→sh on Linux, PowerShell on Windows); must fit the `os`. What the desktop's Open shell / Open PowerShell launches |
 
 ## `ResourceRequirements`
 
@@ -42,10 +44,16 @@ Stored form `Lab` adds `id` (uuid4 string) and `status` (string; see Tigre/02 st
 |---|---|---|
 | `cpu` | float? | > 0 → `--cpus` |
 | `memory_mb` | int? | > 0 → `--memory {n}m` |
-| `shm_size_mb` | int? | > 0 → `--shm-size {n}m` |
+| `shm_size_mb` | int? | > 0 → `--shm-size {n}m` (rejected on `os: windows` nodes) |
 | `exposed_ports` | `list[int]` | each 1–65535, unique; each → `-p p:p` (tcp, host == container) |
 | `port_mappings` | `list[PortMapping]` | `{host, container, protocol="tcp"\|"udp"}`; `(host, protocol)` unique; may not overlap an exposed port (as tcp) |
-| `sysctls` | `dict[str, str]` | keys must be namespaced `net.*` / `kernel.*` / `fs.*` → `--sysctl k=v` (e.g. `net.ipv4.ip_forward: "1"` for the designer's Router preset; added 2026-10-24, schema still 1.x) |
+| `sysctls` | `dict[str, str]` | keys must be namespaced `net.*` / `kernel.*` / `fs.*` → `--sysctl k=v` (e.g. `net.ipv4.ip_forward: "1"` for the designer's Router preset; added 2026-10-24, schema still 1.x); rejected on `os: windows` nodes |
+
+## `ManualSection` addendum (2026-10-25)
+
+`requires_screenshot: bool = false` — the instructor asks for a screenshot of this step; the
+desktop's flyout offers capture/upload, the step counts as complete only with one attached, and
+the exported results carry the image. Old specs validate unchanged.
 
 ## `Network` — `{id: ^[a-z][a-z0-9-]*$, subnet: IPv4Network}` (must be a proper network
 address; Pydantic/ipaddress strict). Gateway is chosen at runtime (highest free usable IP).
@@ -79,11 +87,13 @@ list[ManualTask]` (unique ids within a section). `ManualTask`: `id` (same patter
 | `static-routing.json` | Canonical 3-node 2-network topology (host-a, router, host-b) | router: exposed `22` + mapping `2222→22`, cpu/mem on all nodes, 2 manual sections. Same data as the `lab_definition` test fixture. |
 | `ubuntu-quickstart.json` | One `ubuntu:22.04` container on `10.50.0.0/24` | Mirrored in `desktop/.../quickstart.py` |
 | `ubuntu-webtop.json` | Browser-accessible desktop `lscr.io/linuxserver/webtop:ubuntu-xfce` | `command: null`, env `TITLE`, cpu 2 / 2048 MB / shm 1024, ports 3000 & 3001 (noVNC at https://localhost:3001), network `10.10.1.0/24` |
+| `windows-quickstart.json` | The Windows quick start export: one `mcr.microsoft.com/windows/servercore:ltsc2022` node, `os: windows`, `shell: powershell` | `command` = PowerShell `-EncodedCommand` init (the desktop's `WINDOWS_INIT_SCRIPT`), env `PRACTICUM_PACKAGES="git 7zip"` + `PRACTICUM_PACKAGE_SOURCE=chocolatey`, cpu 2 / 2048 MB, network `10.92.0.0/24`, 2 manual steps. Needs Docker Desktop in Windows-container mode (2026-10-25) |
 
 ## Subnet conventions in use
 
-`10.0.x.0/24` examples · `10.10.1.0/24` webtop · `10.50.0.0/24` quick start ·
-`10.90.0.0/16` reserved pool for auto-picked quick-start subnets (not yet actually used).
+`10.0.x.0/24` examples · `10.10.1.0/24` webtop · `10.50.0.0/24` quick start sample ·
+`10.92.0.0/24` windows quick start sample · `10.90.0.0/16` pool for auto-picked quick-start
+subnets (in use since 2026-10-24).
 Two labs with the same subnet cannot run simultaneously (Docker "pool overlaps").
 
 ## Ideas not yet in the schema (seen in mockups / stories — do not assume they exist)
